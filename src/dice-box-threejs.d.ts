@@ -6,6 +6,7 @@ declare module "@3d-dice/dice-box-threejs" {
     shadows?: boolean;
     theme_surface?: string;
     theme_colorset?: string;
+    theme_customColorset?: Record<string, unknown> | null;
     theme_texture?: string;
     theme_material?: string;
     gravity_multiplier?: number;
@@ -25,8 +26,9 @@ declare module "@3d-dice/dice-box-threejs" {
     initialize(): Promise<void>;
     roll(notation: string): Promise<DiceResultSet[]>;
     add(notation: string): Promise<DiceResultSet[]>;
-    clear(): void;
+    clearDice(): void;
     setDimensions(dimensions: { width: number; height: number }): void;
     updateConfig(config: DiceBoxConfig): void;
+    renderer?: { domElement: HTMLCanvasElement };
   }
 }

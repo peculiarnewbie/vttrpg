@@ -6,7 +6,7 @@ import { useSession } from "../client/session";
 import { BuilderPanel } from "../components/builder";
 import { CharacterSheets } from "../components/character-sheets";
 import { Chat } from "../components/chat";
-import { DiceOverlay } from "../components/dice-overlay";
+import { DiceLanes } from "../components/dice-lanes";
 import { MembersPanel } from "../components/members";
 import { NotesPanel } from "../components/notes";
 import { styles } from "../components/styles.stylex";
@@ -47,7 +47,7 @@ export default function WorldPage() {
   const [notes, setNotes] = createSignal<NoteSummary[]>([]);
   const [members, setMembers] = createSignal<WorldMember[]>([]);
   const [presence, setPresence] = createSignal<PresenceMember[]>([]);
-  const [rollQueue, setRollQueue] = createSignal<ChatMessage[]>([]);
+  const [activeRolls, setActiveRolls] = createSignal<ChatMessage[]>([]);
   const [tab, setTab] = createSignal<Tab>("sheets");
   const [error, setError] = createSignal("");
   const [status, setStatus] = createSignal<RealtimeStatus>("connecting");
@@ -83,7 +83,7 @@ export default function WorldPage() {
           switch (frame.type) {
             case "message":
               if (frame.message.kind === "roll" && frame.message.roll) {
-                setRollQueue((prev) => [...prev, frame.message]);
+                setActiveRolls((prev) => [...prev, frame.message]);
               } else {
                 setMessages((prev) => [...prev, frame.message]);
               }
@@ -179,13 +179,14 @@ export default function WorldPage() {
 
   return (
     <div {...sx(styles.app)}>
-      <DiceOverlay
-        message={rollQueue()[0] ?? null}
-        onDone={() => {
-          const next = rollQueue()[0];
-          if (next) setMessages((prev) => [...prev, next]);
-          setRollQueue((prev) => prev.slice(1));
-        }}
+      <DiceLanes
+        rolls={activeRolls()}
+        onReveal={(message) =>
+          setMessages((prev) =>
+            prev.some((existing) => existing.id === message.id) ? prev : [...prev, message],
+          )
+        }
+        onDone={(id) => setActiveRolls((prev) => prev.filter((message) => message.id !== id))}
       />
 
       <TopBar>
