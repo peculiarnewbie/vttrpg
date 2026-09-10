@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  capDice,
   computeStats,
+  countDice,
   evaluateRoll,
   makeResolver,
   parseDiceExpression,
+  parseRollCommand,
   rollExpression,
 } from "./dice";
 import type { RollDefinition, StatDefinition } from "./schemas";
@@ -21,6 +24,35 @@ describe("parseDiceExpression", () => {
       ],
       staticBonus: -1,
     });
+  });
+
+  it("caps the pool at ten dice", () => {
+    const parsed = parseDiceExpression("50d6");
+    expect(countDice(parsed.dice)).toBe(10);
+    expect(parsed.dice).toEqual([{ count: 10, sides: 6 }]);
+  });
+});
+
+describe("capDice", () => {
+  it("clamps across groups and drops the remainder", () => {
+    expect(
+      capDice([
+        { count: 6, sides: 6 },
+        { count: 6, sides: 8 },
+      ]),
+    ).toEqual([
+      { count: 6, sides: 6 },
+      { count: 4, sides: 8 },
+    ]);
+  });
+});
+
+describe("parseRollCommand", () => {
+  it("accepts /roll with or without a space", () => {
+    expect(parseRollCommand("/roll 2d6")).toBe("2d6");
+    expect(parseRollCommand("/roll2d20")).toBe("2d20");
+    expect(parseRollCommand("hello")).toBeNull();
+    expect(parseRollCommand("/roll")).toBeNull();
   });
 });
 

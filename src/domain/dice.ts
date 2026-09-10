@@ -11,6 +11,34 @@ import type {
 
 export type Rng = () => number;
 
+export const MAX_DICE = 10;
+
+export const countDice = (dice: readonly DiceGroup[]) =>
+  dice.reduce((total, group) => total + Math.max(0, group.count), 0);
+
+/** Clamp a dice pool to at most `max` total dice (first groups win). */
+export const capDice = (dice: readonly DiceGroup[], max = MAX_DICE): DiceGroup[] => {
+  const capped: DiceGroup[] = [];
+  let remaining = max;
+  for (const group of dice) {
+    if (remaining <= 0) break;
+    const count = Math.min(Math.max(0, group.count), remaining);
+    if (count > 0) capped.push({ count, sides: group.sides });
+    remaining -= count;
+  }
+  return capped;
+};
+
+/**
+ * Parse a chat roll command such as `/roll 2d6` or `/roll2d20`. Returns the
+ * dice notation, or `null` if the input is not a roll command.
+ */
+export const parseRollCommand = (input: string): string | null => {
+  const match = /^\/roll\s*(.*)$/i.exec(input.trim());
+  if (!match) return null;
+  return match[1].replace(/\s+/g, "").toLowerCase() || null;
+};
+
 const defaultRng: Rng = () => Math.random();
 
 const rollDie = (sides: number, rng: Rng) => Math.floor(rng() * sides) + 1;
@@ -167,7 +195,7 @@ export const parseDiceExpression = (input: string): { dice: DiceGroup[]; staticB
     if (Number.isFinite(flat)) staticBonus += sign * flat;
   }
 
-  return { dice, staticBonus };
+  return { dice: capDice(dice), staticBonus };
 };
 
 export const rollExpression = (input: string, rng: Rng = defaultRng): RollResult => {

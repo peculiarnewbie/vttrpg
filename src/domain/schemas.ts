@@ -138,6 +138,7 @@ export const Character = Schema.Struct({
   templateId: Schema.String,
   values: Schema.Record(Schema.String, CharacterValue),
   tickers: Schema.Record(Schema.String, Schema.Int),
+  avatarKey: Schema.optional(Schema.String),
   createdAt: Schema.String,
   updatedAt: Schema.String,
 });
@@ -160,9 +161,17 @@ export const ChatMessage = Schema.Struct({
   visibility: Visibility,
   recipientMemberIds: Schema.Array(Schema.String),
   roll: Schema.optional(RollResult),
+  authorAvatarKey: Schema.optional(Schema.String),
+  characterId: Schema.optional(Schema.String),
   createdAt: Schema.String,
 });
 export type ChatMessage = Infer<typeof ChatMessage>;
+
+export const MessagePage = Schema.Struct({
+  messages: Schema.Array(ChatMessage),
+  hasMore: Schema.Boolean,
+});
+export type MessagePage = Infer<typeof MessagePage>;
 
 // ---------------------------------------------------------------------------
 // Notes
@@ -254,6 +263,11 @@ export const ClientFrame = Schema.Union([
     rollId: Schema.String,
     visibility: Visibility,
     recipientMemberIds: Schema.Array(Schema.String),
+  }),
+  Schema.Struct({
+    type: Schema.Literals(["roll.dice"]),
+    notation: Schema.String,
+    visibility: Visibility,
   }),
   Schema.Struct({
     type: Schema.Literals(["character.save"]),

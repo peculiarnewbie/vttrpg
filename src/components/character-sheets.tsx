@@ -1,4 +1,5 @@
-import { For, Show, createSignal } from "solid-js";
+import { For, Show, createEffect, createSignal, onSettled } from "solid-js";
+import { api } from "../client/api";
 import { computeStats } from "../domain/dice";
 import type {
   Character,
@@ -11,7 +12,10 @@ import { Badge, Button, EmptyState, Field, Input, Modal } from "./ui";
 import { styles } from "./styles.stylex";
 import { sx } from "../theme/sx";
 
+const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
+
 type Props = {
+  worldId: string;
   me: WorldMember;
   isDm: boolean;
   characters: Character[];
@@ -21,13 +25,18 @@ type Props = {
   onTicker: (characterId: string, tickerId: string, value: number) => void;
   onSave: (input: SaveCharacterInput) => Promise<void>;
   onDelete: (characterId: string) => Promise<void>;
+  onUploadAvatar: (characterId: string, file: File) => Promise<void>;
 };
 
 const templateFor = (templates: SheetTemplate[], character: Character) =>
   templates.find((template) => template.id === character.templateId) ?? templates[0];
 
+const selectionKey = (worldId: string) => `ttrpg:selected-character:${worldId}`;
+
 export function CharacterSheets(props: Props) {
-  const [selectedId, setSelectedId] = createSignal<string | null>(null);
+  const stored =
+    typeof localStorage !== "undefined" ? localStorage.getItem(selectionKey(props.worldId)) : null;
+  const [selectedId, setSelectedId] = createSignal<string | null>(stored);
   const [creating, setCreating] = createSignal(false);
   const [newName, setNewName] = createSignal("");
   const [newTemplateId, setNewTemplateId] = createSignal(props.templates[0]?.id ?? "");
@@ -35,6 +44,32 @@ export function CharacterSheets(props: Props) {
   const [editing, setEditing] = createSignal(false);
   const [draftName, setDraftName] = createSignal("");
   const [draftValues, setDraftValues] = createSignal<Record<string, string | number>>({});
+  const [avatarError, setAvatarError] = createSignal("");
+
+  const select = (characterId: string | null) => {
+    setSelectedId(characterId);
+    if (typeof localStorage !== "undefined") {
+      if (characterId) localStorage.setItem(selectionKey(props.worldId), characterId);
+      else localStorage.removeItem(selectionKey(props.worldId));
+    }
+    setEditing(false);
+  };
+
+  // On load (and when characters change), keep a valid selection so reopening
+  // the menu lands on the sheet the user had open.
+  createEffect(
+    () => props.characters.map((character) => character.id).join(","),
+    () => {
+      const current = selectedId();
+      if (current && props.characters.some((character) => character.id === current)) return;
+      if (props.characters.length > 0) select(props.characters[0].id);
+      else if (current) select(null);
+    },
+  );
+
+  onSettled(() => {
+    if (!selectedId() && props.characters.length > 0) select(props.characters[0].id);
+  });
 
   const selected = () =>
     props.characters.find((character) => character.id === selectedId()) ?? null;
@@ -55,6 +90,19 @@ export function CharacterSheets(props: Props) {
       values: draftValues(),
     });
     setEditing(false);
+  };
+
+  const uploadAvatar = async (character: Character, file: File) => {
+    setAvatarError("");
+    if (file.size > MAX_AVATAR_BYTES) {
+      setAvatarError("Picture must be 5MB or smaller");
+      return;
+    }
+    try {
+      await props.onUploadAvatar(character.id, file);
+    } catch (error) {
+      setAvatarError(error instanceof Error ? error.message : "Could not upload picture");
+    }
   };
 
   const create = async (event: Event) => {
@@ -144,10 +192,7 @@ export function CharacterSheets(props: Props) {
                   styles.cardInteractive,
                   selectedId() === character.id && styles.noteItemActive,
                 )}
-                onClick={() => {
-                  setSelectedId(character.id);
-                  setEditing(false);
-                }}
+                onClick={() => select(character.id)}
               >
                 <span {...sx(styles.h4)}>{character.name}</span>
                 <span {...sx(styles.faint)}>
@@ -189,7 +234,7 @@ export function CharacterSheets(props: Props) {
                         variant="danger"
                         onClick={() => {
                           void props.onDelete(character().id);
-                          setSelectedId(null);
+                          select(null);
                         }}
                       >
                         Delete
@@ -197,22 +242,64 @@ export function CharacterSheets(props: Props) {
                     </Show>
                   </div>
                   <div {...sx(styles.windowBody, styles.col)}>
-                    <Show when={editing()}>
-                      <Field label="Name">
-                        <Input value={draftName()} onInput={setDraftName} />
-                      </Field>
-                    </Show>
-                    <Show when={!editing()}>
-                      <h2 {...sx(styles.h2)}>{character().name}</h2>
-                    </Show>
+                    <div {...sx(styles.row)}>
+                      <Show
+                        when={character().avatarKey}
+                        fallback={
+                          <div {...sx(styles.avatarPlaceholder)}>
+                            {character().name.slice(0, 1).toUpperCase()}
+                          </div>
+                        }
+                      >
+                        <img
+                          src={api.avatarUrl(props.worldId, character().id, character().avatarKey!)}
+                          alt={character().name}
+                          {...sx(styles.avatarLarge)}
+                        />
+                      </Show>
+                      <div {...sx(styles.col)}>
+                        <Show when={editing()}>
+                          <Field label="Name">
+                            <Input value={draftName()} onInput={setDraftName} />
+                          </Field>
+                        </Show>
+                        <Show when={!editing()}>
+                          <h2 {...sx(styles.h2)}>{character().name}</h2>
+                        </Show>
+                        <Show when={canEdit(character())}>
+                          <label {...sx(styles.button, styles.buttonGhost, styles.buttonSmall)}>
+                            Upload picture
+                            <input
+                              type="file"
+                              accept="image/png,image/jpeg,image/webp,image/gif"
+                              style={{ display: "none" }}
+                              onChange={(event) => {
+                                const file = event.currentTarget.files?.[0];
+                                if (file) void uploadAvatar(character(), file);
+                                event.currentTarget.value = "";
+                              }}
+                            />
+                          </label>
+                        </Show>
+                        <Show when={avatarError()}>
+                          <span {...sx(styles.errorBanner)}>{avatarError()}</span>
+                        </Show>
+                      </div>
+                    </div>
 
                     <section {...sx(styles.col)}>
                       <span {...sx(styles.eyebrow)}>Rolls</span>
+                      <Show when={editing()}>
+                        <span {...sx(styles.faint)}>
+                          Finish editing to roll. Rolls are paused while you edit the sheet.
+                        </span>
+                      </Show>
                       <div {...sx(styles.sheetGrid)}>
                         <For each={sheet().rolls}>
                           {(roll) => (
                             <button
                               {...sx(styles.rollButton)}
+                              disabled={editing()}
                               onClick={() => props.onRoll(character().id, roll.id, roll.visibility)}
                             >
                               <span>{roll.label}</span>

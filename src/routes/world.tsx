@@ -6,6 +6,7 @@ import { useSession } from "../client/session";
 import { BuilderPanel } from "../components/builder";
 import { CharacterSheets } from "../components/character-sheets";
 import { Chat } from "../components/chat";
+import { DiceOverlay, type RollSummary } from "../components/dice-overlay";
 import { MembersPanel } from "../components/members";
 import { NotesPanel } from "../components/notes";
 import { styles } from "../components/styles.stylex";
@@ -22,7 +23,7 @@ import type {
 } from "../domain/schemas";
 import { sx } from "../theme/sx";
 
-type Tab = "chat" | "sheets" | "notes" | "members" | "builder";
+type Tab = "sheets" | "notes" | "members" | "builder";
 
 const upsert = <T extends { id: string }>(items: T[], item: T) => {
   const index = items.findIndex((existing) => existing.id === item.id);
@@ -39,12 +40,15 @@ export default function WorldPage() {
 
   const [boot, setBoot] = createSignal<WorldBootstrap | null>(null);
   const [messages, setMessages] = createSignal<ChatMessage[]>([]);
+  const [hasMore, setHasMore] = createSignal(false);
+  const [loadingMore, setLoadingMore] = createSignal(false);
   const [characters, setCharacters] = createSignal<Character[]>([]);
   const [templates, setTemplates] = createSignal<SheetTemplate[]>([]);
   const [notes, setNotes] = createSignal<NoteSummary[]>([]);
   const [members, setMembers] = createSignal<WorldMember[]>([]);
   const [presence, setPresence] = createSignal<PresenceMember[]>([]);
-  const [tab, setTab] = createSignal<Tab>("chat");
+  const [rollQueue, setRollQueue] = createSignal<RollSummary[]>([]);
+  const [tab, setTab] = createSignal<Tab>("sheets");
   const [error, setError] = createSignal("");
   const [status, setStatus] = createSignal<RealtimeStatus>("connecting");
 
@@ -60,6 +64,7 @@ export default function WorldPage() {
         const bootstrap = await api.bootstrapWorld(params.id);
         setBoot(bootstrap);
         setMessages(bootstrap.messages);
+        setHasMore(bootstrap.hasMoreMessages);
         setCharacters(bootstrap.characters);
         setTemplates(bootstrap.templates);
         setNotes(bootstrap.notes);
@@ -74,6 +79,17 @@ export default function WorldPage() {
           switch (frame.type) {
             case "message":
               setMessages((prev) => [...prev, frame.message]);
+              if (frame.message.kind === "roll" && frame.message.roll) {
+                setRollQueue((prev) => [
+                  ...prev,
+                  {
+                    id: frame.message.id,
+                    roll: frame.message.roll!,
+                    content: frame.message.content,
+                    authorName: frame.message.authorName,
+                  },
+                ]);
+              }
               break;
             case "character":
               setCharacters((prev) => upsert(prev, frame.character));
@@ -96,6 +112,25 @@ export default function WorldPage() {
   const me = () => boot()?.member;
   const isDm = () => me()?.role === "dm";
 
+  const loadMore = async () => {
+    if (loadingMore() || !hasMore()) return;
+    const first = messages()[0];
+    setLoadingMore(true);
+    try {
+      const page = await api.fetchMessages(params.id, {
+        before: first?.createdAt,
+        beforeId: first?.id,
+        limit: 50,
+      });
+      setMessages((prev) => [...page.messages, ...prev]);
+      setHasMore(page.hasMore);
+    } catch {
+      // keep the current view on failure
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
   const sendChat = (input: {
     content: string;
     kind: "ic" | "ooc";
@@ -103,6 +138,10 @@ export default function WorldPage() {
     recipientMemberIds: string[];
   }) => {
     controller?.send({ type: "chat", ...input });
+  };
+
+  const rollDice = (notation: string, visibility: Visibility) => {
+    controller?.send({ type: "roll.dice", notation, visibility });
   };
 
   const roll = (characterId: string, rollId: string, visibility: Visibility) => {
@@ -123,8 +162,12 @@ export default function WorldPage() {
     setCharacters((prev) => prev.filter((character) => character.id !== characterId));
   };
 
+  const uploadAvatar = async (characterId: string, file: File) => {
+    const character = await api.uploadAvatar(params.id, characterId, file);
+    setCharacters((prev) => upsert(prev, character));
+  };
+
   const tabs = (): { id: Tab; label: string }[] => [
-    { id: "chat", label: "Chat" },
     { id: "sheets", label: "Sheets" },
     { id: "notes", label: "Notes" },
     ...(isDm()
@@ -136,9 +179,12 @@ export default function WorldPage() {
   ];
 
   const onlineCount = () => presence().filter((member) => member.online).length;
+  const currentRoll = () => rollQueue()[0] ?? null;
 
   return (
     <div {...sx(styles.app)}>
+      <DiceOverlay roll={currentRoll()} onDone={() => setRollQueue((prev) => prev.slice(1))} />
+
       <TopBar>
         <Button variant="ghost" small onClick={() => navigate("/dashboard")}>
           ← Worlds
@@ -147,11 +193,7 @@ export default function WorldPage() {
       </TopBar>
 
       <div {...sx(styles.container)}>
-        <Show when={error()}>
-          <div {...sx(styles.col)}>
-            <ErrorBanner message={error()} />
-          </div>
-        </Show>
+        <ErrorBanner message={error()} />
 
         <Show
           when={boot()}
@@ -162,122 +204,109 @@ export default function WorldPage() {
           }
         >
           {(world) => (
-            <div {...sx(styles.worldShell)}>
-              <aside {...sx(styles.sidebar)}>
-                <div {...sx(styles.col)}>
-                  <h1 {...sx(styles.h2)}>{world().world.name}</h1>
-                  <p {...sx(styles.faint)}>Owner: {world().world.ownerName}</p>
-                  <div {...sx(styles.row)}>
-                    <Badge tone={isDm() ? "tag" : "accent"}>{world().member.role}</Badge>
-                    <span {...sx(styles.statusPill)}>
-                      <span
-                        {...sx(
-                          styles.presenceDot,
-                          status() !== "open" && styles.presenceDotOffline,
-                        )}
-                      />
-                      {status() === "open" ? `${onlineCount()} online` : status()}
-                    </span>
-                  </div>
-                </div>
-
-                <div {...sx(styles.divider)} />
-
-                <nav {...sx(styles.navList)}>
-                  <For each={tabs()}>
-                    {(item) => (
-                      <button
-                        {...sx(styles.navItem, tab() === item.id && styles.navItemActive)}
-                        onClick={() => setTab(item.id)}
-                      >
-                        <span>{item.label}</span>
-                      </button>
-                    )}
-                  </For>
-                </nav>
-
-                <div {...sx(styles.divider)} />
-
-                <div {...sx(styles.col)}>
-                  <span {...sx(styles.eyebrow)}>At the table</span>
+            <>
+              <div {...sx(styles.worldHeader)}>
+                <h1 {...sx(styles.h2)}>{world().world.name}</h1>
+                <Badge tone={isDm() ? "tag" : "accent"}>{world().member.role}</Badge>
+                <span {...sx(styles.statusPill)}>
+                  <span
+                    {...sx(styles.presenceDot, status() !== "open" && styles.presenceDotOffline)}
+                  />
+                  {status() === "open" ? `${onlineCount()} online` : status()}
+                </span>
+                <div {...sx(styles.grow)} />
+                <div {...sx(styles.rowWrap)}>
                   <For each={presence()}>
                     {(member) => (
-                      <div {...sx(styles.row)}>
+                      <span {...sx(styles.statusPill)}>
                         <span
                           {...sx(styles.presenceDot, !member.online && styles.presenceDotOffline)}
                         />
-                        <span {...sx(styles.grow)}>{member.displayName}</span>
-                        <Show when={member.role === "dm"}>
-                          <Badge tone="tag">dm</Badge>
-                        </Show>
-                      </div>
+                        {member.displayName}
+                      </span>
                     )}
                   </For>
-                  <Show when={presence().length === 0}>
-                    <span {...sx(styles.faint)}>No one connected.</span>
-                  </Show>
                 </div>
-              </aside>
+              </div>
 
-              <main {...sx(styles.window)}>
-                <div {...sx(styles.windowTitle)}>
-                  <span>{tabs().find((item) => item.id === tab())?.label ?? "World"}</span>
-                  <div {...sx(styles.spacer)} />
-                  <span>{world().world.slug}</span>
-                </div>
-                <div {...sx(styles.windowBody)}>
-                  <Show when={tab() === "chat"}>
-                    <Chat
-                      messages={messages()}
-                      members={members()}
-                      me={world().member}
-                      onSend={sendChat}
-                    />
-                  </Show>
-                  <Show when={tab() === "sheets"}>
-                    <CharacterSheets
-                      me={world().member}
-                      isDm={isDm()}
-                      characters={characters()}
-                      templates={templates()}
-                      members={members()}
-                      onRoll={roll}
-                      onTicker={ticker}
-                      onSave={saveCharacter}
-                      onDelete={deleteCharacter}
-                    />
-                  </Show>
-                  <Show when={tab() === "notes"}>
-                    <NotesPanel
-                      worldId={params.id}
-                      me={world().member}
-                      notes={notes()}
-                      onNotes={setNotes}
-                    />
-                  </Show>
-                  <Show when={tab() === "members" && isDm()}>
-                    <MembersPanel
-                      worldId={params.id}
-                      me={world().member}
-                      members={members()}
-                      onMembers={setMembers}
-                    />
-                  </Show>
-                  <Show when={tab() === "builder" && isDm()}>
-                    <BuilderPanel
-                      worldId={params.id}
-                      templates={templates()}
-                      onTemplates={setTemplates}
-                    />
-                  </Show>
-                </div>
-              </main>
-            </div>
+              <div {...sx(styles.worldLayout)}>
+                <Chat
+                  worldId={params.id}
+                  messages={messages()}
+                  hasMore={hasMore()}
+                  loadingMore={loadingMore()}
+                  members={members()}
+                  me={world().member}
+                  onLoadMore={() => void loadMore()}
+                  onSend={sendChat}
+                  onRollDice={rollDice}
+                />
+
+                <aside {...sx(styles.menuColumn)}>
+                  <div {...sx(styles.tabBar)}>
+                    <For each={tabs()}>
+                      {(item) => (
+                        <button
+                          {...sx(styles.tab, tab() === item.id && styles.tabActive)}
+                          onClick={() => setTab(item.id)}
+                        >
+                          {item.label}
+                        </button>
+                      )}
+                    </For>
+                  </div>
+
+                  <div {...sx(styles.window)}>
+                    <div {...sx(styles.windowTitle)}>
+                      <span>{tabs().find((item) => item.id === tab())?.label ?? "World"}</span>
+                      <div {...sx(styles.spacer)} />
+                      <span>{world().world.slug}</span>
+                    </div>
+                    <div {...sx(styles.windowBody)}>
+                      <Show when={tab() === "sheets"}>
+                        <CharacterSheets
+                          worldId={params.id}
+                          me={world().member}
+                          isDm={isDm()}
+                          characters={characters()}
+                          templates={templates()}
+                          members={members()}
+                          onRoll={roll}
+                          onTicker={ticker}
+                          onSave={saveCharacter}
+                          onDelete={deleteCharacter}
+                          onUploadAvatar={uploadAvatar}
+                        />
+                      </Show>
+                      <Show when={tab() === "notes"}>
+                        <NotesPanel
+                          worldId={params.id}
+                          me={world().member}
+                          notes={notes()}
+                          onNotes={setNotes}
+                        />
+                      </Show>
+                      <Show when={tab() === "members" && isDm()}>
+                        <MembersPanel
+                          worldId={params.id}
+                          me={world().member}
+                          members={members()}
+                          onMembers={setMembers}
+                        />
+                      </Show>
+                      <Show when={tab() === "builder" && isDm()}>
+                        <BuilderPanel
+                          worldId={params.id}
+                          templates={templates()}
+                          onTemplates={setTemplates}
+                        />
+                      </Show>
+                    </div>
+                  </div>
+                </aside>
+              </div>
+            </>
           )}
-        </Show>
-
-        <Show when={!boot() && !error()}>
-          <div {...sx(styles.center)} />
         </Show>
       </div>
     </div>

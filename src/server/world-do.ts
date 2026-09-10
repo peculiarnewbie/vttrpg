@@ -1,6 +1,16 @@
 import { DurableObject } from "cloudflare:workers";
 import * as Schema from "effect/Schema";
-import { computeStats, evaluateRoll, makeResolver } from "../domain/dice";
+import {
+  capDice,
+  computeStats,
+  evaluateRoll,
+  formatDice,
+  makeResolver,
+  parseDiceExpression,
+  parseRollCommand,
+  rollDice,
+  sumDice,
+} from "../domain/dice";
 import {
   Character,
   ChatMessage,
@@ -47,6 +57,7 @@ type CharacterRow = {
   template_id: string;
   data: string;
   tickers: string;
+  avatar_key: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -60,6 +71,8 @@ type MessageRow = {
   visibility: string;
   recipient_ids: string;
   roll: string | null;
+  author_avatar_key: string | null;
+  character_id: string | null;
   created_at: string;
 };
 
@@ -176,6 +189,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       template_id TEXT NOT NULL,
       data TEXT NOT NULL,
       tickers TEXT NOT NULL,
+      avatar_key TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )`);
@@ -188,6 +202,8 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       visibility TEXT NOT NULL,
       recipient_ids TEXT NOT NULL,
       roll TEXT,
+      author_avatar_key TEXT,
+      character_id TEXT,
       created_at TEXT NOT NULL
     )`);
     sql.exec(`CREATE TABLE IF NOT EXISTS notes (
@@ -198,8 +214,21 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       r2_key TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )`);
+    // Additive columns for instances created before the feature existed.
+    this.ensureColumn("characters", "avatar_key", "avatar_key TEXT");
+    this.ensureColumn("messages", "author_avatar_key", "author_avatar_key TEXT");
+    this.ensureColumn("messages", "character_id", "character_id TEXT");
     const existing = sql.exec("SELECT COUNT(*) AS n FROM templates").one() as { n: number };
     if (!existing || existing.n === 0) this.insertTemplate(defaultTemplate(this.worldId));
+  }
+
+  private ensureColumn(table: string, column: string, ddl: string) {
+    const columns = this.ctx.storage.sql
+      .exec<{ name: string }>(`PRAGMA table_info(${table})`)
+      .toArray();
+    if (!columns.some((existing) => existing.name === column)) {
+      this.ctx.storage.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -229,6 +258,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       templateId: row.template_id,
       values: parse(row.data, {}),
       tickers: parse(row.tickers, {}),
+      avatarKey: row.avatar_key ?? undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -245,6 +275,8 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       visibility: row.visibility as Visibility,
       recipientMemberIds: parse(row.recipient_ids, []),
       roll: row.roll ? parse<RollResult>(row.roll, undefined as never) : undefined,
+      authorAvatarKey: row.author_avatar_key ?? undefined,
+      characterId: row.character_id ?? undefined,
       createdAt: row.created_at,
     };
   }
@@ -295,11 +327,31 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     return rows[0] ? this.toCharacter(rows[0]) : undefined;
   }
 
-  private listMessages(limit = 100): ChatMessage[] {
+  private listMessages(options?: { limit?: number; beforeCreatedAt?: string; beforeId?: string }): {
+    messages: ChatMessage[];
+    hasMore: boolean;
+  } {
+    const limit = options?.limit ?? 50;
+    const beforeCreatedAt = options?.beforeCreatedAt;
+    const beforeId = options?.beforeId;
     const rows = this.ctx.storage.sql
-      .exec<MessageRow>("SELECT * FROM messages ORDER BY created_at DESC LIMIT ?", limit)
+      .exec<MessageRow>(
+        `SELECT * FROM messages
+         WHERE ? IS NULL
+            OR created_at < ?
+            OR (created_at = ? AND id < ?)
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?`,
+        beforeCreatedAt ?? null,
+        beforeCreatedAt ?? null,
+        beforeCreatedAt ?? null,
+        beforeId ?? null,
+        limit + 1,
+      )
       .toArray();
-    return rows.map((row) => this.toMessage(row)).reverse();
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    return { messages: page.map((row) => this.toMessage(row)).reverse(), hasMore };
   }
 
   private listNotes(): NoteSummary[] {
@@ -389,6 +441,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       templateId: input.templateId,
       values: input.values,
       tickers,
+      avatarKey: existing?.avatarKey,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
@@ -442,6 +495,19 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     return updated;
   }
 
+  private setCharacterAvatar(characterId: string, avatarKey: string): Character | undefined {
+    const character = this.getCharacter(characterId);
+    if (!character) return undefined;
+    const updated: Character = { ...character, avatarKey, updatedAt: nowIso() };
+    this.ctx.storage.sql.exec(
+      "UPDATE characters SET avatar_key = ?, updated_at = ? WHERE id = ?",
+      avatarKey,
+      updated.updatedAt,
+      characterId,
+    );
+    return updated;
+  }
+
   private createMessage(input: {
     authorMemberId: string;
     authorName: string;
@@ -450,6 +516,8 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     visibility: Visibility;
     recipientMemberIds: readonly string[];
     roll?: RollResult;
+    authorAvatarKey?: string;
+    characterId?: string;
   }): ChatMessage {
     const message: ChatMessage = {
       id: newId("msg"),
@@ -461,10 +529,12 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       visibility: input.visibility,
       recipientMemberIds: input.recipientMemberIds,
       roll: input.roll,
+      authorAvatarKey: input.authorAvatarKey,
+      characterId: input.characterId,
       createdAt: nowIso(),
     };
     this.ctx.storage.sql.exec(
-      "INSERT INTO messages (id, author_member_id, author_name, kind, content, visibility, recipient_ids, roll, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO messages (id, author_member_id, author_name, kind, content, visibility, recipient_ids, roll, author_avatar_key, character_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       message.id,
       message.authorMemberId,
       message.authorName,
@@ -473,9 +543,41 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       message.visibility,
       JSON.stringify(message.recipientMemberIds),
       message.roll ? JSON.stringify(message.roll) : null,
+      message.authorAvatarKey ?? null,
+      message.characterId ?? null,
       message.createdAt,
     );
     return message;
+  }
+
+  private directRoll(
+    notation: string,
+    visibility: Visibility,
+    authorMemberId: string,
+    authorName: string,
+  ) {
+    const cleaned = parseRollCommand(notation) ?? notation;
+    const parsed = parseDiceExpression(cleaned);
+    const dice = capDice(parsed.dice);
+    if (dice.length === 0 && parsed.staticBonus === 0) return undefined;
+    const rolled = rollDice(dice);
+    const modifiers =
+      parsed.staticBonus !== 0 ? [{ label: "static", value: parsed.staticBonus }] : [];
+    const result: RollResult = {
+      notation: cleaned || formatDice(dice),
+      dice: rolled,
+      modifiers,
+      total: sumDice(rolled) + parsed.staticBonus,
+    };
+    return this.createMessage({
+      authorMemberId,
+      authorName,
+      kind: "roll",
+      content: `rolled ${result.notation}`,
+      visibility,
+      recipientMemberIds: [],
+      roll: result,
+    });
   }
 
   private rollFor(characterId: string, rollId: string) {
@@ -492,17 +594,21 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
 
   private async saveNote(
     input: SaveNoteInput & { id?: string; ownerMemberId: string },
-  ): Promise<Note> {
+  ): Promise<{ note: Note } | { forbidden: true }> {
     const id = input.id ?? newId("note");
+    const existing = this.ctx.storage.sql
+      .exec<NoteRow>("SELECT * FROM notes WHERE id = ? LIMIT 1", id)
+      .toArray()[0];
+    // Notes are author-owned: once created, only the original writer may edit.
+    if (existing && existing.owner_member_id !== input.ownerMemberId) {
+      return { forbidden: true };
+    }
     const prefix = `world/${this.worldId}`;
-    const key = `${prefix}/notes/${id}.md`;
+    const key = existing?.r2_key ?? `${prefix}/notes/${id}.md`;
     await this.env.BUCKET.put(key, input.content, {
       httpMetadata: { contentType: "text/markdown; charset=utf-8" },
     });
     const updatedAt = nowIso();
-    const existing = this.ctx.storage.sql
-      .exec<NoteRow>("SELECT * FROM notes WHERE id = ? LIMIT 1", id)
-      .toArray()[0];
     if (existing) {
       this.ctx.storage.sql.exec(
         "UPDATE notes SET title = ?, visibility = ?, updated_at = ? WHERE id = ?",
@@ -523,21 +629,28 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       );
     }
     return {
-      id,
-      title: input.title,
-      ownerMemberId: input.ownerMemberId,
-      visibility: input.visibility,
-      content: input.content,
-      updatedAt,
+      note: {
+        id,
+        title: input.title,
+        ownerMemberId: existing?.owner_member_id ?? input.ownerMemberId,
+        visibility: input.visibility,
+        content: input.content,
+        updatedAt,
+      },
     };
   }
 
-  private async deleteNote(id: string) {
+  private async deleteNote(
+    id: string,
+    ownerMemberId: string,
+  ): Promise<{ ok: true } | { forbidden: true }> {
     const row = this.ctx.storage.sql
       .exec<NoteRow>("SELECT * FROM notes WHERE id = ? LIMIT 1", id)
       .toArray()[0];
+    if (row && row.owner_member_id !== ownerMemberId) return { forbidden: true };
     if (row) await this.env.BUCKET.delete(row.r2_key);
     this.ctx.storage.sql.exec("DELETE FROM notes WHERE id = ?", id);
+    return { ok: true };
   }
 
   // -------------------------------------------------------------------------
@@ -659,13 +772,26 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
 
     try {
       switch (`${request.method} ${path}`) {
-        case "GET state":
+        case "GET state": {
+          const page = this.listMessages({ limit: 50 });
           return json({
             templates: this.listTemplates(),
             characters: this.listCharacters(),
-            messages: this.listMessages(),
+            messages: page.messages,
+            hasMoreMessages: page.hasMore,
             notes: this.listNotes(),
           });
+        }
+
+        case "GET messages": {
+          const limit = Number(url.searchParams.get("limit") ?? 50);
+          const page = this.listMessages({
+            limit: Number.isFinite(limit) ? Math.min(Math.max(1, limit), 100) : 50,
+            beforeCreatedAt: url.searchParams.get("before") ?? undefined,
+            beforeId: url.searchParams.get("beforeId") ?? undefined,
+          });
+          return json(page);
+        }
 
         case "POST message": {
           const message = this.createMessage({
@@ -692,6 +818,8 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
             visibility,
             recipientMemberIds: (body.recipientMemberIds as string[]) ?? [],
             roll: evaluated.result,
+            authorAvatarKey: evaluated.character.avatarKey,
+            characterId: evaluated.character.id,
           });
           this.broadcastMessage(message);
           return json(message);
@@ -705,6 +833,16 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
             memberId: (body.memberId as string | undefined) ?? memberId,
             values: (body.values as Record<string, string | number>) ?? {},
           });
+          this.broadcast({ type: "character", character });
+          return json(character);
+        }
+
+        case "POST character/avatar": {
+          const characterId = String(body.characterId ?? "");
+          const avatarKey = String(body.avatarKey ?? "");
+          if (!characterId || !avatarKey) return json({ error: "Missing avatar" }, 400);
+          const character = this.setCharacterAvatar(characterId, avatarKey);
+          if (!character) return json({ error: "Character not found" }, 404);
           this.broadcast({ type: "character", character });
           return json(character);
         }
@@ -734,14 +872,17 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         }
 
         case "POST note": {
-          const note = await this.saveNote({
+          const result = await this.saveNote({
             id: body.id as string | undefined,
             title: String(body.title ?? "Untitled"),
             visibility: (body.visibility as Visibility) ?? "private",
             content: String(body.content ?? ""),
             ownerMemberId: (body.ownerMemberId as string | undefined) ?? memberId,
           });
-          return json(note);
+          if ("forbidden" in result) {
+            return json({ error: "Only the author can edit this note" }, 403);
+          }
+          return json(result.note);
         }
 
         case "GET notes":
@@ -757,11 +898,18 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         return note ? json(note) : json({ error: "Not found" }, 404);
       }
       if (noteMatch && request.method === "DELETE") {
-        await this.deleteNote(noteMatch[1]);
+        const result = await this.deleteNote(noteMatch[1], memberId);
+        if ("forbidden" in result) {
+          return json({ error: "Only the author can delete this note" }, 403);
+        }
         return json({ ok: true });
       }
 
       const characterMatch = /^character\/([^/]+)$/.exec(path);
+      if (characterMatch && request.method === "GET") {
+        const character = this.getCharacter(characterMatch[1]);
+        return character ? json(character) : json({ error: "Not found" }, 404);
+      }
       if (characterMatch && request.method === "DELETE") {
         this.deleteCharacter(characterMatch[1]);
         return json({ ok: true });
@@ -826,8 +974,21 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         visibility: frame.visibility,
         recipientMemberIds: frame.recipientMemberIds,
         roll: evaluated.result,
+        authorAvatarKey: evaluated.character.avatarKey,
+        characterId: evaluated.character.id,
       });
       this.broadcastMessage(message);
+      return;
+    }
+
+    if (frame.type === "roll.dice") {
+      const message = this.directRoll(
+        frame.notation,
+        frame.visibility,
+        attachment.memberId,
+        attachment.name,
+      );
+      if (message) this.broadcastMessage(message);
       return;
     }
 

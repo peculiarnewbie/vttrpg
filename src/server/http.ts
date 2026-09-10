@@ -22,6 +22,7 @@ import { hashPassword, randomToken, verifyPassword } from "./crypto";
 import * as repo from "./db";
 import {
   BadRequest,
+  Bucket,
   CurrentUser,
   D1,
   Forbidden,
@@ -67,9 +68,17 @@ const doJson = <T>(stub: Stub, path: string, init: RequestInit, member: WorldMem
       stub.fetch(new Request(`https://do/internal/${path}`, { ...init, headers })),
     );
     if (!response.ok) {
-      return yield* Effect.fail(
-        new NotFound({ message: `World service returned ${response.status}` }),
+      const errorBody = yield* Effect.promise(() =>
+        response
+          .clone()
+          .json()
+          .then((body) => body as { error?: string })
+          .catch(() => ({}) as { error?: string }),
       );
+      const message = errorBody.error ?? `World service error (${response.status})`;
+      if (response.status === 403) return yield* Effect.fail(new Forbidden({ message }));
+      if (response.status === 400) return yield* Effect.fail(new BadRequest({ message }));
+      return yield* Effect.fail(new NotFound({ message }));
     }
     return (yield* Effect.promise(() => response.json())) as T;
   });
@@ -263,6 +272,7 @@ const WorldBootstrap = HttpRouter.route(
         templates: unknown[];
         characters: unknown[];
         messages: ChatMessage[];
+        hasMoreMessages: boolean;
         notes: NoteSummary[];
       }>(stub, "state", { method: "GET" }, member);
       const members = yield* repo.listMembers(db, world.id);
@@ -274,6 +284,7 @@ const WorldBootstrap = HttpRouter.route(
         templates: state.templates,
         characters: state.characters,
         messages: state.messages.filter((message) => canSeeMessage(message, member)),
+        hasMoreMessages: state.hasMoreMessages,
         notes: state.notes.filter((note) => canSeeNote(note, member)),
       });
     }),
@@ -481,6 +492,127 @@ const DeleteCharacter = HttpRouter.route(
   ),
 );
 
+const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
+
+const ALLOWED_AVATAR_TYPES: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+  "image/gif": "gif",
+};
+
+const UploadAvatar = HttpRouter.route(
+  "POST",
+  "/api/worlds/:id/characters/:characterId/avatar",
+  route(
+    Effect.gen(function* () {
+      const { world, member, stub } = yield* loadWorld();
+      const params = yield* HttpRouter.params;
+      const characterId = params.characterId;
+      if (!characterId) return yield* Effect.fail(new NotFound({ message: "Character not found" }));
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const character = yield* doJson<{ memberId: string }>(
+        stub,
+        `character/${characterId}`,
+        { method: "GET" },
+        member,
+      );
+      if (member.role !== "dm" && character.memberId !== member.id) {
+        return yield* Effect.fail(new Forbidden({ message: "You cannot edit this character" }));
+      }
+      const contentType = (request.headers["content-type"] ?? "").split(";")[0].trim();
+      const extension = ALLOWED_AVATAR_TYPES[contentType];
+      if (!extension) {
+        return yield* Effect.fail(
+          new BadRequest({ message: "Avatar must be a PNG, JPEG, WebP, or GIF" }),
+        );
+      }
+      const bytes = yield* request.arrayBuffer;
+      if (bytes.byteLength > MAX_AVATAR_BYTES) {
+        return yield* Effect.fail(new BadRequest({ message: "Avatar must be 5MB or smaller" }));
+      }
+      const key = `${world.r2_prefix}/avatars/${characterId}-${Date.now()}.${extension}`;
+      const bucket = yield* Bucket;
+      yield* Effect.promise(() => bucket.put(key, bytes, { httpMetadata: { contentType } }));
+      const updated = yield* doJson(
+        stub,
+        "character/avatar",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ characterId, avatarKey: key }),
+        },
+        member,
+      );
+      return json(updated);
+    }),
+  ),
+);
+
+const GetAvatar = HttpRouter.route(
+  "GET",
+  "/api/worlds/:id/characters/:characterId/avatar",
+  route(
+    Effect.gen(function* () {
+      const { member, stub } = yield* loadWorld();
+      const params = yield* HttpRouter.params;
+      const characterId = params.characterId;
+      if (!characterId) return yield* Effect.fail(new NotFound({ message: "Character not found" }));
+      const character = yield* doJson<{ avatarKey?: string }>(
+        stub,
+        `character/${characterId}`,
+        { method: "GET" },
+        member,
+      );
+      if (!character.avatarKey) {
+        return yield* Effect.fail(new NotFound({ message: "This character has no picture" }));
+      }
+      const bucket = yield* Bucket;
+      const object = yield* Effect.promise(() => bucket.get(character.avatarKey!));
+      if (!object) return yield* Effect.fail(new NotFound({ message: "Picture not found" }));
+      const contentType = object.httpMetadata?.contentType ?? "image/png";
+      const bytes = yield* Effect.promise(() => object.bytes());
+      return HttpServerResponse.uint8Array(bytes, {
+        contentType,
+        headers: { "cache-control": "private, max-age=31536000, immutable" },
+      });
+    }),
+  ),
+);
+
+// ---------------------------------------------------------------------------
+// Messages (paginated)
+// ---------------------------------------------------------------------------
+
+const ListMessages = HttpRouter.route(
+  "GET",
+  "/api/worlds/:id/messages",
+  route(
+    Effect.gen(function* () {
+      const { member, stub } = yield* loadWorld();
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const url = new URL(request.url, "http://localhost");
+      const query = new URLSearchParams();
+      const before = url.searchParams.get("before");
+      const beforeId = url.searchParams.get("beforeId");
+      const limit = url.searchParams.get("limit");
+      if (before) query.set("before", before);
+      if (beforeId) query.set("beforeId", beforeId);
+      if (limit) query.set("limit", limit);
+      const page = yield* doJson<{ messages: ChatMessage[]; hasMore: boolean }>(
+        stub,
+        `messages${query.size ? `?${query.toString()}` : ""}`,
+        { method: "GET" },
+        member,
+      );
+      return json({
+        messages: page.messages.filter((message) => canSeeMessage(message, member)),
+        hasMore: page.hasMore,
+      });
+    }),
+  ),
+);
+
 // ---------------------------------------------------------------------------
 // Notes
 // ---------------------------------------------------------------------------
@@ -571,6 +703,9 @@ export const Api = HttpRouter.addAll([
   ListCharacters,
   SaveCharacter,
   DeleteCharacter,
+  UploadAvatar,
+  GetAvatar,
+  ListMessages,
   ListNotes,
   GetNote,
   SaveNote,

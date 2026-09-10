@@ -12,11 +12,14 @@ export function NotesPanel(props: {
   onNotes: (notes: NoteSummary[]) => void;
 }) {
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
+  const [ownerId, setOwnerId] = createSignal<string | null>(null);
   const [title, setTitle] = createSignal("");
   const [content, setContent] = createSignal("");
   const [visibility, setVisibility] = createSignal<Visibility>("private");
   const [error, setError] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+
+  const isOwner = () => ownerId() === props.me.id;
 
   const refresh = async () => {
     try {
@@ -34,6 +37,7 @@ export function NotesPanel(props: {
       setTitle(note.title);
       setContent(note.content);
       setVisibility(note.visibility);
+      setOwnerId(note.ownerMemberId);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not open note");
     }
@@ -57,6 +61,7 @@ export function NotesPanel(props: {
       setTitle(note.title);
       setContent(note.content);
       setVisibility(note.visibility);
+      setOwnerId(note.ownerMemberId);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not create note");
     } finally {
@@ -90,6 +95,7 @@ export function NotesPanel(props: {
     try {
       await api.deleteNote(props.worldId, id);
       setSelectedId(null);
+      setOwnerId(null);
       setTitle("");
       setContent("");
       await refresh();
@@ -139,29 +145,46 @@ export function NotesPanel(props: {
               >
                 {visibility()}
               </Badge>
+              <Show when={!isOwner()}>
+                <Badge tone="plain">read only</Badge>
+              </Show>
               <div {...sx(styles.spacer)} />
-              <Button small variant="danger" disabled={busy()} onClick={remove}>
-                Delete
-              </Button>
-              <Button small variant="primary" disabled={busy()} onClick={save}>
-                {busy() ? "Saving..." : "Save"}
-              </Button>
+              <Show when={isOwner()}>
+                <Button small variant="danger" disabled={busy()} onClick={remove}>
+                  Delete
+                </Button>
+                <Button small variant="primary" disabled={busy()} onClick={save}>
+                  {busy() ? "Saving..." : "Save"}
+                </Button>
+              </Show>
             </div>
-            <Field label="Title">
-              <Input value={title()} onInput={setTitle} />
-            </Field>
-            <Field label="Visibility">
-              <select
-                {...sx(styles.select)}
-                value={visibility()}
-                onChange={(event) => setVisibility(event.currentTarget.value as Visibility)}
-              >
-                <option value="private">Private (only me)</option>
-                <option value="dm">DM only</option>
-                <option value="public">Public</option>
-              </select>
-            </Field>
-            <Textarea value={content()} onInput={setContent} placeholder="Write anything..." />
+
+            <Show
+              when={isOwner()}
+              fallback={
+                <>
+                  <h3 {...sx(styles.h3)}>{title()}</h3>
+                  <p {...sx(styles.faint)}>Only the original writer can edit this note.</p>
+                  <div {...sx(styles.noteReadonly)}>{content() || "Empty note."}</div>
+                </>
+              }
+            >
+              <Field label="Title">
+                <Input value={title()} onInput={setTitle} />
+              </Field>
+              <Field label="Visibility">
+                <select
+                  {...sx(styles.select)}
+                  value={visibility()}
+                  onChange={(event) => setVisibility(event.currentTarget.value as Visibility)}
+                >
+                  <option value="private">Private (only me)</option>
+                  <option value="dm">DM only</option>
+                  <option value="public">Public</option>
+                </select>
+              </Field>
+              <Textarea value={content()} onInput={setContent} placeholder="Write anything..." />
+            </Show>
           </div>
         </Show>
       </div>

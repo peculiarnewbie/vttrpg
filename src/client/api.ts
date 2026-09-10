@@ -41,6 +41,7 @@ export type WorldBootstrap = {
   templates: SheetTemplate[];
   characters: Character[];
   messages: ChatMessage[];
+  hasMoreMessages: boolean;
   notes: NoteSummary[];
 };
 
@@ -61,6 +62,32 @@ export const api = {
   createWorld: (name: string) =>
     request<WorldSummary>("/api/worlds", { method: "POST", body: JSON.stringify({ name }) }),
   bootstrapWorld: (worldId: string) => request<WorldBootstrap>(`/api/worlds/${worldId}`),
+  fetchMessages: (
+    worldId: string,
+    options: { before?: string; beforeId?: string; limit?: number } = {},
+  ) => {
+    const query = new URLSearchParams();
+    if (options.before) query.set("before", options.before);
+    if (options.beforeId) query.set("beforeId", options.beforeId);
+    if (options.limit) query.set("limit", String(options.limit));
+    return request<{ messages: ChatMessage[]; hasMore: boolean }>(
+      `/api/worlds/${worldId}/messages${query.size ? `?${query.toString()}` : ""}`,
+    );
+  },
+  uploadAvatar: async (worldId: string, characterId: string, file: File) => {
+    const response = await fetch(`/api/worlds/${worldId}/characters/${characterId}/avatar`, {
+      method: "POST",
+      headers: { "content-type": file.type },
+      body: file,
+      credentials: "same-origin",
+    });
+    const text = await response.text();
+    const data = text ? JSON.parse(text) : null;
+    if (!response.ok) throw new ApiError(data?.error ?? "Could not upload picture");
+    return data as Character;
+  },
+  avatarUrl: (worldId: string, characterId: string, avatarKey: string) =>
+    `/api/worlds/${worldId}/characters/${characterId}/avatar?v=${encodeURIComponent(avatarKey)}`,
   listMembers: (worldId: string) => request<WorldMember[]>(`/api/worlds/${worldId}/members`),
   createMember: (worldId: string, input: CreateMemberInput) =>
     request<WorldMember>(`/api/worlds/${worldId}/members`, {
