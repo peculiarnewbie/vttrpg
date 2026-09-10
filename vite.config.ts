@@ -1,9 +1,19 @@
-import { cloudflare } from "@cloudflare/vite-plugin";
+import stylex from "@stylexjs/unplugin";
 import { defineConfig } from "vite-plus";
 import solid from "vite-plugin-solid";
 
 export default defineConfig({
-  plugins: [solid(), ...(process.env.VITEST ? [] : [cloudflare()])],
+  plugins: [
+    stylex.vite({
+      devMode: "full",
+      useCSSLayers: false,
+    }) as never,
+    solid(),
+  ],
+  build: {
+    outDir: "dist/client",
+    emptyOutDir: true,
+  },
   server: {
     allowedHosts: true,
   },
