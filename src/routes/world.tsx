@@ -6,7 +6,7 @@ import { useSession } from "../client/session";
 import { BuilderPanel } from "../components/builder";
 import { CharacterSheets } from "../components/character-sheets";
 import { Chat } from "../components/chat";
-import { DiceOverlay, type RollSummary } from "../components/dice-overlay";
+import { DiceOverlay } from "../components/dice-overlay";
 import { MembersPanel } from "../components/members";
 import { NotesPanel } from "../components/notes";
 import { styles } from "../components/styles.stylex";
@@ -47,7 +47,7 @@ export default function WorldPage() {
   const [notes, setNotes] = createSignal<NoteSummary[]>([]);
   const [members, setMembers] = createSignal<WorldMember[]>([]);
   const [presence, setPresence] = createSignal<PresenceMember[]>([]);
-  const [rollQueue, setRollQueue] = createSignal<RollSummary[]>([]);
+  const [rollQueue, setRollQueue] = createSignal<ChatMessage[]>([]);
   const [tab, setTab] = createSignal<Tab>("sheets");
   const [error, setError] = createSignal("");
   const [status, setStatus] = createSignal<RealtimeStatus>("connecting");
@@ -56,6 +56,10 @@ export default function WorldPage() {
 
   onSettled(() => {
     void (async () => {
+      const sessionStart = Date.now();
+      while (session.loading() && Date.now() - sessionStart < 5000) {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      }
       if (!session.user()) {
         navigate("/", { replace: true });
         return;
@@ -78,17 +82,10 @@ export default function WorldPage() {
         onFrame: (frame) => {
           switch (frame.type) {
             case "message":
-              setMessages((prev) => [...prev, frame.message]);
               if (frame.message.kind === "roll" && frame.message.roll) {
-                setRollQueue((prev) => [
-                  ...prev,
-                  {
-                    id: frame.message.id,
-                    roll: frame.message.roll!,
-                    content: frame.message.content,
-                    authorName: frame.message.authorName,
-                  },
-                ]);
+                setRollQueue((prev) => [...prev, frame.message]);
+              } else {
+                setMessages((prev) => [...prev, frame.message]);
               }
               break;
             case "character":
@@ -179,11 +176,17 @@ export default function WorldPage() {
   ];
 
   const onlineCount = () => presence().filter((member) => member.online).length;
-  const currentRoll = () => rollQueue()[0] ?? null;
 
   return (
     <div {...sx(styles.app)}>
-      <DiceOverlay roll={currentRoll()} onDone={() => setRollQueue((prev) => prev.slice(1))} />
+      <DiceOverlay
+        message={rollQueue()[0] ?? null}
+        onDone={() => {
+          const next = rollQueue()[0];
+          if (next) setMessages((prev) => [...prev, next]);
+          setRollQueue((prev) => prev.slice(1));
+        }}
+      />
 
       <TopBar>
         <Button variant="ghost" small onClick={() => navigate("/dashboard")}>
@@ -282,6 +285,7 @@ export default function WorldPage() {
                         <NotesPanel
                           worldId={params.id}
                           me={world().member}
+                          members={members()}
                           notes={notes()}
                           onNotes={setNotes}
                         />

@@ -37,6 +37,7 @@ export function CharacterSheets(props: Props) {
   const stored =
     typeof localStorage !== "undefined" ? localStorage.getItem(selectionKey(props.worldId)) : null;
   const [selectedId, setSelectedId] = createSignal<string | null>(stored);
+  const [view, setView] = createSignal<"sheet" | "list">(stored ? "sheet" : "list");
   const [creating, setCreating] = createSignal(false);
   const [newName, setNewName] = createSignal("");
   const [newTemplateId, setNewTemplateId] = createSignal(props.templates[0]?.id ?? "");
@@ -46,6 +47,10 @@ export function CharacterSheets(props: Props) {
   const [draftValues, setDraftValues] = createSignal<Record<string, string | number>>({});
   const [avatarError, setAvatarError] = createSignal("");
 
+  const selected = () =>
+    props.characters.find((character) => character.id === selectedId()) ?? null;
+  const canEdit = (character: Character) => props.isDm || character.memberId === props.me.id;
+
   const select = (characterId: string | null) => {
     setSelectedId(characterId);
     if (typeof localStorage !== "undefined") {
@@ -53,10 +58,10 @@ export function CharacterSheets(props: Props) {
       else localStorage.removeItem(selectionKey(props.worldId));
     }
     setEditing(false);
+    setView(characterId ? "sheet" : "list");
   };
 
-  // On load (and when characters change), keep a valid selection so reopening
-  // the menu lands on the sheet the user had open.
+  // Keep a valid selection so reopening the menu lands on the sheet you had open.
   createEffect(
     () => props.characters.map((character) => character.id).join(","),
     () => {
@@ -70,10 +75,6 @@ export function CharacterSheets(props: Props) {
   onSettled(() => {
     if (!selectedId() && props.characters.length > 0) select(props.characters[0].id);
   });
-
-  const selected = () =>
-    props.characters.find((character) => character.id === selectedId()) ?? null;
-  const canEdit = (character: Character) => props.isDm || character.memberId === props.me.id;
 
   const startEdit = (character: Character) => {
     setDraftName(character.name);
@@ -117,6 +118,36 @@ export function CharacterSheets(props: Props) {
     setNewName("");
     setCreating(false);
   };
+
+  const memberName = (character: Character) =>
+    props.members.find((member) => member.id === character.memberId)?.displayName ?? "Unassigned";
+
+  const CharacterAvatar = (avatarProps: { character: Character; size: "medium" | "large" }) => (
+    <Show
+      when={avatarProps.character.avatarKey}
+      fallback={
+        <div
+          {...sx(
+            avatarProps.size === "large"
+              ? styles.avatarPlaceholder
+              : styles.avatarPlaceholderMedium,
+          )}
+        >
+          {avatarProps.character.name.slice(0, 1).toUpperCase()}
+        </div>
+      }
+    >
+      <img
+        src={api.avatarUrl(
+          props.worldId,
+          avatarProps.character.id,
+          avatarProps.character.avatarKey!,
+        )}
+        alt={avatarProps.character.name}
+        {...sx(avatarProps.size === "large" ? styles.avatarLarge : styles.avatarMedium)}
+      />
+    </Show>
+  );
 
   const renderFields = (character: Character, template: SheetTemplate, readOnly: boolean) => {
     const groups = new Map<string, typeof template.fields>();
@@ -169,242 +200,237 @@ export function CharacterSheets(props: Props) {
   };
 
   return (
-    <div>
+    <div {...sx(styles.col)}>
       <div {...sx(styles.row)}>
         <h3 {...sx(styles.h3)}>Characters</h3>
         <div {...sx(styles.spacer)} />
+        <Show when={view() === "sheet" && props.characters.length > 1}>
+          <Button small onClick={() => setView("list")}>
+            All characters
+          </Button>
+        </Show>
         <Button variant="primary" small onClick={() => setCreating(true)}>
           New character
         </Button>
       </div>
-      <div {...sx(styles.divider)} />
 
       <Show
         when={props.characters.length > 0}
         fallback={<EmptyState>No characters yet. Create one to fill in a sheet.</EmptyState>}
       >
-        <div {...sx(styles.rowWrap)}>
-          <For each={props.characters}>
-            {(character) => (
-              <button
-                {...sx(
-                  styles.card,
-                  styles.cardInteractive,
-                  selectedId() === character.id && styles.noteItemActive,
-                )}
-                onClick={() => select(character.id)}
-              >
-                <span {...sx(styles.h4)}>{character.name}</span>
-                <span {...sx(styles.faint)}>
-                  {props.members.find((member) => member.id === character.memberId)?.displayName ??
-                    "Unassigned"}
-                </span>
-              </button>
-            )}
-          </For>
-        </div>
-      </Show>
-
-      <Show when={selected()}>
-        {(character) => {
-          const template = () => templateFor(props.templates, character());
-          return (
-            <Show when={template()}>
-              {(sheet) => (
-                <div {...sx(styles.window)}>
-                  <div {...sx(styles.windowTitle)}>
-                    <span>{sheet().name}</span>
-                    <div {...sx(styles.spacer)} />
-                    <Show when={editing()}>
-                      <Button small onClick={() => setEditing(false)}>
-                        Cancel
-                      </Button>
-                      <Button small variant="primary" onClick={() => void saveEdit(character())}>
-                        Save
-                      </Button>
-                    </Show>
-                    <Show when={!editing() && canEdit(character())}>
-                      <Button small onClick={() => startEdit(character())}>
-                        Edit
-                      </Button>
-                    </Show>
-                    <Show when={props.isDm}>
-                      <Button
-                        small
-                        variant="danger"
-                        onClick={() => {
-                          void props.onDelete(character().id);
-                          select(null);
-                        }}
-                      >
-                        Delete
-                      </Button>
-                    </Show>
+        <Show when={view() === "list"}>
+          <div {...sx(styles.grid)}>
+            <For each={props.characters}>
+              {(character) => (
+                <button
+                  {...sx(styles.card, styles.cardInteractive, styles.row)}
+                  onClick={() => select(character.id)}
+                >
+                  <CharacterAvatar character={character} size="medium" />
+                  <div {...sx(styles.col)}>
+                    <span {...sx(styles.h4)}>{character.name}</span>
+                    <span {...sx(styles.faint)}>{memberName(character)}</span>
                   </div>
-                  <div {...sx(styles.windowBody, styles.col)}>
-                    <div {...sx(styles.row)}>
-                      <Show
-                        when={character().avatarKey}
-                        fallback={
-                          <div {...sx(styles.avatarPlaceholder)}>
-                            {character().name.slice(0, 1).toUpperCase()}
-                          </div>
-                        }
-                      >
-                        <img
-                          src={api.avatarUrl(props.worldId, character().id, character().avatarKey!)}
-                          alt={character().name}
-                          {...sx(styles.avatarLarge)}
-                        />
-                      </Show>
-                      <div {...sx(styles.col)}>
-                        <Show when={editing()}>
-                          <Field label="Name">
-                            <Input value={draftName()} onInput={setDraftName} />
-                          </Field>
-                        </Show>
-                        <Show when={!editing()}>
-                          <h2 {...sx(styles.h2)}>{character().name}</h2>
-                        </Show>
-                        <Show when={canEdit(character())}>
-                          <label {...sx(styles.button, styles.buttonGhost, styles.buttonSmall)}>
-                            Upload picture
-                            <input
-                              type="file"
-                              accept="image/png,image/jpeg,image/webp,image/gif"
-                              style={{ display: "none" }}
-                              onChange={(event) => {
-                                const file = event.currentTarget.files?.[0];
-                                if (file) void uploadAvatar(character(), file);
-                                event.currentTarget.value = "";
-                              }}
-                            />
-                          </label>
-                        </Show>
-                        <Show when={avatarError()}>
-                          <span {...sx(styles.errorBanner)}>{avatarError()}</span>
-                        </Show>
-                      </div>
-                    </div>
-
-                    <section {...sx(styles.col)}>
-                      <span {...sx(styles.eyebrow)}>Rolls</span>
-                      <Show when={editing()}>
-                        <span {...sx(styles.faint)}>
-                          Finish editing to roll. Rolls are paused while you edit the sheet.
-                        </span>
-                      </Show>
-                      <div {...sx(styles.sheetGrid)}>
-                        <For each={sheet().rolls}>
-                          {(roll) => (
-                            <button
-                              {...sx(styles.rollButton)}
-                              disabled={editing()}
-                              onClick={() => props.onRoll(character().id, roll.id, roll.visibility)}
-                            >
-                              <span>{roll.label}</span>
-                              <span {...sx(styles.row)}>
-                                <span {...sx(styles.mono)}>
-                                  {roll.dice.map((die) => `${die.count}d${die.sides}`).join("+")}
-                                </span>
-                                <Badge
-                                  tone={
-                                    roll.visibility === "dm"
-                                      ? "dm"
-                                      : roll.visibility === "private"
-                                        ? "private"
-                                        : "plain"
-                                  }
-                                >
-                                  {roll.visibility}
-                                </Badge>
-                              </span>
-                            </button>
-                          )}
-                        </For>
-                      </div>
-                    </section>
-
-                    <Show when={sheet().stats.length > 0}>
-                      <section {...sx(styles.col)}>
-                        <span {...sx(styles.eyebrow)}>Stats</span>
-                        <div {...sx(styles.sheetGrid)}>
-                          <For each={sheet().stats}>
-                            {(stat) => {
-                              const values = () => (editing() ? draftValues() : character().values);
-                              const stats = () => computeStats(sheet().stats, values());
-                              return (
-                                <div {...sx(styles.statBox)}>
-                                  <span {...sx(styles.label)}>{stat.label}</span>
-                                  <span {...sx(styles.statValue)}>{stats()[stat.id] ?? 0}</span>
-                                </div>
-                              );
-                            }}
-                          </For>
-                        </div>
-                      </section>
-                    </Show>
-
-                    <Show when={sheet().tickers.length > 0}>
-                      <section {...sx(styles.col)}>
-                        <span {...sx(styles.eyebrow)}>Trackers</span>
-                        <div {...sx(styles.sheetGrid)}>
-                          <For each={sheet().tickers}>
-                            {(ticker) => {
-                              const current = () =>
-                                character().tickers[ticker.id] ?? ticker.defaultValue;
-                              const pct = () =>
-                                `${Math.round(((current() - ticker.min) / Math.max(1, ticker.max - ticker.min)) * 100)}%`;
-                              return (
-                                <div {...sx(styles.ticker)}>
-                                  <div {...sx(styles.row)}>
-                                    <span {...sx(styles.label)}>{ticker.label}</span>
-                                    <div {...sx(styles.spacer)} />
-                                    <span {...sx(styles.mono)}>
-                                      {current()}/{ticker.max}
-                                    </span>
-                                  </div>
-                                  <div {...sx(styles.tickerBar)}>
-                                    <div
-                                      {...sx(styles.tickerFill)}
-                                      style={{ width: pct(), "background-color": ticker.color }}
-                                    />
-                                  </div>
-                                  <div {...sx(styles.tickerControls)}>
-                                    <Button
-                                      small
-                                      disabled={!canEdit(character())}
-                                      onClick={() =>
-                                        props.onTicker(character().id, ticker.id, current() - 1)
-                                      }
-                                    >
-                                      −
-                                    </Button>
-                                    <Button
-                                      small
-                                      disabled={!canEdit(character())}
-                                      onClick={() =>
-                                        props.onTicker(character().id, ticker.id, current() + 1)
-                                      }
-                                    >
-                                      +
-                                    </Button>
-                                  </div>
-                                </div>
-                              );
-                            }}
-                          </For>
-                        </div>
-                      </section>
-                    </Show>
-
-                    {renderFields(character(), sheet(), !canEdit(character()))}
-                  </div>
-                </div>
+                </button>
               )}
-            </Show>
-          );
-        }}
+            </For>
+          </div>
+        </Show>
+
+        <Show when={view() === "sheet" && selected()}>
+          {(character) => {
+            const template = () => templateFor(props.templates, character());
+            return (
+              <Show when={template()}>
+                {(sheet) => (
+                  <div {...sx(styles.window)}>
+                    <div {...sx(styles.windowTitle)}>
+                      <button {...sx(styles.link)} onClick={() => setView("list")}>
+                        ← All characters
+                      </button>
+                      <div {...sx(styles.spacer)} />
+                      <span>{sheet().name}</span>
+                      <Show when={editing()}>
+                        <Button small onClick={() => setEditing(false)}>
+                          Cancel
+                        </Button>
+                        <Button small variant="primary" onClick={() => void saveEdit(character())}>
+                          Save
+                        </Button>
+                      </Show>
+                      <Show when={!editing() && canEdit(character())}>
+                        <Button small onClick={() => startEdit(character())}>
+                          Edit
+                        </Button>
+                      </Show>
+                      <Show when={props.isDm}>
+                        <Button
+                          small
+                          variant="danger"
+                          onClick={() => {
+                            void props.onDelete(character().id);
+                            select(null);
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </Show>
+                    </div>
+                    <div {...sx(styles.windowBody, styles.col)}>
+                      <div {...sx(styles.row)}>
+                        <CharacterAvatar character={character()} size="large" />
+                        <div {...sx(styles.col)}>
+                          <Show when={editing()}>
+                            <Field label="Name">
+                              <Input value={draftName()} onInput={setDraftName} />
+                            </Field>
+                          </Show>
+                          <Show when={!editing()}>
+                            <h2 {...sx(styles.h2)}>{character().name}</h2>
+                          </Show>
+                          <Show when={canEdit(character())}>
+                            <label {...sx(styles.button, styles.buttonGhost, styles.buttonSmall)}>
+                              Upload picture
+                              <input
+                                type="file"
+                                accept="image/png,image/jpeg,image/webp,image/gif"
+                                style={{ display: "none" }}
+                                onChange={(event) => {
+                                  const file = event.currentTarget.files?.[0];
+                                  if (file) void uploadAvatar(character(), file);
+                                  event.currentTarget.value = "";
+                                }}
+                              />
+                            </label>
+                          </Show>
+                          <Show when={avatarError()}>
+                            <span {...sx(styles.errorBanner)}>{avatarError()}</span>
+                          </Show>
+                        </div>
+                      </div>
+
+                      <section {...sx(styles.col)}>
+                        <span {...sx(styles.eyebrow)}>Rolls</span>
+                        <Show when={editing()}>
+                          <span {...sx(styles.faint)}>
+                            Rolls are paused while you edit the sheet.
+                          </span>
+                        </Show>
+                        <div {...sx(styles.sheetGrid)}>
+                          <For each={sheet().rolls}>
+                            {(roll) => (
+                              <button
+                                {...sx(styles.rollButton)}
+                                disabled={editing()}
+                                onClick={() =>
+                                  props.onRoll(character().id, roll.id, roll.visibility)
+                                }
+                              >
+                                <span>{roll.label}</span>
+                                <span {...sx(styles.row)}>
+                                  <span {...sx(styles.mono)}>
+                                    {roll.dice.map((die) => `${die.count}d${die.sides}`).join("+")}
+                                  </span>
+                                  <Badge
+                                    tone={
+                                      roll.visibility === "dm"
+                                        ? "dm"
+                                        : roll.visibility === "private"
+                                          ? "private"
+                                          : "plain"
+                                    }
+                                  >
+                                    {roll.visibility}
+                                  </Badge>
+                                </span>
+                              </button>
+                            )}
+                          </For>
+                        </div>
+                      </section>
+
+                      <Show when={sheet().stats.length > 0}>
+                        <section {...sx(styles.col)}>
+                          <span {...sx(styles.eyebrow)}>Stats</span>
+                          <div {...sx(styles.sheetGrid)}>
+                            <For each={sheet().stats}>
+                              {(stat) => {
+                                const values = () =>
+                                  editing() ? draftValues() : character().values;
+                                const stats = () => computeStats(sheet().stats, values());
+                                return (
+                                  <div {...sx(styles.statBox)}>
+                                    <span {...sx(styles.label)}>{stat.label}</span>
+                                    <span {...sx(styles.statValue)}>{stats()[stat.id] ?? 0}</span>
+                                  </div>
+                                );
+                              }}
+                            </For>
+                          </div>
+                        </section>
+                      </Show>
+
+                      <Show when={sheet().tickers.length > 0}>
+                        <section {...sx(styles.col)}>
+                          <span {...sx(styles.eyebrow)}>Trackers</span>
+                          <div {...sx(styles.sheetGrid)}>
+                            <For each={sheet().tickers}>
+                              {(ticker) => {
+                                const current = () =>
+                                  character().tickers[ticker.id] ?? ticker.defaultValue;
+                                const pct = () =>
+                                  `${Math.round(((current() - ticker.min) / Math.max(1, ticker.max - ticker.min)) * 100)}%`;
+                                return (
+                                  <div {...sx(styles.ticker)}>
+                                    <div {...sx(styles.row)}>
+                                      <span {...sx(styles.label)}>{ticker.label}</span>
+                                      <div {...sx(styles.spacer)} />
+                                      <span {...sx(styles.mono)}>
+                                        {current()}/{ticker.max}
+                                      </span>
+                                    </div>
+                                    <div {...sx(styles.tickerBar)}>
+                                      <div
+                                        {...sx(styles.tickerFill)}
+                                        style={{ width: pct(), "background-color": ticker.color }}
+                                      />
+                                    </div>
+                                    <div {...sx(styles.tickerControls)}>
+                                      <Button
+                                        small
+                                        disabled={!canEdit(character())}
+                                        onClick={() =>
+                                          props.onTicker(character().id, ticker.id, current() - 1)
+                                        }
+                                      >
+                                        −
+                                      </Button>
+                                      <Button
+                                        small
+                                        disabled={!canEdit(character())}
+                                        onClick={() =>
+                                          props.onTicker(character().id, ticker.id, current() + 1)
+                                        }
+                                      >
+                                        +
+                                      </Button>
+                                    </div>
+                                  </div>
+                                );
+                              }}
+                            </For>
+                          </div>
+                        </section>
+                      </Show>
+
+                      {renderFields(character(), sheet(), !canEdit(character()))}
+                    </div>
+                  </div>
+                )}
+              </Show>
+            );
+          }}
+        </Show>
       </Show>
 
       <Modal when={creating()} title="New character" onClose={() => setCreating(false)}>

@@ -187,7 +187,13 @@ const GoogleDev = HttpRouter.route(
         json({ user: repo.toAuthUser(row) }),
         SESSION_COOKIE,
         token,
-        { httpOnly: true, path: "/", sameSite: "lax", maxAge: "30 days" },
+        {
+          httpOnly: true,
+          path: "/",
+          sameSite: "lax",
+          maxAge: "30 days",
+          expires: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
+        },
       ).pipe(Effect.orDie);
       return response;
     }),
@@ -215,7 +221,13 @@ const Login = HttpRouter.route(
         json({ user: repo.toAuthUser(user) }),
         SESSION_COOKIE,
         token,
-        { httpOnly: true, path: "/", sameSite: "lax", maxAge: "30 days" },
+        {
+          httpOnly: true,
+          path: "/",
+          sameSite: "lax",
+          maxAge: "30 days",
+          expires: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
+        },
       ).pipe(Effect.orDie);
     }),
   ),

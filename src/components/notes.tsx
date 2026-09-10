@@ -8,6 +8,7 @@ import { sx } from "../theme/sx";
 export function NotesPanel(props: {
   worldId: string;
   me: WorldMember;
+  members: WorldMember[];
   notes: NoteSummary[];
   onNotes: (notes: NoteSummary[]) => void;
 }) {
@@ -20,6 +21,8 @@ export function NotesPanel(props: {
   const [busy, setBusy] = createSignal(false);
 
   const isOwner = () => ownerId() === props.me.id;
+  const memberName = (memberId: string | null) =>
+    props.members.find((member) => member.id === memberId)?.displayName ?? "Unknown";
 
   const refresh = async () => {
     try {
@@ -128,7 +131,12 @@ export function NotesPanel(props: {
                   onClick={() => void open(note.id)}
                 >
                   <span>{note.title}</span>
-                  <span {...sx(styles.faint)}>{note.visibility}</span>
+                  <span {...sx(styles.faint)}>
+                    {note.visibility}
+                    {note.ownerMemberId !== props.me.id
+                      ? ` · by ${memberName(note.ownerMemberId)}`
+                      : ""}
+                  </span>
                 </button>
               )}
             </For>

@@ -1,5 +1,5 @@
 import { useNavigate } from "@solidjs/router";
-import { createSignal, For, onSettled, Show } from "solid-js";
+import { createEffect, createSignal, For, Show } from "solid-js";
 import { api, ApiError } from "../client/api";
 import { useSession } from "../client/session";
 import { Badge, Button, EmptyState, ErrorBanner, Input, Modal, TopBar } from "../components/ui";
@@ -14,9 +14,12 @@ export default function Dashboard() {
   const [error, setError] = createSignal("");
   const [busy, setBusy] = createSignal(false);
 
-  onSettled(() => {
-    if (!session.loading() && !session.user()) navigate("/", { replace: true });
-  });
+  createEffect(
+    () => ({ loading: session.loading(), user: session.user() }),
+    ({ loading, user }) => {
+      if (!loading && !user) navigate("/", { replace: true });
+    },
+  );
 
   const createWorld = async (event: Event) => {
     event.preventDefault();

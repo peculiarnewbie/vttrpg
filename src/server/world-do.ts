@@ -508,6 +508,16 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     return updated;
   }
 
+  private characterForMember(memberId: string): Character | undefined {
+    const rows = this.ctx.storage.sql
+      .exec<CharacterRow>(
+        "SELECT * FROM characters WHERE member_id = ? ORDER BY created_at ASC LIMIT 1",
+        memberId,
+      )
+      .toArray();
+    return rows[0] ? this.toCharacter(rows[0]) : undefined;
+  }
+
   private createMessage(input: {
     authorMemberId: string;
     authorName: string;
@@ -569,14 +579,17 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       modifiers,
       total: sumDice(rolled) + parsed.staticBonus,
     };
+    const character = this.characterForMember(authorMemberId);
     return this.createMessage({
       authorMemberId,
       authorName,
       kind: "roll",
-      content: `rolled ${result.notation}`,
+      content: "",
       visibility,
       recipientMemberIds: [],
       roll: result,
+      authorAvatarKey: character?.avatarKey,
+      characterId: character?.id,
     });
   }
 
@@ -814,7 +827,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
             authorMemberId: memberId,
             authorName: memberName,
             kind: "roll",
-            content: `${evaluated.character.name}: ${evaluated.definition.label}`,
+            content: `${evaluated.definition.label}`,
             visibility,
             recipientMemberIds: (body.recipientMemberIds as string[]) ?? [],
             roll: evaluated.result,
@@ -970,7 +983,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         authorMemberId: attachment.memberId,
         authorName: attachment.name,
         kind: "roll",
-        content: `${evaluated.character.name}: ${evaluated.definition.label}`,
+        content: `${evaluated.definition.label}`,
         visibility: frame.visibility,
         recipientMemberIds: frame.recipientMemberIds,
         roll: evaluated.result,

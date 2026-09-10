@@ -1,5 +1,6 @@
-import { For, Show, createSignal, onCleanup, onSettled } from "solid-js";
-import type { RollResult } from "../domain/schemas";
+import DiceBox from "@3d-dice/dice-box-threejs";
+import { Show, createEffect, createSignal, onCleanup, onSettled } from "solid-js";
+import type { ChatMessage, RollResult } from "../domain/schemas";
 
 export type RollSummary = {
   id: string;
@@ -9,67 +10,123 @@ export type RollSummary = {
   avatarUrl?: string;
 };
 
-const FACES = ["front", "back", "right", "left", "top", "bottom"] as const;
+const predeterminedNotation = (roll: RollResult) =>
+  roll.dice
+    .map((group) => `${group.results.length}d${group.sides}@${group.results.join(",")}`)
+    .join("+");
 
-function DiceOverlayInner(props: { summary: RollSummary; onDone: () => void }) {
-  const dice = () =>
-    props.summary.roll.dice.flatMap((group) =>
-      group.results.map((value) => ({ sides: group.sides, value })),
-    );
+export function DiceOverlay(props: { message: ChatMessage | null; onDone: () => void }) {
+  const [ready, setReady] = createSignal(false);
   const [showTotal, setShowTotal] = createSignal(false);
   const [leaving, setLeaving] = createSignal(false);
-  const timers: ReturnType<typeof setTimeout>[] = [];
+  let box: DiceBox | undefined;
+  let timers: ReturnType<typeof setTimeout>[] = [];
+
+  const clearTimers = () => {
+    timers.forEach(clearTimeout);
+    timers = [];
+  };
 
   onSettled(() => {
-    const diceDuration = 1150 + props.summary.roll.dice.length * 90;
-    timers.push(setTimeout(() => setShowTotal(true), diceDuration + 120));
-    timers.push(setTimeout(() => setLeaving(true), diceDuration + 1500));
-    timers.push(setTimeout(() => props.onDone(), diceDuration + 2050));
+    try {
+      box = new DiceBox("#ttrpg-dice-stage", {
+        assetPath: "/dice/",
+        sounds: false,
+        shadows: true,
+        theme_colorset: "white",
+        theme_texture: "",
+        theme_material: "glass",
+        theme_surface: "green-felt",
+        baseScale: 100,
+        gravity_multiplier: 400,
+        light_intensity: 0.75,
+        strength: 1,
+      });
+      box
+        .initialize()
+        .then(() => setReady(true))
+        .catch(() => setReady(false));
+    } catch {
+      setReady(false);
+    }
   });
 
-  onCleanup(() => timers.forEach(clearTimeout));
+  onCleanup(() => clearTimers());
 
-  return (
-    <div class="ttrpg-dice-overlay" data-leaving={leaving() ? "true" : "false"}>
-      <div class="ttrpg-dice-label">
-        {props.summary.authorName} · {props.summary.content}
-      </div>
-      <div class="ttrpg-dice-tray">
-        <For each={dice()}>
-          {(die, index) => (
-            <div class="ttrpg-die" style={{ "animation-delay": `${index() * 90}ms` }}>
-              <For each={FACES}>
-                {(side) => (
-                  <div class="ttrpg-die-face" data-side={side}>
-                    {die.value}
-                  </div>
-                )}
-              </For>
-            </div>
-          )}
-        </For>
-      </div>
-      <Show when={showTotal()}>
-        <div class="ttrpg-dice-total">
-          <span class="ttrpg-dice-total-value">{props.summary.roll.total}</span>
-          <span class="ttrpg-dice-total-label">
-            {props.summary.roll.notation}
-            {props.summary.roll.modifiers.length > 0
-              ? ` ${props.summary.roll.modifiers
-                  .map((modifier) => `${modifier.value >= 0 ? "+" : ""}${modifier.value}`)
-                  .join(" ")}`
-              : ""}
-          </span>
-        </div>
-      </Show>
-    </div>
+  const waitReady = async (timeoutMs = 4000) => {
+    const start = Date.now();
+    while (!ready() && Date.now() - start < timeoutMs) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return ready();
+  };
+
+  const play = async (message: ChatMessage) => {
+    clearTimers();
+    const isReady = await waitReady();
+    if (isReady && box && message.roll) {
+      try {
+        await box.roll(predeterminedNotation(message.roll));
+      } catch {
+        // fall through to the total reveal even if the physics fails
+      }
+    }
+    setShowTotal(true);
+    timers.push(
+      setTimeout(
+        () => {
+          setLeaving(true);
+          timers.push(setTimeout(() => props.onDone(), 480));
+        },
+        isReady ? 1600 : 500,
+      ),
+    );
+  };
+
+  createEffect(
+    () => props.message?.id,
+    () => {
+      const message = props.message;
+      if (!message) return;
+      setShowTotal(false);
+      setLeaving(false);
+      void play(message);
+    },
   );
-}
 
-export function DiceOverlay(props: { roll: RollSummary | null; onDone: () => void }) {
+  const label = () => {
+    const message = props.message;
+    if (!message) return "";
+    return message.content ? `${message.authorName} · ${message.content}` : message.authorName;
+  };
+
   return (
-    <Show when={props.roll} keyed>
-      {(summary) => <DiceOverlayInner summary={summary} onDone={props.onDone} />}
-    </Show>
+    <>
+      <div id="ttrpg-dice-stage" class="ttrpg-dice-stage" />
+      <Show when={props.message}>
+        {(message) => (
+          <div class="ttrpg-dice-ui" data-leaving={leaving() ? "true" : "false"}>
+            <div class="ttrpg-dice-label">{label()}</div>
+            <Show when={showTotal() && message().roll}>
+              {(roll) => (
+                <div class="ttrpg-dice-total">
+                  <span class="ttrpg-dice-total-value">{roll().total}</span>
+                  <span class="ttrpg-dice-total-label">
+                    {roll().notation}
+                    {roll().modifiers.length > 0
+                      ? ` ${roll()
+                          .modifiers.map(
+                            (modifier) => `${modifier.value >= 0 ? "+" : ""}${modifier.value}`,
+                          )
+                          .join(" ")}`
+                      : ""}
+                  </span>
+                </div>
+              )}
+            </Show>
+          </div>
+        )}
+      </Show>
+    </>
   );
 }

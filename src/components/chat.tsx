@@ -245,7 +245,7 @@ export function Chat(props: {
                   left: 0,
                   width: "100%",
                   transform: `translateY(${item.start}px)`,
-                  paddingBottom: "12px",
+                  "padding-bottom": "12px",
                 }}
               >
                 <MessageCard
