@@ -1,5 +1,5 @@
 import DiceBox from "@3d-dice/dice-box-threejs";
-import { For, Show, createEffect, createSignal, onCleanup, onSettled } from "solid-js";
+import { For, createEffect, createSignal, onCleanup, onSettled } from "solid-js";
 import type { ChatMessage, RollResult } from "../domain/schemas";
 
 const PALETTE = [
@@ -48,9 +48,13 @@ function DiceLane(props: {
   const [total, setTotal] = createSignal<number | null>(null);
   const [notation, setNotation] = createSignal("");
   const [queue, setQueue] = createSignal<ChatMessage[]>([]);
+  const processed = new Set<string>();
   let box: DiceBox | undefined;
   let busy = false;
+  let clearTimer: ReturnType<typeof setTimeout> | undefined;
 
+  // Pre-warm the physics box as soon as the lane exists, so its first roll
+  // starts instantly instead of waiting on WebGL/theme initialisation.
   onSettled(() => {
     try {
       box = new DiceBox(`#ttrpg-dice-lane-${props.memberId}`, {
@@ -76,6 +80,7 @@ function DiceLane(props: {
   });
 
   onCleanup(() => {
+    if (clearTimer) clearTimeout(clearTimer);
     try {
       box?.clearDice();
       box?.renderer?.domElement?.remove();
@@ -92,36 +97,51 @@ function DiceLane(props: {
 
   const pump = async () => {
     if (busy) return;
-    const current = queue()[0];
-    if (!current) return;
+    const message = queue()[0];
+    if (!message) return;
     busy = true;
+    if (clearTimer) {
+      clearTimeout(clearTimer);
+      clearTimer = undefined;
+    }
+    try {
+      box?.clearDice();
+    } catch {
+      // ignore
+    }
+    setTotal(null);
     try {
       const isReady = await waitReady();
-      if (isReady && box && current.roll) {
+      if (isReady && box && message.roll) {
         try {
-          await box.roll(predeterminedNotation(current.roll));
+          await box.roll(predeterminedNotation(message.roll));
         } catch {
-          // fall through and reveal anyway
+          // reveal anyway
         }
       }
-      if (current.roll) {
-        setTotal(current.roll.total);
-        setNotation(current.roll.notation);
+      if (message.roll) {
+        setTotal(message.roll.total);
+        setNotation(message.roll.notation);
       }
-      props.onReveal(current);
-      // Linger, then sweep the dice away.
-      await sleep(10000);
-      try {
-        box?.clearDice();
-      } catch {
-        // ignore
-      }
-      setTotal(null);
-      props.onDone(current.id);
-      setQueue((prev) => prev.slice(1));
+      props.onReveal(message);
+      // The message is in chat now; the lane keeps the dice on screen a little
+      // longer below. Releasing it here keeps the active list small and lets
+      // other rolls start immediately.
+      props.onDone(message.id);
     } finally {
+      processed.add(message.id);
+      setQueue((prev) => prev.slice(1));
       busy = false;
-      void pump();
+      // Keep the dice on the table for a while, then sweep them away.
+      clearTimer = setTimeout(() => {
+        try {
+          box?.clearDice();
+        } catch {
+          // ignore
+        }
+        setTotal(null);
+      }, 10000);
+      if (queue().length > 0) void pump();
     }
   };
 
@@ -129,62 +149,75 @@ function DiceLane(props: {
     () => props.messages.map((message) => message.id).join(","),
     () => {
       setQueue((prev) => {
-        const known = new Set(prev.map((message) => message.id));
-        const added = props.messages.filter((message) => !known.has(message.id));
+        const queued = new Set(prev.map((message) => message.id));
+        const added = props.messages.filter(
+          (message) => !processed.has(message.id) && !queued.has(message.id),
+        );
         return added.length > 0 ? [...prev, ...added] : prev;
       });
       void pump();
     },
   );
 
+  const active = () => queue().length > 0 || total() !== null;
+
   return (
     <div
       id={`ttrpg-dice-lane-${props.memberId}`}
       class="ttrpg-dice-lane"
+      data-active={active() ? "true" : "false"}
       style={{ "--lane-color": props.hex }}
     >
       <div class="ttrpg-dice-lane-head">{props.memberName}</div>
-      <Show when={total() !== null}>
+      {total() !== null ? (
         <div class="ttrpg-dice-total ttrpg-dice-lane-total">
           <span class="ttrpg-dice-total-value">{total()}</span>
           <span class="ttrpg-dice-total-label">{notation()}</span>
         </div>
-      </Show>
+      ) : null}
     </div>
   );
 }
 
 export function DiceLanes(props: {
+  members: { id: string; displayName: string }[];
   rolls: ChatMessage[];
   onReveal: (message: ChatMessage) => void;
   onDone: (id: string) => void;
 }) {
   const memberIds = () => {
     const ids: string[] = [];
-    for (const roll of props.rolls) {
-      if (!ids.includes(roll.authorMemberId)) ids.push(roll.authorMemberId);
+    const names = new Map<string, string>();
+    for (const member of props.members) {
+      if (!ids.includes(member.id)) {
+        ids.push(member.id);
+        names.set(member.id, member.displayName);
+      }
     }
-    return ids;
+    for (const roll of props.rolls) {
+      if (!ids.includes(roll.authorMemberId)) {
+        ids.push(roll.authorMemberId);
+        names.set(roll.authorMemberId, roll.authorName);
+      }
+    }
+    // Bound the number of live WebGL contexts.
+    return ids.slice(0, 8).map((id) => ({ id, name: names.get(id) ?? "Player" }));
   };
 
   return (
     <div class="ttrpg-dice-lanes">
       <For each={memberIds()}>
-        {(memberId) => {
-          const messages = () => props.rolls.filter((roll) => roll.authorMemberId === memberId);
-          const color = colorFor(memberId);
-          return (
-            <DiceLane
-              memberId={memberId}
-              memberName={messages()[0]?.authorName ?? "Player"}
-              colorset={color.colorset}
-              hex={color.hex}
-              messages={messages()}
-              onReveal={props.onReveal}
-              onDone={props.onDone}
-            />
-          );
-        }}
+        {(member) => (
+          <DiceLane
+            memberId={member.id}
+            memberName={member.name}
+            colorset={colorFor(member.id).colorset}
+            hex={colorFor(member.id).hex}
+            messages={props.rolls.filter((roll) => roll.authorMemberId === member.id)}
+            onReveal={props.onReveal}
+            onDone={props.onDone}
+          />
+        )}
       </For>
     </div>
   );

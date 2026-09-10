@@ -180,6 +180,7 @@ export default function WorldPage() {
   return (
     <div {...sx(styles.app)}>
       <DiceLanes
+        members={presence().map((member) => ({ id: member.id, displayName: member.displayName }))}
         rolls={activeRolls()}
         onReveal={(message) =>
           setMessages((prev) =>
