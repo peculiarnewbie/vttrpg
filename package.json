@@ -18,33 +18,36 @@
     "styles:watch": "npx tokenami --output ./src/styles.css --watch"
   },
   "dependencies": {
-    "@cloudflare/vite-plugin": "^1.38.0",
-    "@effect/platform-bun": "4.0.0-beta.84",
-    "@effect/platform-node": "4.0.0-beta.84",
-    "@solidjs/meta": "^0.29.4",
-    "@solidjs/router": "^0.15.4",
-    "@tokenami/css": "^0.0.97",
-    "alchemy": "2.0.0-beta.56",
-    "drizzle-orm": "^1.0.0-rc.3",
-    "effect": "4.0.0-beta.84",
-    "solid-js": "^1.9.12"
+    "@cloudflare/vite-plugin": "^1.54.6",
+    "@effect/platform-bun": "4.0.0-rc.113",
+    "@effect/platform-node": "4.0.0-rc.113",
+    "@solidjs/meta": "1.0.0-next.2",
+    "@solidjs/router": "2.0.0-next.23",
+    "@solidjs/web": "2.0.0-rc.7",
+    "@tokenami/css": "^0.0.102",
+    "alchemy": "2.0.0-beta.77",
+    "drizzle-orm": "1.0.0-rc.4",
+    "effect": "4.0.0-rc.113",
+    "solid-js": "2.0.0-rc.7"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260523.1",
-    "@effect/vitest": "4.0.0-beta.84",
-    "@tokenami/unplugin": "^0.0.97",
-    "@typescript/native-preview": "7.0.0-dev.20260523.1",
-    "drizzle-kit": "^1.0.0-rc.3",
-    "jsdom": "^29.1.1",
-    "tokenami": "^0.0.97",
-    "vite": "npm:@voidzero-dev/vite-plus-core@0.1.22",
-    "vite-plugin-solid": "^2.11.12",
-    "vite-plus": "^0.1.22",
-    "vitest": "^4.1.7",
-    "wrangler": "^4.83.0"
+    "@cloudflare/workers-types": "^5.20260910.1",
+    "@tokenami/unplugin": "^0.0.102",
+    "@typescript/native-preview": "7.0.0-dev.20260707.2",
+    "drizzle-kit": "1.0.0-rc.4",
+    "jsdom": "^30.0.1",
+    "tokenami": "^0.0.102",
+    "vite": "npm:@voidzero-dev/vite-plus-core@0.3.1",
+    "vite-plugin-solid": "3.0.0-next.27",
+    "vite-plus": "^0.3.1",
+    "wrangler": "^4.130.0"
   },
   "packageManager": "pnpm@10.33.0",
   "pnpm": {
+    "overrides": {
+      "vite@*": "npm:@voidzero-dev/vite-plus-core@0.3.1",
+      "vitest@*": "4.1.11"
+    },
     "onlyBuiltDependencies": [
       "esbuild",
       "workerd"

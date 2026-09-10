@@ -1,4 +1,4 @@
-import { createSignal, For, onMount, Show } from "solid-js";
+import { createSignal, For, onSettled, Show } from "solid-js";
 import {
   appStyles,
   headingStyles,
@@ -59,7 +59,7 @@ export default function Home() {
     }
   }
 
-  onMount(() => {
+  onSettled(() => {
     loadMessages();
   });
 
@@ -74,7 +74,7 @@ export default function Home() {
           placeholder="Write a message..."
           value={content()}
           onInput={(e) => setContent(e.currentTarget.value)}
-          maxLength={500}
+          maxlength={500}
           disabled={loading()}
           autofocus
         />

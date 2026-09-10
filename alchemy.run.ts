@@ -9,9 +9,9 @@ export default Alchemy.Stack(
     state: Cloudflare.state(),
   },
   Effect.gen(function* () {
-    const db = yield* Cloudflare.D1Database("DB", {
+    const db = yield* Cloudflare.D1.Database("DB", {
       name: "web-template",
-      migrationsDir: "src/migrations",
+      migrations: "src/migrations",
     });
 
     const worker = yield* Cloudflare.Worker("Worker", {

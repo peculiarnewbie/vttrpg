@@ -1,5 +1,5 @@
 import { Context, Effect, Layer } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 class Name extends Context.Service<Name, string>()("Name") {}
 

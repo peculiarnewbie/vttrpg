@@ -1,14 +1,20 @@
-import { MetaProvider, Title } from "@solidjs/meta";
-import { Route, Router } from "@solidjs/router";
+import { Title } from "@solidjs/meta";
+import { createRouter } from "@solidjs/router";
 import Home from "./routes/index";
+
+const Router = createRouter({
+  routes: [{ path: "/", component: Home }],
+});
 
 export default function App() {
   return (
-    <MetaProvider>
-      <Title>Web Template</Title>
-      <Router>
-        <Route path="/" component={Home} />
-      </Router>
-    </MetaProvider>
+    <Router>
+      {(props) => (
+        <>
+          <Title>Web Template</Title>
+          {props.children}
+        </>
+      )}
+    </Router>
   );
 }
