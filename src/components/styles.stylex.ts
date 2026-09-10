@@ -767,7 +767,7 @@ export const styles = stylex.create({
   // -------------------------------------------------------------------------
   worldLayout: {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) 440px",
+    gridTemplateColumns: "minmax(0, 480px) minmax(0, 1fr)",
     gap: space.x5,
     alignItems: "start",
     "@media (max-width: 1000px)": { gridTemplateColumns: "1fr" },
