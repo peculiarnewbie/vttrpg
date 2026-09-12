@@ -1,3 +1,5 @@
+import * as Schema from "effect/Schema";
+import { BoardAssetId, BoardSnapshot } from "../domain/board";
 import type {
   ChatMessage,
   CreateMemberInput,
@@ -35,6 +37,7 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
 };
 
 export type WorldBootstrap = {
+  board: BoardSnapshot;
   world: WorldSummary;
   member: WorldMember;
   members: WorldMember[];
@@ -46,6 +49,25 @@ export type WorldBootstrap = {
 };
 
 export const api = {
+  getBoard: async (worldId: string) =>
+    Schema.decodeUnknownSync(BoardSnapshot)(await request(`/api/worlds/${worldId}/board`)),
+  publishBoard: async (worldId: string, input: BoardSnapshot) =>
+    Schema.decodeUnknownSync(BoardSnapshot)(
+      await request(`/api/worlds/${worldId}/board`, { method: "PUT", body: JSON.stringify(input) }),
+    ),
+  boardImageUrl: (worldId: string, assetId: string) =>
+    `/api/worlds/${worldId}/board/images/${encodeURIComponent(assetId)}`,
+  uploadBoardImage: async (worldId: string, file: Blob) => {
+    const response = await fetch(`/api/worlds/${worldId}/board/images`, {
+      method: "POST",
+      headers: { "content-type": file.type },
+      body: file,
+      credentials: "same-origin",
+    });
+    const data = await response.json();
+    if (!response.ok) throw new ApiError("Could not upload image (PNG, JPEG, or WebP, up to 5MB)");
+    return Schema.decodeUnknownSync(Schema.Struct({ assetId: BoardAssetId }))(data);
+  },
   me: () => request<{ user: AuthUser | null; worlds: WorldSummary[] }>("/api/me"),
   google: (email: string, displayName: string) =>
     request<{ user: AuthUser }>("/api/auth/google", {

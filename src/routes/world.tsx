@@ -9,6 +9,10 @@ import { Chat } from "../components/chat";
 import { DiceLanes } from "../components/dice-lanes";
 import { MembersPanel } from "../components/members";
 import { NotesPanel } from "../components/notes";
+import { MoodBoard } from "../components/mood-board";
+import { boardStyles as b } from "../components/board.stylex";
+import { emptyBoard, type BoardSnapshot } from "../domain/board";
+import { loadWorldPanels, saveWorldPanels } from "../client/world-panels";
 import { styles } from "../components/styles.stylex";
 import { Badge, Button, ErrorBanner, Spinner, TopBar } from "../components/ui";
 import type {
@@ -38,6 +42,16 @@ export default function WorldPage() {
   const session = useSession();
   const navigate = useNavigate();
 
+  const [board, setBoard] = createSignal<BoardSnapshot>(emptyBoard());
+  const [panels, setPanels] = createSignal(loadWorldPanels(params.id));
+  const togglePanel = (panel: "chat" | "tools") => {
+    const next = { ...panels(), [panel]: !panels()[panel] };
+    if (window.innerWidth <= 700 && next[panel]) next[panel === "chat" ? "tools" : "chat"] = false;
+    setPanels(next);
+    saveWorldPanels(params.id, next);
+  };
+  const acceptBoard = (next: BoardSnapshot) =>
+    setBoard((previous) => (next.revision >= previous.revision ? next : previous));
   const [boot, setBoot] = createSignal<WorldBootstrap | null>(null);
   const [messages, setMessages] = createSignal<ChatMessage[]>([]);
   const [hasMore, setHasMore] = createSignal(false);
@@ -67,6 +81,7 @@ export default function WorldPage() {
       try {
         const bootstrap = await api.bootstrapWorld(params.id);
         setBoot(bootstrap);
+        acceptBoard(bootstrap.board);
         setMessages(bootstrap.messages);
         setHasMore(bootstrap.hasMoreMessages);
         setCharacters(bootstrap.characters);
@@ -81,6 +96,9 @@ export default function WorldPage() {
         onStatus: setStatus,
         onFrame: (frame) => {
           switch (frame.type) {
+            case "board":
+              acceptBoard(frame.board);
+              break;
             case "message":
               if (frame.message.kind === "roll" && frame.message.roll) {
                 setActiveRolls((prev) => [...prev, frame.message]);
@@ -178,7 +196,7 @@ export default function WorldPage() {
   const onlineCount = () => presence().filter((member) => member.online).length;
 
   return (
-    <div {...sx(styles.app)}>
+    <div {...sx(styles.app, b.world)}>
       <DiceLanes
         members={presence().map((member) => ({ id: member.id, displayName: member.displayName }))}
         rolls={activeRolls()}
@@ -197,7 +215,7 @@ export default function WorldPage() {
         <span {...sx(styles.muted)}>{session.user()?.displayName}</span>
       </TopBar>
 
-      <div {...sx(styles.container)}>
+      <div {...sx(b.content)}>
         <ErrorBanner message={error()} />
 
         <Show
@@ -210,7 +228,7 @@ export default function WorldPage() {
         >
           {(world) => (
             <>
-              <div {...sx(styles.worldHeader)}>
+              <div {...sx(styles.worldHeader, b.header)}>
                 <h1 {...sx(styles.h2)}>{world().world.name}</h1>
                 <Badge tone={isDm() ? "tag" : "accent"}>{world().member.role}</Badge>
                 <span {...sx(styles.statusPill)}>
@@ -220,6 +238,24 @@ export default function WorldPage() {
                   {status() === "open" ? `${onlineCount()} online` : status()}
                 </span>
                 <div {...sx(styles.grow)} />
+                <button
+                  type="button"
+                  {...sx(styles.button, styles.buttonSmall)}
+                  aria-expanded={panels().chat ? "true" : "false"}
+                  aria-controls="world-chat"
+                  onClick={() => togglePanel("chat")}
+                >
+                  {panels().chat ? "Hide chat" : "Show chat"}
+                </button>
+                <button
+                  type="button"
+                  {...sx(styles.button, styles.buttonSmall)}
+                  aria-expanded={panels().tools ? "true" : "false"}
+                  aria-controls="world-tools"
+                  onClick={() => togglePanel("tools")}
+                >
+                  {panels().tools ? "Hide tools" : "Show tools"}
+                </button>
                 <div {...sx(styles.rowWrap)}>
                   <For each={presence()}>
                     {(member) => (
@@ -234,79 +270,97 @@ export default function WorldPage() {
                 </div>
               </div>
 
-              <div {...sx(styles.worldLayout)}>
-                <Chat
+              <div {...sx(b.stage)}>
+                <MoodBoard
                   worldId={params.id}
-                  messages={messages()}
-                  hasMore={hasMore()}
-                  loadingMore={loadingMore()}
-                  members={members()}
-                  me={world().member}
-                  onLoadMore={() => void loadMore()}
-                  onSend={sendChat}
-                  onRollDice={rollDice}
+                  isDm={isDm()}
+                  snapshot={board()}
+                  onPublished={acceptBoard}
                 />
-
-                <aside {...sx(styles.menuColumn)}>
-                  <div {...sx(styles.tabBar)}>
-                    <For each={tabs()}>
-                      {(item) => (
-                        <button
-                          {...sx(styles.tab, tab() === item.id && styles.tabActive)}
-                          onClick={() => setTab(item.id)}
-                        >
-                          {item.label}
-                        </button>
-                      )}
-                    </For>
-                  </div>
-
-                  <div {...sx(styles.window)}>
-                    <div {...sx(styles.windowTitle)}>
-                      <span>{tabs().find((item) => item.id === tab())?.label ?? "World"}</span>
-                      <div {...sx(styles.spacer)} />
-                      <span>{world().world.slug}</span>
+                <section
+                  id="world-chat"
+                  aria-label="World chat"
+                  {...sx(b.panel, b.left, !panels().chat && b.hidden)}
+                >
+                  <Chat
+                    worldId={params.id}
+                    overlay
+                    messages={messages()}
+                    hasMore={hasMore()}
+                    loadingMore={loadingMore()}
+                    members={members()}
+                    me={world().member}
+                    onLoadMore={() => void loadMore()}
+                    onSend={sendChat}
+                    onRollDice={rollDice}
+                  />
+                </section>
+                <aside
+                  id="world-tools"
+                  aria-label="World tools"
+                  {...sx(b.panel, b.right, !panels().tools && b.hidden)}
+                >
+                  <div {...sx(styles.menuColumn, b.tools)}>
+                    <div {...sx(styles.tabBar)}>
+                      <For each={tabs()}>
+                        {(item) => (
+                          <button
+                            {...sx(styles.tab, tab() === item.id && styles.tabActive)}
+                            onClick={() => setTab(item.id)}
+                          >
+                            {item.label}
+                          </button>
+                        )}
+                      </For>
                     </div>
-                    <div {...sx(styles.windowBody)}>
-                      <Show when={tab() === "sheets"}>
-                        <CharacterSheets
-                          worldId={params.id}
-                          me={world().member}
-                          isDm={isDm()}
-                          characters={characters()}
-                          templates={templates()}
-                          members={members()}
-                          onRoll={roll}
-                          onTicker={ticker}
-                          onSave={saveCharacter}
-                          onDelete={deleteCharacter}
-                          onUploadAvatar={uploadAvatar}
-                        />
-                      </Show>
-                      <Show when={tab() === "notes"}>
-                        <NotesPanel
-                          worldId={params.id}
-                          me={world().member}
-                          members={members()}
-                          notes={notes()}
-                          onNotes={setNotes}
-                        />
-                      </Show>
-                      <Show when={tab() === "members" && isDm()}>
-                        <MembersPanel
-                          worldId={params.id}
-                          me={world().member}
-                          members={members()}
-                          onMembers={setMembers}
-                        />
-                      </Show>
-                      <Show when={tab() === "builder" && isDm()}>
-                        <BuilderPanel
-                          worldId={params.id}
-                          templates={templates()}
-                          onTemplates={setTemplates}
-                        />
-                      </Show>
+
+                    <div {...sx(styles.window)}>
+                      <div {...sx(styles.windowTitle)}>
+                        <span>{tabs().find((item) => item.id === tab())?.label ?? "World"}</span>
+                        <div {...sx(styles.spacer)} />
+                        <span>{world().world.slug}</span>
+                      </div>
+                      <div {...sx(styles.windowBody)}>
+                        <Show when={tab() === "sheets"}>
+                          <CharacterSheets
+                            worldId={params.id}
+                            me={world().member}
+                            isDm={isDm()}
+                            characters={characters()}
+                            templates={templates()}
+                            members={members()}
+                            onRoll={roll}
+                            onTicker={ticker}
+                            onSave={saveCharacter}
+                            onDelete={deleteCharacter}
+                            onUploadAvatar={uploadAvatar}
+                          />
+                        </Show>
+                        <Show when={tab() === "notes"}>
+                          <NotesPanel
+                            worldId={params.id}
+                            me={world().member}
+                            members={members()}
+                            notes={notes()}
+                            onNotes={setNotes}
+                          />
+                        </Show>
+                        <Show when={tab() === "members" && isDm()}>
+                          <MembersPanel
+                            worldId={params.id}
+                            me={world().member}
+                            members={members()}
+                            onMembers={setMembers}
+                          />
+                        </Show>
+                        <Show when={tab() === "builder" && isDm()}>
+                          <BuilderPanel
+                            worldId={params.id}
+                            templates={templates()}
+                            onTemplates={setTemplates}
+                          />
+                        </Show>
+                      </div>
                     </div>
                   </div>
                 </aside>

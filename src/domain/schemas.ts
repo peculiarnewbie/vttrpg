@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { BoardSnapshot } from "./board";
 
 export type Infer<S> = Schema.Schema.Type<S>;
 
@@ -284,6 +285,7 @@ export const ClientFrame = Schema.Union([
 export type ClientFrame = Infer<typeof ClientFrame>;
 
 export const ServerFrame = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("board"), board: BoardSnapshot }),
   Schema.Struct({
     type: Schema.Literals(["hello"]),
     worldId: Schema.String,
