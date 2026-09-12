@@ -27,6 +27,7 @@ import {
   type ServerFrame,
   type Visibility,
 } from "../domain/schemas";
+import { BoardSnapshot, PublishBoardInput, emptyBoard } from "../domain/board";
 import { newId, nowIso } from "./crypto";
 
 export type WorldDoEnv = {
@@ -166,12 +167,22 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     });
   }
 
+  private getBoard(): BoardSnapshot {
+    const row = this.ctx.storage.sql
+      .exec<{ snapshot: string }>("SELECT snapshot FROM board WHERE id = 1")
+      .toArray()[0];
+    return row ? Schema.decodeUnknownSync(BoardSnapshot)(JSON.parse(row.snapshot)) : emptyBoard();
+  }
+
   private get worldId() {
     return this.ctx.id.name?.replace(/^world:/, "") ?? "unknown";
   }
 
   private ensureSchema() {
     const sql = this.ctx.storage.sql;
+    sql.exec(
+      "CREATE TABLE IF NOT EXISTS board (id INTEGER PRIMARY KEY CHECK (id = 1), snapshot TEXT NOT NULL)",
+    );
     sql.exec(`CREATE TABLE IF NOT EXISTS templates (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -770,6 +781,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         members: this.presence(),
       } satisfies ServerFrame),
     );
+    server.send(JSON.stringify({ type: "board", board: this.getBoard() } satisfies ServerFrame));
     this.broadcast({ type: "presence", members: this.presence() });
 
     return new Response(null, { status: 101, webSocket: client });
@@ -785,9 +797,38 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
 
     try {
       switch (`${request.method} ${path}`) {
+        case "GET board":
+          return json(this.getBoard());
+        case "PUT board": {
+          if (request.headers.get("x-ttrpg-role") !== "dm")
+            return json({ error: "Only the DM can publish the board" }, 403);
+          const decoded = Schema.decodeUnknownResult(PublishBoardInput)(body);
+          if (decoded._tag === "Failure") return json({ error: "Invalid board" }, 400);
+          const current = this.getBoard();
+          if (decoded.success.revision !== current.revision) {
+            return json(
+              {
+                error:
+                  "The shared board changed. Load the published board before publishing again.",
+              },
+              400,
+            );
+          }
+          const board: BoardSnapshot = {
+            revision: current.revision + 1,
+            document: decoded.success.document,
+          };
+          this.ctx.storage.sql.exec(
+            "INSERT INTO board (id, snapshot) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET snapshot = excluded.snapshot",
+            JSON.stringify(board),
+          );
+          this.broadcast({ type: "board", board });
+          return json(board);
+        }
         case "GET state": {
           const page = this.listMessages({ limit: 50 });
           return json({
+            board: this.getBoard(),
             templates: this.listTemplates(),
             characters: this.listCharacters(),
             messages: page.messages,

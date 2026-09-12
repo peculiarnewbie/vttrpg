@@ -5,6 +5,7 @@ import { parseRollCommand } from "../domain/dice";
 import type { ChatMessage, Visibility, WorldMember } from "../domain/schemas";
 import { Avatar, Badge, Button } from "./ui";
 import { styles } from "./styles.stylex";
+import { boardStyles } from "./board.stylex";
 import { sx } from "../theme/sx";
 
 const DICE_SIDES = [4, 6, 8, 10, 12, 20];
@@ -87,6 +88,7 @@ function MessageCard(props: { message: ChatMessage; me: WorldMember; worldId: st
 }
 
 export function Chat(props: {
+  overlay?: boolean;
   worldId: string;
   messages: ChatMessage[];
   hasMore: boolean;
@@ -216,7 +218,7 @@ export function Chat(props: {
   };
 
   return (
-    <div {...sx(styles.chatColumn)}>
+    <div {...sx(styles.chatColumn, props.overlay && boardStyles.chat)}>
       <div
         {...sx(styles.chatScroll)}
         ref={(el) => {
