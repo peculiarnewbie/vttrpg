@@ -16,7 +16,7 @@ Built with **Alchemy v2 + Effect + Solid.js + StyleX**.
   tickers (HP/mana), and click-to-roll buttons
 - **Dice engine** — dice sets + stacking modifiers (static, stat refs, field refs)
 - **Notes** — per-world markdown files (metadata in the DO, content in R2)
-- **Mood board** — DM-published backgrounds, movable images and text, with independently collapsible chat and tools
+- **Mood board** — live or DM-published backgrounds, movable images and text, with independently collapsible chat and tools
 
 ## Develop
 
@@ -70,8 +70,16 @@ The mood background fills the viewport independently of the board camera.
 **Publish** persists the draft in the world’s SQLite Durable Object and sends a
 snapshot to connected members. Players view the published scene and control their
 own camera. Every connection receives the latest saved snapshot, including after
-reconnect. Editing and dragging send no board updates until Publish. A stale DM
-tab cannot overwrite a newer publication; discard its draft to load the latest.
+reconnect. By default, edits stay private until **Publish**. Enable **Live sharing**
+to automatically save and share completed edits after a 600 ms pause. Dragging
+stays local until release, and camera movements always stay local. Switching Live
+sharing off cancels pending automatic saves and restores manual publishing.
+Undo/redo remains available after either kind of save. The sharing mode defaults
+to manual when the editor is reopened in a new page session.
+
+A stale DM tab cannot overwrite a newer publication; discard its draft to load
+the latest. A failed save turns Live sharing off and preserves the draft for
+recovery, rather than repeatedly retrying it.
 Drafts and undo history stay in memory; leaving with unpublished changes prompts
 before discarding them. This first version has no collaborative editing or cursors.
 

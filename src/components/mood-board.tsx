@@ -33,6 +33,8 @@ export function MoodBoard(props: {
   const [dirty, setDirty] = createSignal(false);
   const [editing, setEditing] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
+  const [live, setLive] = createSignal(false);
+  const [interacting, setInteracting] = createSignal(false);
   const [error, setError] = createSignal("");
   const [selected, setSelected] = createSignal<string | null>(null);
   const [camera, setCamera] = createSignal<BoardCamera>({ x: 0, y: 0, zoom: 1 });
@@ -65,7 +67,7 @@ export function MoodBoard(props: {
   createEffect(
     () => props.snapshot,
     (snapshot) => {
-      if (!dirty() && !gesture && snapshot.revision >= revision()) adopt(snapshot);
+      if (!dirty() && !gesture && snapshot.revision > revision()) adopt(snapshot);
     },
   );
   const commit = (next: BoardDocument) => {
@@ -169,7 +171,7 @@ export function MoodBoard(props: {
     }
   };
   const publish = async () => {
-    if (!canEdit() || !dirty()) return;
+    if (!props.isDm || busy() || gesture || !dirty()) return;
     setBusy(true);
     setError("");
     try {
@@ -178,14 +180,34 @@ export function MoodBoard(props: {
         document: document(),
       });
       if (disposed) return;
-      adopt(props.snapshot.revision > saved.revision ? props.snapshot : saved);
+      if (props.snapshot.revision > saved.revision) adopt(props.snapshot);
+      else {
+        setRevision(saved.revision);
+        setDirty(false);
+      }
       props.onPublished(saved);
     } catch (err) {
+      // Keep the draft and stop automatic retries until the DM resolves the error.
+      setLive(false);
       setError(err instanceof Error ? err.message : "Could not publish board");
     } finally {
       setBusy(false);
     }
   };
+  createEffect(
+    () => ({
+      live: live(),
+      dirty: dirty(),
+      busy: busy(),
+      interacting: interacting(),
+      document: document(),
+    }),
+    (state) => {
+      if (!props.isDm || !state.live || !state.dirty || state.busy || state.interacting) return;
+      const timer = setTimeout(() => void publish(), 600);
+      onCleanup(() => clearTimeout(timer));
+    },
+  );
   const fit = () => {
     const elements = document().elements;
     if (!elements.length) {
@@ -213,6 +235,7 @@ export function MoodBoard(props: {
   };
   const start = (event: PointerEvent) => {
     if (gesture || (event.button !== 0 && event.button !== 1)) return;
+    setInteracting(true);
     const target =
       event.target instanceof Element
         ? event.target.closest<HTMLElement>("[data-board-element]")
@@ -254,6 +277,7 @@ export function MoodBoard(props: {
     raf = 0;
     const ended = gesture;
     gesture = undefined;
+    setInteracting(false);
     if (ended.type === "move") {
       ended.node.style.transform = `translate3d(${ended.element.x}px, ${ended.element.y}px, 0)`;
       if (!cancel && (ended.x !== ended.element.x || ended.y !== ended.element.y))
@@ -528,6 +552,15 @@ export function MoodBoard(props: {
             {editing() ? "View board" : "Edit board"}
           </Button>
           <Show when={editing()}>
+            <label {...sx(styles.row, b.status)}>
+              <input
+                type="checkbox"
+                checked={live()}
+                disabled={busy()}
+                onChange={(event) => setLive(event.currentTarget.checked)}
+              />
+              Live sharing
+            </label>
             <input
               ref={(element) => {
                 picker = element;
@@ -575,7 +608,7 @@ export function MoodBoard(props: {
             <Button
               small
               variant="primary"
-              disabled={busy() || !dirty()}
+              disabled={busy() || interacting() || !dirty()}
               onClick={() => void publish()}
             >
               Publish
@@ -594,7 +627,15 @@ export function MoodBoard(props: {
             </Show>
           </Show>
           <span {...sx(b.status)} role="status">
-            {busy() ? "Saving…" : dirty() ? "Unpublished changes" : "Shared board"}
+            {busy()
+              ? "Saving…"
+              : dirty()
+                ? live()
+                  ? "Sharing…"
+                  : "Unpublished changes"
+                : live()
+                  ? "Live sharing"
+                  : "Shared board"}
           </span>
           <Show when={dirty() && props.snapshot.revision > revision()}>
             <span {...sx(b.status)}>
