@@ -18,6 +18,12 @@ import {
   type WorldMember,
   type WorldSummary,
 } from "../domain/schemas";
+import {
+  BoardAssetId,
+  BoardSnapshot,
+  MAX_BOARD_IMAGE_BYTES,
+  PublishBoardInput,
+} from "../domain/board";
 import { hashPassword, randomToken, verifyPassword } from "./crypto";
 import * as repo from "./db";
 import {
@@ -281,6 +287,7 @@ const WorldBootstrap = HttpRouter.route(
     Effect.gen(function* () {
       const { db, user, world, member, stub } = yield* loadWorld();
       const state = yield* doJson<{
+        board: BoardSnapshot;
         templates: unknown[];
         characters: unknown[];
         messages: ChatMessage[];
@@ -293,11 +300,132 @@ const WorldBootstrap = HttpRouter.route(
         world: worldSummary(world, member, owner?.display_name ?? user.displayName),
         member,
         members: members.map(repo.toWorldMember),
+        board: state.board,
         templates: state.templates,
         characters: state.characters,
         messages: state.messages.filter((message) => canSeeMessage(message, member)),
         hasMoreMessages: state.hasMoreMessages,
         notes: state.notes.filter((note) => canSeeNote(note, member)),
+      });
+    }),
+  ),
+);
+
+const GetBoard = HttpRouter.route(
+  "GET",
+  "/api/worlds/:id/board",
+  route(
+    Effect.gen(function* () {
+      const { member, stub } = yield* loadWorld();
+      return json(yield* doJson<BoardSnapshot>(stub, "board", { method: "GET" }, member));
+    }),
+  ),
+);
+
+const PublishBoard = HttpRouter.route(
+  "PUT",
+  "/api/worlds/:id/board",
+  route(
+    Effect.gen(function* () {
+      const { member, stub } = yield* loadWorld(["dm"]);
+      const input = yield* readBody(PublishBoardInput);
+      return json(
+        yield* doJson<BoardSnapshot>(
+          stub,
+          "board",
+          {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(input),
+          },
+          member,
+        ),
+      );
+    }),
+  ),
+);
+
+const UploadBoardImage = HttpRouter.route(
+  "POST",
+  "/api/worlds/:id/board/images",
+  route(
+    Effect.gen(function* () {
+      const { world } = yield* loadWorld(["dm"]);
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const contentType = request.headers["content-type"] ?? "";
+      if (!["image/png", "image/jpeg", "image/webp"].includes(contentType)) {
+        return yield* Effect.fail(new BadRequest({ message: "Use a PNG, JPEG, or WebP image" }));
+      }
+      // Consume incrementally so an oversized upload cannot allocate an unbounded buffer.
+      const webRequest = yield* HttpServerRequest.toWeb(request).pipe(
+        Effect.mapError(() => new BadRequest({ message: "Could not read image" })),
+      );
+      if (!webRequest.body)
+        return yield* Effect.fail(new BadRequest({ message: "Image is empty" }));
+      const reader = webRequest.body.getReader();
+      const bytes = yield* Effect.tryPromise({
+        try: async () => {
+          const chunks: Uint8Array[] = [];
+          let size = 0;
+          try {
+            while (true) {
+              const chunk = await reader.read();
+              if (chunk.done) break;
+              size += chunk.value.byteLength;
+              if (size > MAX_BOARD_IMAGE_BYTES) {
+                await reader.cancel();
+                throw new Error("Image must be 5MB or smaller");
+              }
+              chunks.push(chunk.value);
+            }
+          } finally {
+            reader.releaseLock();
+          }
+          if (!size) throw new Error("Image is empty");
+          const result = new Uint8Array(size);
+          let offset = 0;
+          for (const chunk of chunks) {
+            result.set(chunk, offset);
+            offset += chunk.byteLength;
+          }
+          return result;
+        },
+        catch: (error) =>
+          new BadRequest({
+            message: error instanceof Error ? error.message : "Could not read image",
+          }),
+      });
+      const assetId = crypto.randomUUID();
+      const bucket = yield* Bucket;
+      yield* Effect.promise(() =>
+        bucket.put(`${world.r2_prefix}/board/${assetId}`, bytes, { httpMetadata: { contentType } }),
+      );
+      return json({ assetId }, 201);
+    }),
+  ),
+);
+
+const GetBoardImage = HttpRouter.route(
+  "GET",
+  "/api/worlds/:id/board/images/:assetId",
+  route(
+    Effect.gen(function* () {
+      const { world } = yield* loadWorld();
+      const params = yield* HttpRouter.params;
+      const decoded = Schema.decodeUnknownResult(BoardAssetId)(params.assetId);
+      if (decoded._tag === "Failure")
+        return yield* Effect.fail(new BadRequest({ message: "Invalid image ID" }));
+      const bucket = yield* Bucket;
+      const object = yield* Effect.promise(() =>
+        bucket.get(`${world.r2_prefix}/board/${decoded.success}`),
+      );
+      if (!object) return yield* Effect.fail(new NotFound({ message: "Image not found" }));
+      return HttpServerResponse.raw(object.body, {
+        headers: {
+          "content-type": object.httpMetadata?.contentType ?? "image/webp",
+          "cache-control": "private, max-age=31536000, immutable",
+          "x-content-type-options": "nosniff",
+        },
       });
     }),
   ),
@@ -706,6 +834,10 @@ export const Api = HttpRouter.addAll([
   Logout,
   CreateWorld,
   WorldBootstrap,
+  GetBoard,
+  PublishBoard,
+  UploadBoardImage,
+  GetBoardImage,
   ListMembers,
   CreateMember,
   UpdateMember,

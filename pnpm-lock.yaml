@@ -42,7 +42,7 @@ importers:
         version: 3.17.9
       alchemy:
         specifier: 2.0.0-beta.77
-        version: 2.0.0-beta.77(@effect/platform-bun@4.0.0-rc.112(effect@4.0.0-rc.112))(@effect/platform-node@4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.2.1))(@types/node@25.9.1)(@voidzero-dev/vite-plus-core@0.3.1(@types/node@25.9.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(typescript@6.0.3)(yaml@2.9.0))(drizzle-kit@1.0.0-rc.4)(drizzle-orm@1.0.0-rc.4(@cloudflare/workers-types@5.20260910.1)(@effect/sql-d1@4.0.0-rc.112(effect@4.0.0-rc.112))(@effect/sql-sqlite-do@4.0.0-rc.112(effect@4.0.0-rc.112))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3)(effect@4.0.0-rc.112)(valibot@1.2.0(typescript@6.0.3)))(effect@4.0.0-rc.112)(typescript@6.0.3)(vitest@4.1.11(@types/node@25.9.1)(@vitest/browser-preview@4.1.11)(@voidzero-dev/vite-plus-core@0.3.1(@types/node@25.9.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(typescript@6.0.3)(yaml@2.9.0))(jsdom@30.0.1))(ws@8.21.3)
+        version: 2.0.0-beta.77(@effect/platform-bun@4.0.0-rc.112(effect@4.0.0-rc.112))(@effect/platform-node@4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.2.1))(@types/node@25.9.1)(@voidzero-dev/vite-plus-core@0.3.1(@types/node@25.9.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(typescript@6.0.3)(yaml@2.9.0))(drizzle-kit@1.0.0-rc.4)(drizzle-orm@1.0.0-rc.4(@cloudflare/workers-types@5.20260910.1)(@effect/sql-d1@4.0.0-rc.112(effect@4.0.0-rc.112))(@effect/sql-sqlite-do@4.0.0-rc.112(effect@4.0.0-rc.112))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3)(effect@4.0.0-rc.112)(valibot@1.2.0(typescript@6.0.3)))(effect@4.0.0-rc.112)(typescript@6.0.3)(vitest@4.1.11)(ws@8.21.3)
       drizzle-orm:
         specifier: 1.0.0-rc.4
         version: 1.0.0-rc.4(@cloudflare/workers-types@5.20260910.1)(@effect/sql-d1@4.0.0-rc.112(effect@4.0.0-rc.112))(@effect/sql-sqlite-do@4.0.0-rc.112(effect@4.0.0-rc.112))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3)(effect@4.0.0-rc.112)(valibot@1.2.0(typescript@6.0.3))
@@ -65,9 +65,15 @@ importers:
       drizzle-kit:
         specifier: 1.0.0-rc.4
         version: 1.0.0-rc.4
+      esbuild:
+        specifier: 0.28.1
+        version: 0.28.1
       jsdom:
         specifier: ^30.0.1
         version: 30.0.1
+      miniflare:
+        specifier: 5.20260908.0-alpha
+        version: 5.20260908.0-alpha
       vite:
         specifier: npm:@voidzero-dev/vite-plus-core@0.3.1
         version: '@voidzero-dev/vite-plus-core@0.3.1(@types/node@25.9.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(typescript@6.0.3)(yaml@2.9.0)'
@@ -4312,7 +4318,7 @@ snapshots:
     dependencies:
       effect: 4.0.0-rc.112
 
-  '@effect/vitest@4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@25.9.1)(@vitest/browser-preview@4.1.11)(@voidzero-dev/vite-plus-core@0.3.1(@types/node@25.9.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(typescript@6.0.3)(yaml@2.9.0))(jsdom@30.0.1))':
+  '@effect/vitest@4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11)':
     dependencies:
       effect: 4.0.0-rc.112
       vitest: 4.1.11(@types/node@25.9.1)(@vitest/browser-preview@4.1.11)(@voidzero-dev/vite-plus-core@0.3.1(@types/node@25.9.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(typescript@6.0.3)(yaml@2.9.0))(jsdom@30.0.1)
@@ -5642,7 +5648,7 @@ snapshots:
 
   acorn@8.18.0: {}
 
-  alchemy@2.0.0-beta.77(@effect/platform-bun@4.0.0-rc.112(effect@4.0.0-rc.112))(@effect/platform-node@4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.2.1))(@types/node@25.9.1)(@voidzero-dev/vite-plus-core@0.3.1(@types/node@25.9.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(typescript@6.0.3)(yaml@2.9.0))(drizzle-kit@1.0.0-rc.4)(drizzle-orm@1.0.0-rc.4(@cloudflare/workers-types@5.20260910.1)(@effect/sql-d1@4.0.0-rc.112(effect@4.0.0-rc.112))(@effect/sql-sqlite-do@4.0.0-rc.112(effect@4.0.0-rc.112))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3)(effect@4.0.0-rc.112)(valibot@1.2.0(typescript@6.0.3)))(effect@4.0.0-rc.112)(typescript@6.0.3)(vitest@4.1.11(@types/node@25.9.1)(@vitest/browser-preview@4.1.11)(@voidzero-dev/vite-plus-core@0.3.1(@types/node@25.9.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(typescript@6.0.3)(yaml@2.9.0))(jsdom@30.0.1))(ws@8.21.3):
+  alchemy@2.0.0-beta.77(@effect/platform-bun@4.0.0-rc.112(effect@4.0.0-rc.112))(@effect/platform-node@4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.2.1))(@types/node@25.9.1)(@voidzero-dev/vite-plus-core@0.3.1(@types/node@25.9.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(typescript@6.0.3)(yaml@2.9.0))(drizzle-kit@1.0.0-rc.4)(drizzle-orm@1.0.0-rc.4(@cloudflare/workers-types@5.20260910.1)(@effect/sql-d1@4.0.0-rc.112(effect@4.0.0-rc.112))(@effect/sql-sqlite-do@4.0.0-rc.112(effect@4.0.0-rc.112))(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.3)(effect@4.0.0-rc.112)(valibot@1.2.0(typescript@6.0.3)))(effect@4.0.0-rc.112)(typescript@6.0.3)(vitest@4.1.11)(ws@8.21.3):
     dependencies:
       '@alchemy.run/cloudflare-runtime': 2.0.0-beta.77(@distilled.cloud/cloudflare@1.0.0-rc.9(effect@4.0.0-rc.112))(@effect/platform-bun@4.0.0-rc.112(effect@4.0.0-rc.112))(@effect/platform-node@4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.2.1))(@types/node@25.9.1)(@voidzero-dev/vite-plus-core@0.3.1(@types/node@25.9.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(typescript@6.0.3)(yaml@2.9.0))(effect@4.0.0-rc.112)(rolldown@1.2.5)(typescript@6.0.3)
       '@alchemy.run/floci': 2.0.0-beta.77(effect@4.0.0-rc.112)
@@ -5660,7 +5666,7 @@ snapshots:
       '@distilled.cloud/railway': 1.0.0-rc.9(effect@4.0.0-rc.112)
       '@effect/sql-d1': 4.0.0-rc.112(effect@4.0.0-rc.112)
       '@effect/sql-sqlite-do': 4.0.0-rc.112(effect@4.0.0-rc.112)
-      '@effect/vitest': 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@25.9.1)(@vitest/browser-preview@4.1.11)(@voidzero-dev/vite-plus-core@0.3.1(@types/node@25.9.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(typescript@6.0.3)(yaml@2.9.0))(jsdom@30.0.1))
+      '@effect/vitest': 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11)
       '@libsql/client': 0.17.3
       '@octokit/rest': 22.0.1
       '@octokit/webhooks': 14.2.0
