@@ -154,7 +154,7 @@ export function MoodBoard(props: {
           type: "image",
           id: crypto.randomUUID(),
           assetId,
-          label: file.name.slice(0, 200),
+          label: (file.name || "Pasted image").slice(0, 200),
           x: point.x - width / 2,
           y: point.y - height / 2,
           width,
@@ -300,6 +300,22 @@ export function MoodBoard(props: {
       ),
     );
   };
+  const paste = (event: ClipboardEvent) => {
+    if (!canEdit()) return;
+    const target = event.target;
+    if (
+      target instanceof HTMLElement &&
+      (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
+    )
+      return;
+    const file = Array.from(event.clipboardData?.items ?? [])
+      .find((item) => item.kind === "file" && item.type.startsWith("image/"))
+      ?.getAsFile();
+    if (!file) return;
+    event.preventDefault();
+    uploadKind = "element";
+    void upload(file);
+  };
   onSettled(() => {
     const observer = new ResizeObserver(([entry]) => {
       if (entry) setSize({ width: entry.contentRect.width, height: entry.contentRect.height });
@@ -313,10 +329,12 @@ export function MoodBoard(props: {
       }
     };
     window.addEventListener("beforeunload", unload);
+    window.addEventListener("paste", paste);
     onCleanup(() => {
       observer.disconnect();
       viewport.removeEventListener("wheel", wheel);
       window.removeEventListener("beforeunload", unload);
+      window.removeEventListener("paste", paste);
     });
   });
   onCleanup(() => {
