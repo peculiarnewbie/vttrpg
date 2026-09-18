@@ -38,15 +38,30 @@ Production uses the existing `ttrpg` Worker, D1 database, and R2 bucket. Preview
 deploys as the isolated `ttrpg-preview` Worker with its own D1 database, R2
 bucket, and Durable Object namespace.
 
-For Cloudflare Workers Builds, connect this repository with `main` as the
-production branch and enable builds for non-production branches. Configure:
+For Cloudflare Workers Builds, connect this repository to both Workers. This is
+Cloudflare's supported pattern for Wrangler environments and prevents a preview
+build from targeting the production Worker.
 
-| Setting                       | Value                    |
-| ----------------------------- | ------------------------ |
-| Build command                 | `pnpm build`             |
-| Deploy command                | `pnpm deploy:production` |
-| Non-production deploy command | `pnpm deploy:preview`    |
-| Build variable                | `PNPM_VERSION=12.4.2`    |
+Configure the `ttrpg` Worker:
+
+| Setting                      | Value                    |
+| ---------------------------- | ------------------------ |
+| Production branch            | `main`                   |
+| Non-production branch builds | Disabled                 |
+| Build command                | `pnpm build`             |
+| Deploy command               | `pnpm deploy:production` |
+| Build variable               | `PNPM_VERSION=12.4.2`    |
+
+Configure the `ttrpg-preview` Worker:
+
+| Setting                       | Value                 |
+| ----------------------------- | --------------------- |
+| Production branch             | `main`                |
+| Non-production branch builds  | Enabled               |
+| Build command                 | `pnpm build`          |
+| Deploy command                | `pnpm deploy:preview` |
+| Non-production deploy command | `pnpm deploy:preview` |
+| Build variable                | `PNPM_VERSION=12.4.2` |
 
 Cloudflare manages the build token; no Cloudflare credentials belong in the
 repository. Because Workers with Durable Objects do not receive version preview
