@@ -5,6 +5,7 @@
   "scripts": {
     "build": "vp build",
     "deploy": "vp build && vp exec alchemy deploy",
+    "deploy:production": "vp build && vp exec alchemy --no-input deploy --stage live_bolt --yes",
     "destroy": "vp exec alchemy destroy",
     "plan": "vp exec alchemy plan",
     "dev": "vp build && vp exec alchemy dev",
@@ -44,19 +45,5 @@
     "vitest": "4.1.11",
     "wrangler": "^4.130.0"
   },
-  "packageManager": "pnpm@10.33.0",
-  "pnpm": {
-    "overrides": {
-      "vite@*": "npm:@voidzero-dev/vite-plus-core@0.3.1",
-      "vitest@*": "4.1.11",
-      "@effect/platform-node-shared": "4.0.0-rc.112",
-      "@effect/vitest": "4.0.0-rc.112",
-      "@effect/sql-d1": "4.0.0-rc.112",
-      "@effect/sql-sqlite-do": "4.0.0-rc.112"
-    },
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "workerd"
-    ]
-  }
+  "packageManager": "pnpm@12.4.2"
 }

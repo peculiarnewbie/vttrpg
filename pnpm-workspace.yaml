@@ -1,2 +1,15 @@
 packages:
   - "."
+
+overrides:
+  vite@*: npm:@voidzero-dev/vite-plus-core@0.3.1
+  vitest@*: 4.1.11
+  "@effect/platform-node-shared": 4.0.0-rc.112
+  "@effect/vitest": 4.0.0-rc.112
+  "@effect/sql-d1": 4.0.0-rc.112
+  "@effect/sql-sqlite-do": 4.0.0-rc.112
+
+allowBuilds:
+  esbuild: true
+  msgpackr-extract: false
+  workerd: true
