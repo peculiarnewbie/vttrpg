@@ -9,13 +9,6 @@ import { WorldDO } from "./server/world-do";
 
 export { WorldDO };
 
-export type Env = {
-  ASSETS: Fetcher;
-  DB: D1Database;
-  BUCKET: R2Bucket;
-  WORLDS: DurableObjectNamespace<WorldDO>;
-};
-
 const appLayer = Layer.merge(HttpRouter.layer, Api);
 const { handler } = HttpRouter.toWebHandler(appLayer);
 

@@ -4,7 +4,7 @@ A tiny virtual tabletop on Cloudflare: realtime chat, flexible character
 sheets, a dice engine, and notes. Each **world** is its own Durable Object
 (SQLite) with an R2 file prefix.
 
-Built with **Alchemy v2 + Effect + Solid.js + StyleX**.
+Built with **Cloudflare Workers + Effect + Solid.js + StyleX**.
 
 ## Features (POC)
 
@@ -22,22 +22,42 @@ Built with **Alchemy v2 + Effect + Solid.js + StyleX**.
 
 ```bash
 pnpm install
-pnpm dev      # builds the client, then runs Alchemy dev
+pnpm dev      # migrates local D1, builds, then runs Wrangler dev
 pnpm check    # lint + format + typecheck
 pnpm test
-```
-
-Alchemy needs a Cloudflare profile with the right scopes:
-
-```bash
-pnpm exec alchemy profile refresh --profile default --provider Cloudflare
 ```
 
 ## Deploy
 
 ```bash
-pnpm deploy   # builds client assets, then deploys the stack
-pnpm destroy  # tear everything down
+pnpm deploy          # build and deploy production
+pnpm deploy:preview  # deploy the already-built shared preview environment
+```
+
+Production uses the existing `ttrpg` Worker, D1 database, and R2 bucket. Preview
+deploys as the isolated `ttrpg-preview` Worker with its own D1 database, R2
+bucket, and Durable Object namespace.
+
+For Cloudflare Workers Builds, connect this repository with `main` as the
+production branch and enable builds for non-production branches. Configure:
+
+| Setting                       | Value                    |
+| ----------------------------- | ------------------------ |
+| Build command                 | `pnpm build`             |
+| Deploy command                | `pnpm deploy:production` |
+| Non-production deploy command | `pnpm deploy:preview`    |
+| Build variable                | `PNPM_VERSION=12.4.2`    |
+
+Cloudflare manages the build token; no Cloudflare credentials belong in the
+repository. Because Workers with Durable Objects do not receive version preview
+URLs, non-production branches deploy to the stable shared preview Worker. The
+most recently pushed non-production branch is the version available there.
+
+D1 migrations are intentionally explicit rather than part of every code deploy:
+
+```bash
+pnpm db:migrate
+pnpm db:migrate:preview
 ```
 
 ## Theming

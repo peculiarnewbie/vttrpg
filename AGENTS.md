@@ -1,4 +1,4 @@
-# Tabletop — Alchemy v2 + Effect + Solid.js
+# Tabletop — Cloudflare Workers + Effect + Solid.js
 
 A small virtual tabletop that lives entirely on Cloudflare: per-world Durable
 Objects, R2 file storage, D1 accounts/world registry, realtime chat, flexible
@@ -6,7 +6,7 @@ character sheets, a dice engine, and notes.
 
 ## Stack
 
-- **Alchemy v2** — infra-as-code (Cloudflare Workers, D1, R2, Durable Objects)
+- **Wrangler** — Worker configuration and deployment, including D1, R2, Durable Objects, and assets
 - **Effect** — typed errors, dependency injection, Effect Schema, `effect/unstable/http`
 - **Solid.js** — reactive UI with Solid Router (`@solidjs/router` 2)
 - **StyleX** — atomic CSS-in-JS with `stylex.defineVars` / `stylex.createTheme` theming
@@ -16,14 +16,14 @@ character sheets, a dice engine, and notes.
 - **TypeScript 7** beta (`@typescript/native-preview`) — `tsgo --noEmit`
 - **pnpm** — package manager
 
-> **Effect is pinned to `4.0.0-rc.112`.** Alchemy beta.77 still calls
-> `Config.string`; Effect `rc.113` renamed it to `Config.String`. All
-> `@effect/*` packages (including `platform-node-shared`) are pinned to
-> `rc.112` via `pnpm.overrides` so the tree is consistent.
+> **Effect is pinned to `4.0.0-rc.112`.** All `@effect/*` packages (including
+> `platform-node-shared`) are pinned to `rc.112` via `pnpm.overrides` so the
+> tree is consistent.
 
 ## Architecture
 
-- `alchemy.run.ts` declares D1, R2, and the Worker (with `WORLDS` Durable Object namespace)
+- `wrangler.jsonc` declares production and preview D1, R2, assets, and the
+  Worker (with the `WORLDS` Durable Object namespace)
 - `src/worker.ts` — plain `ExportedHandler<Env>`; routes `/api/*` into the Effect
   `HttpRouter`, upgrades `/api/worlds/:id/ws` to the world Durable Object, and falls
   back to static assets. Also re-exports `WorldDO`.
@@ -52,13 +52,17 @@ character sheets, a dice engine, and notes.
 
 ## Commands
 
-| Run                | What it does                                 |
-| ------------------ | -------------------------------------------- |
-| `pnpm build`       | Build client assets into `dist/client`       |
-| `pnpm dev`         | Build client, then Alchemy dev (Worker + DO) |
-| `pnpm deploy`      | Build client, then deploy the stack          |
-| `pnpm destroy`     | Tear down the stack                          |
-| `pnpm check`       | Lint + fmt + typecheck                       |
-| `pnpm test`        | Run all tests                                |
-| `pnpm typecheck`   | TypeScript 7 check                           |
-| `pnpm db:generate` | Generate a D1 migration                      |
+| Run                       | What it does                                  |
+| ------------------------- | --------------------------------------------- |
+| `pnpm build`              | Build client assets into `dist/client`        |
+| `pnpm dev`                | Build client, then Wrangler dev (Worker + DO) |
+| `pnpm deploy`             | Build client, then deploy production          |
+| `pnpm deploy:preview`     | Deploy the already-built preview Worker       |
+| `pnpm check`              | Lint + fmt + typecheck                        |
+| `pnpm test`               | Run all tests                                 |
+| `pnpm typecheck`          | TypeScript 7 check                            |
+| `pnpm types`              | Regenerate Worker binding/runtime types       |
+| `pnpm db:migrate:local`   | Apply local D1 migrations                     |
+| `pnpm db:migrate`         | Apply production D1 migrations                |
+| `pnpm db:migrate:preview` | Apply preview D1 migrations                   |
+| `pnpm db:generate`        | Generate a D1 migration                       |
