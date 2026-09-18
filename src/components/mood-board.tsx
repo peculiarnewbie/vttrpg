@@ -3,6 +3,16 @@ import { For, Show, createEffect, createSignal, onCleanup, onSettled } from "sol
 import { api } from "../client/api";
 import { prepareBoardImage } from "../client/board-image";
 import {
+  clampCoordinate,
+  pinchCamera,
+  resizeBounds,
+  resizeHandles,
+  touchPair,
+  type BoardBounds,
+  type Point,
+  type ResizeHandle,
+} from "../client/board-geometry";
+import {
   MAX_BOARD_ELEMENTS,
   isElementVisible,
   screenToBoard,
@@ -15,12 +25,26 @@ import {
 import { sx } from "../theme/sx";
 import { boardStyles as b } from "./board.stylex";
 import { styles } from "./styles.stylex";
-import { Button, ErrorBanner, Field } from "./ui";
+import { Button, ErrorBanner } from "./ui";
 
-type Gesture = { pointerId: number; startX: number; startY: number; camera: BoardCamera } & (
+type SingleGesture = {
+  pointerId: number;
+  start: Point;
+  camera: BoardCamera;
+  moved: boolean;
+  threshold: number;
+} & (
   | { type: "pan" }
-  | { type: "move"; element: BoardElement; node: HTMLElement; x: number; y: number }
+  | { type: "move"; element: BoardElement; bounds: BoardBounds }
+  | { type: "resize"; element: BoardElement; bounds: BoardBounds; handle: ResizeHandle }
 );
+type Gesture =
+  | SingleGesture
+  | {
+      type: "pinch";
+      camera: BoardCamera;
+      initial: ReturnType<typeof touchPair>;
+    };
 
 export function MoodBoard(props: {
   worldId: string;
@@ -41,6 +65,14 @@ export function MoodBoard(props: {
   const [size, setSize] = createSignal({ width: 1000, height: 700 });
   const [past, setPast] = createSignal<BoardDocument[]>([]);
   const [future, setFuture] = createSignal<BoardDocument[]>([]);
+  const [tool, setTool] = createSignal<"select" | "hand">("select");
+  const [spaceHeld, setSpaceHeld] = createSignal(false);
+  const [preview, setPreview] = createSignal<BoardBounds | null>(null);
+  const [textEdit, setTextEdit] = createSignal<{ id: string; initial: string } | null>(null);
+  const pointers = new Map<number, Point>();
+  let textSession: { id: string; initial: string } | undefined;
+  let textDraft = "";
+  let lastTap: { id: string; time: number; point: Point } | undefined;
   let viewport!: HTMLDivElement;
   let picker!: HTMLInputElement;
   let uploadKind: "background" | "element" = "element";
@@ -48,26 +80,39 @@ export function MoodBoard(props: {
   let raf = 0;
   let disposed = false;
   useBeforeLeave((event) => {
-    if (dirty() && !window.confirm("Leave without publishing your board changes?"))
+    const hasTextChange = textSession && textDraft !== textSession.initial;
+    finishText();
+    if (
+      (dirty() || hasTextChange) &&
+      !window.confirm("Leave without publishing your board changes?")
+    )
       event.preventDefault();
   });
   const canEdit = () => props.isDm && editing() && !busy();
   const current = () => document().elements.find((item) => item.id === selected());
+  const selectionBounds = () => preview() ?? current();
   const imageUrl = (id: string) => api.boardImageUrl(props.worldId, id);
 
   const adopt = (snapshot: BoardSnapshot) => {
+    textSession = undefined;
     setDocument(snapshot.document);
     setRevision(snapshot.revision);
     setDirty(false);
     setPast([]);
     setFuture([]);
     setSelected(null);
+    setTextEdit(null);
     setError("");
   };
   createEffect(
-    () => props.snapshot,
-    (snapshot) => {
-      if (!dirty() && !gesture && snapshot.revision > revision()) adopt(snapshot);
+    () => ({
+      snapshot: props.snapshot,
+      dirty: dirty(),
+      interacting: interacting(),
+      textEdit: textEdit(),
+    }),
+    ({ snapshot, dirty, interacting, textEdit }) => {
+      if (!dirty && !interacting && !textEdit && snapshot.revision > revision()) adopt(snapshot);
     },
   );
   const commit = (next: BoardDocument) => {
@@ -83,6 +128,22 @@ export function MoodBoard(props: {
       ...document(),
       elements: document().elements.map((item) => (item.id === next.id ? next : item)),
     });
+  const finishText = (cancel = false) => {
+    const edit = textSession;
+    if (!edit) return;
+    // Blur may fire before Solid flushes the editor's removal. Finalize once.
+    textSession = undefined;
+    const element = document().elements.find((item) => item.id === edit.id);
+    setTextEdit(null);
+    if (!cancel && element?.type === "text" && textDraft !== element.text)
+      updateElement({ ...element, text: textDraft });
+  };
+  const editText = (element = current()) => {
+    if (!canEdit() || element?.type !== "text") return;
+    textDraft = element.text;
+    textSession = { id: element.id, initial: element.text };
+    setTextEdit(textSession);
+  };
   const undo = () => {
     const previous = past().at(-1);
     if (!canEdit() || !previous) return;
@@ -100,7 +161,7 @@ export function MoodBoard(props: {
     setDirty(true);
   };
   const remove = () => {
-    if (!current()) return;
+    if (!canEdit() || !current()) return;
     commit({
       ...document(),
       elements: document().elements.filter((item) => item.id !== selected()),
@@ -128,6 +189,7 @@ export function MoodBoard(props: {
     };
     commit({ ...document(), elements: [...document().elements, element] });
     setSelected(element.id);
+    editText(element);
   };
   const chooseImage = (kind: typeof uploadKind) => {
     uploadKind = kind;
@@ -171,7 +233,7 @@ export function MoodBoard(props: {
     }
   };
   const publish = async () => {
-    if (!props.isDm || busy() || gesture || !dirty()) return;
+    if (!props.isDm || busy() || gesture || textEdit() || !dirty()) return;
     setBusy(true);
     setError("");
     try {
@@ -200,15 +262,25 @@ export function MoodBoard(props: {
       dirty: dirty(),
       busy: busy(),
       interacting: interacting(),
+      textEdit: textEdit(),
       document: document(),
     }),
     (state) => {
-      if (!props.isDm || !state.live || !state.dirty || state.busy || state.interacting) return;
+      if (
+        !props.isDm ||
+        !state.live ||
+        !state.dirty ||
+        state.busy ||
+        state.interacting ||
+        state.textEdit
+      )
+        return;
       const timer = setTimeout(() => void publish(), 600);
       onCleanup(() => clearTimeout(timer));
     },
   );
   const fit = () => {
+    if (gesture) return;
     const elements = document().elements;
     if (!elements.length) {
       setCamera({ x: 0, y: 0, zoom: 1 });
@@ -230,75 +302,252 @@ export function MoodBoard(props: {
   };
   const paintGesture = () => {
     raf = 0;
-    if (gesture?.type === "move")
-      gesture.node.style.transform = `translate3d(${gesture.x}px, ${gesture.y}px, 0)`;
+    if (gesture?.type === "move" || gesture?.type === "resize") setPreview(gesture.bounds);
   };
-  const start = (event: PointerEvent) => {
-    if (gesture || (event.button !== 0 && event.button !== 1)) return;
-    setInteracting(true);
-    const target =
-      event.target instanceof Element
-        ? event.target.closest<HTMLElement>("[data-board-element]")
-        : null;
-    const element = document().elements.find((item) => item.id === target?.dataset.boardElement);
-    const common = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      camera: camera(),
-    };
-    if (canEdit() && element && target && event.button === 0 && !event.altKey) {
-      setSelected(element.id);
-      gesture = { ...common, type: "move", element, node: target, x: element.x, y: element.y };
-    } else {
-      setSelected(null);
-      gesture = { ...common, type: "pan" };
-    }
-    viewport.focus();
-    viewport.setPointerCapture(event.pointerId);
-    event.preventDefault();
+  const localPoint = (event: PointerEvent): Point => {
+    const rect = viewport.getBoundingClientRect();
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
   };
-  const move = (event: PointerEvent) => {
-    if (!gesture || gesture.pointerId !== event.pointerId) return;
-    const dx = event.clientX - gesture.startX,
-      dy = event.clientY - gesture.startY;
-    if (gesture.type === "pan")
-      setCamera({ ...gesture.camera, x: gesture.camera.x + dx, y: gesture.camera.y + dy });
-    else {
-      gesture.x = Math.max(-100000, Math.min(100000, gesture.element.x + dx / gesture.camera.zoom));
-      gesture.y = Math.max(-100000, Math.min(100000, gesture.element.y + dy / gesture.camera.zoom));
-      if (!raf) raf = requestAnimationFrame(paintGesture);
-    }
+  const pair = () => {
+    const [first, second] = pointers.values();
+    return first && second ? touchPair([first, second]) : undefined;
   };
-  const finish = (event: PointerEvent, cancel = false) => {
-    if (!gesture || gesture.pointerId !== event.pointerId) return;
-    if (!cancel) move(event);
+  const clearPreview = () => {
     cancelAnimationFrame(raf);
     raf = 0;
-    const ended = gesture;
+    setPreview(null);
+  };
+  const cancelGesture = () => {
+    const ids = [...pointers.keys()];
     gesture = undefined;
+    pointers.clear();
+    clearPreview();
+    lastTap = undefined;
     setInteracting(false);
-    if (ended.type === "move") {
-      ended.node.style.transform = `translate3d(${ended.element.x}px, ${ended.element.y}px, 0)`;
-      if (!cancel && (ended.x !== ended.element.x || ended.y !== ended.element.y))
-        updateElement({ ...ended.element, x: ended.x, y: ended.y });
+    for (const id of ids) if (viewport.hasPointerCapture(id)) viewport.releasePointerCapture(id);
+  };
+  const start = (event: PointerEvent) => {
+    if (event.button !== 0 && event.button !== 1) return;
+    if (event.target instanceof HTMLTextAreaElement) return;
+    finishText();
+    const point = localPoint(event);
+    pointers.set(event.pointerId, point);
+    viewport.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    viewport.focus({ preventScroll: true });
+    setInteracting(true);
+    const touches = pair();
+    if (touches) {
+      // A second finger means navigation; abandon any uncommitted object drag.
+      clearPreview();
+      lastTap = undefined;
+      gesture = { type: "pinch", camera: camera(), initial: touches };
+      return;
     }
+    const target = event.target instanceof Element ? event.target : null;
+    const id = target?.closest<HTMLElement>("[data-board-element]")?.dataset.boardElement;
+    const element = document().elements.find((item) => item.id === id);
+    const handle = resizeHandles.find(
+      (item) => item.id === target?.closest<HTMLElement>("[data-resize]")?.dataset.resize,
+    );
+    const common = {
+      pointerId: event.pointerId,
+      start: point,
+      camera: camera(),
+      moved: false,
+      threshold: event.pointerType === "touch" ? 8 : 3,
+    };
+    const navigating = tool() === "hand" || spaceHeld() || event.button === 1 || event.altKey;
+    if (canEdit() && !navigating && handle && current()) {
+      const selectedElement = current()!;
+      gesture = {
+        ...common,
+        type: "resize",
+        element: selectedElement,
+        bounds: selectedElement,
+        handle: handle.id,
+      };
+    } else if (canEdit() && !navigating && element) {
+      setSelected(element.id);
+      gesture = { ...common, type: "move", element, bounds: element };
+    } else {
+      if (!navigating) setSelected(null);
+      gesture = { ...common, type: "pan" };
+    }
+  };
+  const move = (event: PointerEvent) => {
+    if (!pointers.has(event.pointerId) || !gesture) return;
+    const point = localPoint(event);
+    pointers.set(event.pointerId, point);
+    if (gesture.type === "pinch") {
+      const touches = pair();
+      if (touches)
+        setCamera(
+          pinchCamera({ camera: gesture.camera, initial: gesture.initial, current: touches }),
+        );
+      return;
+    }
+    if (gesture.pointerId !== event.pointerId) return;
+    const dx = point.x - gesture.start.x,
+      dy = point.y - gesture.start.y;
+    if (!gesture.moved && Math.hypot(dx, dy) < gesture.threshold) return;
+    gesture.moved = true;
+    lastTap = undefined;
+    if (gesture.type === "pan") {
+      setCamera({ ...gesture.camera, x: gesture.camera.x + dx, y: gesture.camera.y + dy });
+      return;
+    }
+    const delta = { x: dx / gesture.camera.zoom, y: dy / gesture.camera.zoom };
+    gesture.bounds =
+      gesture.type === "resize"
+        ? resizeBounds({
+            initial: gesture.element,
+            handle: gesture.handle,
+            delta,
+            keepRatio: gesture.element.type === "image" ? !event.shiftKey : event.shiftKey,
+          })
+        : {
+            ...gesture.element,
+            x: clampCoordinate(gesture.element.x + delta.x),
+            y: clampCoordinate(gesture.element.y + delta.y),
+          };
+    if (!raf) raf = requestAnimationFrame(paintGesture);
+  };
+  const finish = (event: PointerEvent, cancel = false) => {
+    if (!pointers.has(event.pointerId) || !gesture) return;
+    if (cancel) {
+      cancelGesture();
+      return;
+    }
+    move(event);
+    const ended = gesture;
+    pointers.delete(event.pointerId);
+    gesture = undefined;
+    clearPreview();
+    if (ended.type === "pinch") {
+      const touches = pair();
+      if (touches) gesture = { type: "pinch", camera: camera(), initial: touches };
+      else {
+        const [remaining] = pointers;
+        // Continue with one finger as a pan, never as an object drag or tap.
+        if (remaining)
+          gesture = {
+            type: "pan",
+            pointerId: remaining[0],
+            start: remaining[1],
+            camera: camera(),
+            moved: true,
+            threshold: 0,
+          };
+      }
+    } else if (ended.type === "move" || ended.type === "resize") {
+      if (ended.moved) {
+        const next = ended.bounds;
+        if (
+          next.x !== ended.element.x ||
+          next.y !== ended.element.y ||
+          next.width !== ended.element.width ||
+          next.height !== ended.element.height
+        )
+          updateElement({ ...ended.element, ...next });
+      } else if (ended.type === "move") {
+        const point = localPoint(event);
+        if (
+          lastTap?.id === ended.element.id &&
+          event.timeStamp - lastTap.time < 350 &&
+          Math.hypot(point.x - lastTap.point.x, point.y - lastTap.point.y) < 24
+        ) {
+          lastTap = undefined;
+          editText(ended.element);
+        } else lastTap = { id: ended.element.id, time: event.timeStamp, point };
+      }
+    } else lastTap = undefined;
+    setInteracting(!!gesture);
     if (viewport.hasPointerCapture(event.pointerId))
       viewport.releasePointerCapture(event.pointerId);
-    // Apply a publication that arrived while this viewer was panning.
-    if (!dirty() && props.snapshot.revision > revision()) adopt(props.snapshot);
+  };
+  const changeZoom = (zoom: number) => {
+    if (gesture) return;
+    setCamera((previous) => zoomAt(previous, { x: size().width / 2, y: size().height / 2 }, zoom));
   };
   const wheel = (event: WheelEvent) => {
+    if (event.target instanceof HTMLTextAreaElement) return;
     event.preventDefault();
     if (gesture) return;
     const rect = viewport.getBoundingClientRect();
-    setCamera((prev) =>
-      zoomAt(
-        prev,
-        { x: event.clientX - rect.left, y: event.clientY - rect.top },
-        prev.zoom * Math.exp(-event.deltaY * 0.002),
-      ),
-    );
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? size().height : 1;
+    const dx = event.deltaX * unit,
+      dy = event.deltaY * unit;
+    if (event.ctrlKey || event.metaKey) {
+      setCamera((prev) =>
+        zoomAt(
+          prev,
+          { x: event.clientX - rect.left, y: event.clientY - rect.top },
+          prev.zoom * Math.exp(-dy * 0.01),
+        ),
+      );
+    } else {
+      setCamera((prev) => ({
+        ...prev,
+        x: prev.x - (event.shiftKey ? dy : dx),
+        y: prev.y - (event.shiftKey ? 0 : dy),
+      }));
+    }
+  };
+  const keyDown = (event: KeyboardEvent) => {
+    if (event.target instanceof HTMLTextAreaElement) return;
+    if (event.code === "Space") {
+      event.preventDefault();
+      setSpaceHeld(true);
+      return;
+    }
+    if (event.key === "Escape") {
+      cancelGesture();
+      setSelected(null);
+      return;
+    }
+    if (gesture) return;
+    if (["+", "=", "-", "0", "1"].includes(event.key)) {
+      event.preventDefault();
+      if (event.key === "1") fit();
+      else changeZoom(event.key === "0" ? 1 : camera().zoom * (event.key === "-" ? 1 / 1.2 : 1.2));
+      return;
+    }
+    if (!canEdit()) return;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+      event.preventDefault();
+      if (event.shiftKey) redo();
+      else undo();
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      editText();
+      return;
+    }
+    if (["Delete", "Backspace"].includes(event.key)) {
+      event.preventDefault();
+      remove();
+      return;
+    }
+    if (!event.ctrlKey && !event.metaKey && !event.altKey) {
+      if (event.key.toLowerCase() === "h") setTool("hand");
+      if (event.key.toLowerCase() === "v") setTool("select");
+    }
+    const item = current(),
+      step = event.shiftKey ? 10 : 1;
+    if (item && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+      event.preventDefault();
+      updateElement({
+        ...item,
+        x: clampCoordinate(
+          item.x + (event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0),
+        ),
+        y: clampCoordinate(
+          item.y + (event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0),
+        ),
+      });
+    }
   };
   const paste = (event: ClipboardEvent) => {
     if (!canEdit()) return;
@@ -323,18 +572,29 @@ export function MoodBoard(props: {
     observer.observe(viewport);
     viewport.addEventListener("wheel", wheel, { passive: false });
     const unload = (event: BeforeUnloadEvent) => {
-      if (dirty()) {
+      if (dirty() || (textEdit() && textDraft !== textEdit()?.initial)) {
         event.preventDefault();
         event.returnValue = "";
       }
     };
     window.addEventListener("beforeunload", unload);
     window.addEventListener("paste", paste);
+    const releaseSpace = (event: KeyboardEvent) => {
+      if (event.code === "Space") setSpaceHeld(false);
+    };
+    const blur = () => {
+      setSpaceHeld(false);
+      cancelGesture();
+    };
+    window.addEventListener("keyup", releaseSpace);
+    window.addEventListener("blur", blur);
     onCleanup(() => {
       observer.disconnect();
       viewport.removeEventListener("wheel", wheel);
       window.removeEventListener("beforeunload", unload);
       window.removeEventListener("paste", paste);
+      window.removeEventListener("keyup", releaseSpace);
+      window.removeEventListener("blur", blur);
     });
   });
   onCleanup(() => {
@@ -361,53 +621,22 @@ export function MoodBoard(props: {
         {...sx(b.viewport)}
         tabindex={0}
         role="region"
-        aria-label="Board canvas. Drag to pan, scroll to zoom. In edit mode, drag elements to move them."
+        aria-label="Board canvas. Pinch to zoom, drag empty space to pan. Select an element to move or resize it."
+        aria-describedby="board-help"
+        style={{
+          cursor:
+            spaceHeld() || tool() === "hand" || !canEdit()
+              ? interacting()
+                ? "grabbing"
+                : "grab"
+              : "default",
+        }}
         onPointerDown={start}
         onPointerMove={move}
         onPointerUp={(event) => finish(event)}
         onPointerCancel={(event) => finish(event, true)}
         onLostPointerCapture={(event) => finish(event, true)}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            setSelected(null);
-            return;
-          }
-          if (!canEdit()) return;
-          if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
-            event.preventDefault();
-            if (event.shiftKey) redo();
-            else undo();
-            return;
-          }
-          if (["Delete", "Backspace"].includes(event.key)) {
-            event.preventDefault();
-            remove();
-            return;
-          }
-          const item = current(),
-            step = event.shiftKey ? 10 : 1;
-          if (item && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
-            event.preventDefault();
-            updateElement({
-              ...item,
-              x: Math.max(
-                -100000,
-                Math.min(
-                  100000,
-                  item.x +
-                    (event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0),
-                ),
-              ),
-              y: Math.max(
-                -100000,
-                Math.min(
-                  100000,
-                  item.y + (event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0),
-                ),
-              ),
-            });
-          }
-        }}
+        onKeyDown={keyDown}
       >
         <div
           {...sx(b.scene)}
@@ -420,37 +649,156 @@ export function MoodBoard(props: {
               (item) => item.id === selected() || isElementVisible(item, camera(), size()),
             )}
           >
-            {(item) => (
-              <button
-                type="button"
-                {...sx(b.element, selected() === item.id && b.selected)}
-                data-board-element={item.id}
-                style={{
-                  transform: `translate3d(${item.x}px, ${item.y}px, 0)`,
-                  width: `${item.width}px`,
-                  height: `${item.height}px`,
-                }}
-                tabindex={canEdit() ? 0 : -1}
-                aria-label={item.type === "image" ? item.label : item.text}
-                onFocus={() => {
-                  if (canEdit()) setSelected(item.id);
-                }}
-              >
-                {item.type === "image" ? (
-                  <img
-                    {...sx(b.image)}
-                    src={imageUrl(item.assetId)}
-                    alt={item.label}
-                    draggable={false}
-                    decoding="async"
-                  />
-                ) : (
-                  <div {...sx(b.text)}>{item.text}</div>
-                )}
-              </button>
-            )}
+            {(item) => {
+              const bounds = () => (selected() === item.id && preview() ? preview()! : item);
+              return (
+                <div
+                  role="button"
+                  {...sx(b.element)}
+                  data-board-element={item.id}
+                  style={{
+                    transform: `translate3d(${bounds().x}px, ${bounds().y}px, 0)`,
+                    width: `${bounds().width}px`,
+                    height: `${bounds().height}px`,
+                    visibility: textEdit()?.id === item.id ? "hidden" : "visible",
+                    cursor: canEdit() && tool() === "select" && !spaceHeld() ? "move" : "inherit",
+                  }}
+                  tabindex={canEdit() ? 0 : -1}
+                  aria-label={item.type === "image" ? item.label : item.text || "Empty text"}
+                  aria-pressed={selected() === item.id ? "true" : "false"}
+                  onFocus={() => {
+                    if (canEdit()) setSelected(item.id);
+                  }}
+                >
+                  {item.type === "image" ? (
+                    <img
+                      {...sx(b.image)}
+                      src={imageUrl(item.assetId)}
+                      alt={item.label}
+                      draggable={false}
+                      decoding="async"
+                    />
+                  ) : (
+                    <div {...sx(b.text)}>{item.text}</div>
+                  )}
+                </div>
+              );
+            }}
           </For>
+          <Show when={textEdit()}>
+            {(edit) => {
+              const item = () => document().elements.find((element) => element.id === edit().id)!;
+              return (
+                <textarea
+                  ref={(node) => {
+                    queueMicrotask(() => {
+                      if (node.isConnected) {
+                        node.focus({ preventScroll: true });
+                        node.select();
+                      }
+                    });
+                  }}
+                  {...sx(b.element, b.text, b.textEditor)}
+                  aria-label="Edit board text"
+                  maxlength={2000}
+                  value={edit().initial}
+                  style={{
+                    transform: `translate3d(${item().x}px, ${item().y}px, 0)`,
+                    width: `${item().width}px`,
+                    height: `${item().height}px`,
+                  }}
+                  onInput={(event) => {
+                    textDraft = event.currentTarget.value;
+                  }}
+                  onBlur={() => finishText()}
+                  onKeyDown={(event) => {
+                    event.stopPropagation();
+                    if (event.isComposing) return;
+                    if (
+                      event.key === "Escape" ||
+                      (event.key === "Enter" && (event.ctrlKey || event.metaKey))
+                    ) {
+                      event.preventDefault();
+                      finishText(event.key === "Escape");
+                      viewport.focus({ preventScroll: true });
+                    }
+                  }}
+                />
+              );
+            }}
+          </Show>
         </div>
+        <Show when={canEdit() && !textEdit() && selectionBounds()}>
+          {(bounds) => (
+            <div
+              {...sx(b.selection)}
+              style={{
+                left: `${bounds().x * camera().zoom + camera().x}px`,
+                top: `${bounds().y * camera().zoom + camera().y}px`,
+                width: `${bounds().width * camera().zoom}px`,
+                height: `${bounds().height * camera().zoom}px`,
+              }}
+            >
+              <For each={resizeHandles}>
+                {(handle) => (
+                  <Show
+                    when={
+                      handle.id.length === 2 ||
+                      (bounds().width * camera().zoom > 80 && bounds().height * camera().zoom > 80)
+                    }
+                  >
+                    <button
+                      type="button"
+                      {...sx(b.resizeHandle)}
+                      aria-label={`Resize ${handle.label}`}
+                      data-resize={handle.id}
+                      style={{
+                        left: `${handle.x * 100}%`,
+                        top: `${handle.y * 100}%`,
+                        cursor: `${handle.id}-resize`,
+                      }}
+                      onKeyDown={(event) => {
+                        const item = current();
+                        if (
+                          !item ||
+                          !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
+                        )
+                          return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        const step = event.shiftKey ? 10 : 1;
+                        updateElement({
+                          ...item,
+                          ...resizeBounds({
+                            initial: item,
+                            handle: handle.id,
+                            delta: {
+                              x:
+                                event.key === "ArrowLeft"
+                                  ? -step
+                                  : event.key === "ArrowRight"
+                                    ? step
+                                    : 0,
+                              y:
+                                event.key === "ArrowUp"
+                                  ? -step
+                                  : event.key === "ArrowDown"
+                                    ? step
+                                    : 0,
+                            },
+                            keepRatio: item.type === "image",
+                          }),
+                        });
+                      }}
+                    >
+                      <span {...sx(b.handleDot)} />
+                    </button>
+                  </Show>
+                )}
+              </For>
+            </div>
+          )}
+        </Show>
       </div>
       <Show when={!document().background && !document().elements.length}>
         <div {...sx(b.hint)}>
@@ -463,122 +811,121 @@ export function MoodBoard(props: {
         </div>
       </Show>
       <Show when={editing() && props.isDm && current()}>
-        {(item) => (
-          <div {...sx(b.inspector)}>
-            <strong>Selected {item().type}</strong>
-            <Show when={item().type === "text"}>
-              <Field label="Text">
-                <textarea
-                  {...sx(styles.textarea)}
-                  maxlength={2000}
-                  disabled={busy()}
-                  value={
-                    item().type === "text"
-                      ? (item() as Extract<BoardElement, { type: "text" }>).text
-                      : ""
-                  }
-                  onChange={(event) => {
-                    const value = item();
-                    if (value.type === "text")
-                      updateElement({ ...value, text: event.currentTarget.value });
-                  }}
-                />
-              </Field>
-            </Show>
-            <For each={["width", "height"] as const}>
-              {(dimension) => (
-                <Field label={dimension === "width" ? "Width" : "Height"}>
-                  <input
-                    {...sx(styles.input)}
-                    type="number"
-                    min={24}
-                    max={8000}
-                    value={item()[dimension]}
-                    disabled={busy()}
-                    onChange={(event) => {
-                      const value = event.currentTarget.valueAsNumber;
-                      if (Number.isFinite(value))
-                        updateElement({
-                          ...item(),
-                          [dimension]: Math.max(24, Math.min(8000, value)),
-                        });
-                    }}
-                  />
-                </Field>
-              )}
-            </For>
-            <div {...sx(styles.rowWrap)}>
-              <Button
-                small
-                disabled={busy()}
-                onClick={() =>
-                  commit({
-                    ...document(),
-                    elements: [
-                      ...document().elements.filter((element) => element.id !== item().id),
-                      item(),
-                    ],
-                  })
-                }
+        <div {...sx(b.objectActions)} role="group" aria-label="Selected element actions">
+          <Show when={current()?.type === "text"}>
+            <Show
+              when={textEdit()}
+              fallback={
+                <Button small disabled={busy()} onClick={() => editText()}>
+                  Edit text
+                </Button>
+              }
+            >
+              <button
+                type="button"
+                {...sx(b.control)}
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  finishText();
+                  viewport.focus({ preventScroll: true });
+                }}
               >
-                Bring to front
-              </Button>
-              <Button small variant="danger" disabled={busy()} onClick={remove}>
-                Delete
-              </Button>
-              <Button small onClick={() => setSelected(null)}>
-                Done
-              </Button>
-            </div>
-          </div>
-        )}
+                Done editing
+              </button>
+            </Show>
+          </Show>
+          <Button
+            small
+            disabled={busy()}
+            onClick={() => {
+              const item = current();
+              if (item)
+                commit({
+                  ...document(),
+                  elements: [
+                    ...document().elements.filter((element) => element.id !== item.id),
+                    item,
+                  ],
+                });
+            }}
+          >
+            Bring to front
+          </Button>
+          <Button small variant="danger" disabled={busy()} onClick={remove}>
+            Delete
+          </Button>
+        </div>
       </Show>
-      <div {...sx(b.toolbar)}>
-        <Button
-          small
-          onClick={() =>
-            setCamera((prev) =>
-              zoomAt(prev, { x: size().width / 2, y: size().height / 2 }, prev.zoom / 1.2),
-            )
-          }
+      <div {...sx(b.navigation)} role="group" aria-label="Board navigation">
+        <button
+          type="button"
+          {...sx(b.control)}
+          aria-label="Zoom out"
+          title="Zoom out (−)"
+          disabled={camera().zoom <= 0.1}
+          onClick={() => changeZoom(camera().zoom / 1.2)}
         >
           −
-        </Button>
-        <span {...sx(b.status)}>{Math.round(camera().zoom * 100)}%</span>
-        <Button
-          small
-          onClick={() =>
-            setCamera((prev) =>
-              zoomAt(prev, { x: size().width / 2, y: size().height / 2 }, prev.zoom * 1.2),
-            )
-          }
+        </button>
+        <button
+          type="button"
+          {...sx(b.control, b.zoomValue)}
+          aria-label="Reset zoom to 100%"
+          title="Reset zoom (0)"
+          onClick={() => changeZoom(1)}
+        >
+          {Math.round(camera().zoom * 100)}%
+        </button>
+        <button
+          type="button"
+          {...sx(b.control)}
+          aria-label="Zoom in"
+          title="Zoom in (+)"
+          disabled={camera().zoom >= 4}
+          onClick={() => changeZoom(camera().zoom * 1.2)}
         >
           +
-        </Button>
-        <Button small onClick={fit}>
-          Fit board
-        </Button>
+        </button>
+        <button type="button" {...sx(b.control)} onClick={fit} title="Fit board (1)">
+          Fit
+        </button>
+      </div>
+      <p id="board-help" {...sx(b.help)}>
+        Pinch or Ctrl/⌘ + scroll to zoom · Drag empty space to pan · Double-click text to edit
+      </p>
+      <div {...sx(b.toolbar)} role="group" aria-label="Board tools">
         <Show when={props.isDm}>
           <Button
             small
             disabled={busy()}
             onClick={() => {
+              finishText();
               setEditing(!editing());
+              setTool("select");
               setSelected(null);
             }}
           >
             {editing() ? "View board" : "Edit board"}
           </Button>
           <Show when={editing()}>
-            <label {...sx(styles.row, b.status)}>
-              <input
-                type="checkbox"
-                checked={live()}
-                disabled={busy()}
-                onChange={(event) => setLive(event.currentTarget.checked)}
-              />
-              Live sharing
-            </label>
+            <button
+              type="button"
+              {...sx(b.control, tool() === "select" && b.activeControl)}
+              aria-pressed={tool() === "select" ? "true" : "false"}
+              title="Select (V)"
+              onClick={() => setTool("select")}
+            >
+              Select
+            </button>
+            <button
+              type="button"
+              {...sx(b.control, tool() === "hand" && b.activeControl)}
+              aria-pressed={tool() === "hand" ? "true" : "false"}
+              title="Hand (H), or hold Space"
+              onClick={() => setTool("hand")}
+            >
+              Hand
+            </button>
             <input
               ref={(element) => {
                 picker = element;
@@ -623,11 +970,29 @@ export function MoodBoard(props: {
             <Button small disabled={busy() || !future().length} onClick={redo}>
               Redo
             </Button>
+          </Show>
+        </Show>
+      </div>
+      <Show when={props.isDm}>
+        <div {...sx(b.sharing)}>
+          <Show when={editing()}>
+            <label {...sx(styles.row, b.status)}>
+              <input
+                type="checkbox"
+                checked={live()}
+                disabled={busy()}
+                onChange={(event) => setLive(event.currentTarget.checked)}
+              />
+              Live sharing
+            </label>
             <Button
               small
               variant="primary"
-              disabled={busy() || interacting() || !dirty()}
-              onClick={() => void publish()}
+              disabled={busy() || interacting() || (!dirty() && !textEdit())}
+              onClick={() => {
+                finishText();
+                queueMicrotask(() => void publish());
+              }}
             >
               Publish
             </Button>
@@ -660,9 +1025,9 @@ export function MoodBoard(props: {
               A newer board was published. Discard this draft to load it.
             </span>
           </Show>
-        </Show>
-        <ErrorBanner message={error()} />
-      </div>
+          <ErrorBanner message={error()} />
+        </div>
+      </Show>
     </section>
   );
 }

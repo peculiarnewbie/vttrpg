@@ -95,12 +95,29 @@ is remembered per world on this browser; hiding it preserves its form state.
 On narrow screens, opening one panel closes the other.
 
 DMs choose **Edit board**, upload a **Background**, and use **Add image** or
-**Add text** for movable elements. Drag an element to move it, select it to edit
-text or dimensions, and use **Bring to front**, **Delete**, **Undo**, and **Redo**.
-Arrow keys nudge selected elements (Shift moves ten units); Ctrl/Cmd+Z undoes,
-Ctrl/Cmd+Shift+Z redoes. Drag empty space (or Alt/middle-drag an element) to pan,
-scroll or use +/− to zoom, and use **Fit board** to find the elements again.
-The mood background fills the viewport independently of the board camera.
+**Add text** for movable elements. Drag an element to move it; drag its corner or
+edge handles to resize it. Image corners preserve their aspect ratio (hold Shift
+to resize freely); Shift preserves the ratio for text cards. Touch handles keep
+large hit targets at every zoom level. Selection never opens an input panel.
+Double-click or double-tap a text card, press Enter, or choose **Edit text** to type
+on the card itself. Click outside or press Ctrl/Cmd+Enter to finish; Escape cancels.
+
+Use **Bring to front**, **Delete**, **Undo**, and **Redo** for selected elements.
+Each completed move, resize, or text edit is one undo step. Arrow keys nudge
+selected elements (Shift moves ten units); focused resize handles also respond to
+arrow keys. Ctrl/Cmd+Z undoes and Ctrl/Cmd+Shift+Z redoes.
+
+Drag empty space to pan, or use the **Hand** tool (H), hold Space, or Alt/middle-drag
+over an element. **Select** (V) returns to moving elements. Scroll pans;
+Ctrl/Cmd+scroll or a trackpad pinch zooms around the cursor. On touchscreens, two
+fingers pan and pinch to zoom; adding a second finger cancels any pending object
+move. The fixed +/− controls zoom, the percentage resets to 100%, and **Fit** brings
+all elements into view. Keyboard +/−, 0, and 1 do the same while the canvas is
+focused. The mood background fills the viewport independently of the board camera.
+
+The interaction reference is [Excalidraw](https://github.com/excalidraw/excalidraw).
+See [the implementation reference notes](docs/board-interactions.md) for source
+links and a command to clone it alongside this repository.
 
 **Publish** persists the draft in the world’s SQLite Durable Object and sends a
 snapshot to connected members. Players view the published scene and control their
@@ -122,11 +139,11 @@ Boards are limited to 100 elements. Image uploads accept PNG, JPEG, and WebP;
 the client resizes them to at most 2560 pixels on the longest side and encodes WebP.
 The server limits each upload to 5 MB and serves images only to world members.
 Images live in R2 at `world/<worldId>/board/<assetId>`; snapshots contain asset IDs,
-not image bytes. Offscreen elements are culled, and dragging updates only the
-selected element’s CSS transform once per animation frame. Removed and abandoned
+not image bytes. Offscreen elements are culled. Moves and resizes preview once per animation frame
+and commit to the document only when the pointer is released. Removed and abandoned
 uploads are retained in R2 in this version; asset garbage collection is deferred.
 
-`pnpm test --run` includes board schema/camera tests, panel preference tests, and
+`pnpm test --run` includes board schema/camera and resize/pinch tests, panel preference tests, and
 integration tests using a real local Worker, D1, R2, and SQLite Durable Object.
 The Node test environment keeps Miniflare on server package exports; DOM tests
 opt into jsdom individually.
