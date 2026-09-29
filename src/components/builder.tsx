@@ -1,4 +1,5 @@
 import { For, Show, createSignal } from "solid-js";
+import * as stylex from "@stylexjs/stylex";
 import { api, ApiError } from "../client/api";
 import type {
   DiceGroup,
@@ -15,6 +16,12 @@ import type {
 import { Button, ErrorBanner, Field, Input } from "./ui";
 import { styles } from "./styles.stylex";
 import { sx } from "../theme/sx";
+
+const builderStyles = stylex.create({
+  trackersGrid: {
+    gridTemplateColumns: "minmax(0, 2fr) repeat(3, minmax(0, 0.7fr)) minmax(76px, 1fr) 36px",
+  },
+});
 
 const slug = (value: string) =>
   value
@@ -52,7 +59,7 @@ function Headings(props: { style: "fields" | "stats" | "trackers" | "rolls"; lab
         styles.builderHeadings,
         props.style === "fields" && styles.builderFieldsGrid,
         props.style === "stats" && styles.builderStatsGrid,
-        props.style === "trackers" && styles.builderTrackersGrid,
+        props.style === "trackers" && builderStyles.trackersGrid,
         props.style === "rolls" && styles.builderRollsGrid,
       )}
       aria-hidden="true"
@@ -481,10 +488,10 @@ export function BuilderPanel(props: {
 
         <section {...sx(styles.builderSection)}>
           <span {...sx(styles.eyebrow)}>Trackers</span>
-          <Headings style="trackers" labels={["Label", "Min", "Max", "Start", ""]} />
+          <Headings style="trackers" labels={["Label", "Min", "Max", "Start", "Display", ""]} />
           <For each={draft().tickers}>
             {(ticker, index) => (
-              <div {...sx(styles.builderRow, styles.builderTrackersGrid)}>
+              <div {...sx(styles.builderRow, builderStyles.trackersGrid)}>
                 <LabelCell
                   label={ticker.label}
                   id={ticker.id}
@@ -522,6 +529,22 @@ export function BuilderPanel(props: {
                     updateTicker(index(), { ...ticker, defaultValue: Number(value) })
                   }
                 />
+                <select
+                  {...sx(styles.select)}
+                  aria-label={`${ticker.label} display`}
+                  value={ticker.display ?? "auto"}
+                  onChange={(event) =>
+                    updateTicker(index(), {
+                      ...ticker,
+                      display: event.currentTarget.value as TickerDefinition["display"],
+                    })
+                  }
+                >
+                  <option value="auto">Auto</option>
+                  <option value="pips">Pips</option>
+                  <option value="bar">Bar</option>
+                  <option value="number">Number</option>
+                </select>
                 <Button
                   small
                   variant="danger"
