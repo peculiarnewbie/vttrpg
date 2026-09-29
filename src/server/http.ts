@@ -368,7 +368,7 @@ const UploadBoardImage = HttpRouter.route(
               size += chunk.value.byteLength;
               if (size > MAX_BOARD_IMAGE_BYTES) {
                 await reader.cancel();
-                throw new Error("Image must be 5MB or smaller");
+                throw new Error("Image must be 10MB or smaller");
               }
               chunks.push(chunk.value);
             }

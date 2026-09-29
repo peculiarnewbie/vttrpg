@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { BoardSnapshot } from "./board";
+import { BoardSnapshot, BoardFocusRect } from "./board";
 
 export type Infer<S> = Schema.Schema.Type<S>;
 
@@ -265,7 +265,15 @@ export type LiveCursor = Infer<typeof LiveCursor>;
 // Realtime frames
 // ---------------------------------------------------------------------------
 
+export const BoardFocus = Schema.Struct({
+  type: Schema.Literal("board.focus"),
+  rect: BoardFocusRect,
+  from: Schema.String,
+});
+export type BoardFocus = Infer<typeof BoardFocus>;
+
 export const ClientFrame = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("board.focus"), rect: BoardFocusRect }),
   Schema.Struct({ type: Schema.Literal("cursors.subscribe"), enabled: Schema.Boolean }),
   Schema.Struct({ type: Schema.Literal("cursor"), position: Schema.NullOr(CursorPosition) }),
   Schema.Struct({ type: Schema.Literals(["ping"]) }),
@@ -304,6 +312,7 @@ export const ClientFrame = Schema.Union([
 export type ClientFrame = Infer<typeof ClientFrame>;
 
 export const ServerFrame = Schema.Union([
+  BoardFocus,
   Schema.Struct({ type: Schema.Literal("notes.updated") }),
   Schema.Struct({ type: Schema.Literal("cursor"), cursor: LiveCursor }),
   Schema.Struct({ type: Schema.Literal("board"), board: BoardSnapshot }),

@@ -1,3 +1,4 @@
+import { ClientFrame, ServerFrame } from "./schemas";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 import {
@@ -83,5 +84,32 @@ describe("board camera", () => {
     expect(isElementVisible(element, camera, size)).toBe(true);
     expect(isElementVisible({ ...element, x: 2000 }, camera, size)).toBe(false);
     expect(isElementVisible({ ...element, x: 2000 }, { x: -1800, y: 0, zoom: 1 }, size)).toBe(true);
+  });
+});
+
+describe("board focus frames", () => {
+  const rect = { x: -200, y: 400, width: 2000, height: 1000 };
+  it("accepts client requests and server cues without changing the board document", () => {
+    expect(Schema.decodeUnknownResult(ClientFrame)({ type: "board.focus", rect })._tag).toBe(
+      "Success",
+    );
+    expect(
+      Schema.decodeUnknownResult(ServerFrame)({ type: "board.focus", rect, from: "DM" })._tag,
+    ).toBe("Success");
+    expect(Schema.decodeUnknownResult(ServerFrame)({ type: "board.focus", rect })._tag).toBe(
+      "Failure",
+    );
+  });
+  it.each([
+    { width: 0 },
+    { height: -1 },
+    { x: Infinity },
+    { y: NaN },
+    { width: "200" },
+    { height: null },
+  ])("rejects malformed focus geometry: %j", (invalid) => {
+    const frame = { type: "board.focus", rect: { ...rect, ...invalid }, from: "DM" };
+    expect(Schema.decodeUnknownResult(ClientFrame)(frame)._tag).toBe("Failure");
+    expect(Schema.decodeUnknownResult(ServerFrame)(frame)._tag).toBe("Failure");
   });
 });

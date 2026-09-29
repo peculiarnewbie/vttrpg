@@ -1,7 +1,8 @@
 import * as Schema from "effect/Schema";
 
 export const MAX_BOARD_ELEMENTS = 100;
-export const MAX_BOARD_IMAGE_BYTES = 5 * 1024 * 1024;
+export const MAX_BOARD_IMAGE_BYTES = 10 * 1024 * 1024;
+export const MAX_BOARD_IMAGE_PIXELS = 4096;
 export const DEFAULT_BOARD_FONT_SIZE = 20;
 export const MIN_BOARD_FONT_SIZE = 8;
 export const MAX_BOARD_FONT_SIZE = 512;
@@ -83,3 +84,41 @@ export const isElementVisible = (
     element.y * camera.zoom + camera.y <= size.height + padding
   );
 };
+
+// Camera rectangles can extend beyond element storage bounds when panning or zooming out.
+export const BoardFocusRect = Schema.Struct({
+  x: Schema.Finite,
+  y: Schema.Finite,
+  width: Schema.Finite.check(Schema.isGreaterThan(0)),
+  height: Schema.Finite.check(Schema.isGreaterThan(0)),
+});
+export type BoardFocusRect = typeof BoardFocusRect.Type;
+
+export const boardViewport = (
+  camera: BoardCamera,
+  size: { width: number; height: number },
+): BoardFocusRect => ({
+  ...screenToBoard({ x: 0, y: 0 }, camera),
+  width: size.width / camera.zoom,
+  height: size.height / camera.zoom,
+});
+
+export function fitBoardRect(
+  rect: BoardFocusRect,
+  size: { width: number; height: number },
+): BoardCamera {
+  const zoom = zoomAt(
+    { x: 0, y: 0, zoom: 1 },
+    { x: 0, y: 0 },
+    Math.min(
+      1,
+      Math.max(1, size.width - 80) / rect.width,
+      Math.max(1, size.height - 160) / rect.height,
+    ),
+  ).zoom;
+  return {
+    x: size.width / 2 - (rect.x + rect.width / 2) * zoom,
+    y: size.height / 2 - (rect.y + rect.height / 2) * zoom,
+    zoom,
+  };
+}
