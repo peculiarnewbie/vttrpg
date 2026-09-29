@@ -1,4 +1,4 @@
-import { For } from "solid-js";
+import { For, Show, createSignal } from "solid-js";
 import {
   MAX_BOARD_LAYERS,
   deleteBoardLayer,
@@ -9,6 +9,7 @@ import {
 import { sx } from "../theme/sx";
 import { boardStyles as b } from "./board.stylex";
 import { Button } from "./ui";
+import { BoardPopover, InlineName } from "./board-scenes";
 
 export function BoardLayers(props: {
   document: BoardDocument;
@@ -17,6 +18,10 @@ export function BoardLayers(props: {
   onSelect: (id: string) => void;
   onChange: (document: BoardDocument) => void;
 }) {
+  const [actions, setActions] = createSignal<string | null>(null);
+  const [entry, setEntry] = createSignal<{ value: string; save: (name: string) => void } | null>(
+    null,
+  );
   const document = () => normalizeBoard(props.document);
   const update = (next: BoardLayer) =>
     props.onChange({
@@ -32,83 +37,102 @@ export function BoardLayers(props: {
     props.onChange({ ...document(), layers });
   };
   return (
-    <details open>
-      <summary {...sx(b.control)}>Layers (bottom → top)</summary>
+    <BoardPopover label="Layers">
       <div {...sx(b.panelContent)}>
         <p {...sx(b.status)}>
           Hidden layers are private. Locked layers let you pan over their elements.
         </p>
+        <Show when={entry()}>
+          {(current) => (
+            <InlineName label="Layer name" {...current()} onClose={() => setEntry(null)} />
+          )}
+        </Show>
         <For each={document().layers}>
           {(layer, index) => (
             <div {...sx(b.panelItem)}>
-              <button
-                type="button"
-                {...sx(b.control, props.selectedId === layer.id && b.activeControl)}
-                disabled={props.busy}
-                aria-pressed={props.selectedId === layer.id ? "true" : "false"}
-                onClick={() => props.onSelect(layer.id)}
-              >
-                {layer.name}
-              </button>
               <div {...sx(b.panelActions)}>
-                <label>
-                  <input
-                    type="checkbox"
-                    disabled={props.busy}
-                    checked={layer.locked}
-                    onChange={(event) => update({ ...layer, locked: event.currentTarget.checked })}
-                  />{" "}
-                  Locked
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    disabled={props.busy}
-                    checked={layer.hidden}
-                    onChange={(event) => update({ ...layer, hidden: event.currentTarget.checked })}
-                  />{" "}
-                  Hidden
-                </label>
-                <Button
-                  small
+                <button
+                  type="button"
+                  {...sx(b.control, b.itemName, props.selectedId === layer.id && b.activeControl)}
                   disabled={props.busy}
-                  onClick={() => {
-                    const name = window.prompt("Layer name", layer.name);
-                    if (name?.trim()) update({ ...layer, name: name.trim().slice(0, 100) });
-                  }}
+                  aria-pressed={props.selectedId === layer.id ? "true" : "false"}
+                  onClick={() => props.onSelect(layer.id)}
                 >
-                  Rename
-                </Button>
-                <Button
-                  small
-                  disabled={props.busy || index() === 0}
-                  onClick={() => move(layer.id, -1)}
+                  {layer.name}
+                  {props.selectedId === layer.id ? " · Target" : ""}
+                </button>
+                <button
+                  type="button"
+                  {...sx(b.control)}
+                  disabled={props.busy}
+                  aria-label={`Lock ${layer.name}`}
+                  aria-pressed={layer.locked ? "true" : "false"}
+                  onClick={() => update({ ...layer, locked: !layer.locked })}
                 >
-                  Lower
-                </Button>
-                <Button
-                  small
-                  disabled={props.busy || index() === document().layers.length - 1}
-                  onClick={() => move(layer.id, 1)}
+                  {layer.locked ? "🔒" : "🔓"}
+                </button>
+                <button
+                  type="button"
+                  {...sx(b.control)}
+                  disabled={props.busy}
+                  aria-label={`Hide ${layer.name}`}
+                  aria-pressed={layer.hidden ? "true" : "false"}
+                  onClick={() => update({ ...layer, hidden: !layer.hidden })}
                 >
-                  Raise
-                </Button>
-                <Button
-                  small
-                  variant="danger"
-                  disabled={props.busy || document().layers.length === 1}
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        `Delete layer “${layer.name}”? Elements move to the layer below (or the next layer for the bottom layer).`,
-                      )
-                    )
-                      props.onChange(deleteBoardLayer(document(), layer.id));
-                  }}
+                  {layer.hidden ? "◌" : "◉"}
+                </button>
+                <button
+                  type="button"
+                  {...sx(b.control)}
+                  aria-label={`More actions for ${layer.name}`}
+                  aria-expanded={actions() === layer.id ? "true" : "false"}
+                  onClick={() => setActions(actions() === layer.id ? null : layer.id)}
                 >
-                  Delete
-                </Button>
+                  ⋯
+                </button>
               </div>
+              <Show when={actions() === layer.id}>
+                <div {...sx(b.panelActions)}>
+                  <Button
+                    small
+                    disabled={props.busy}
+                    onClick={() => {
+                      setEntry({ value: layer.name, save: (name) => update({ ...layer, name }) });
+                    }}
+                  >
+                    Rename
+                  </Button>
+                  <Button
+                    small
+                    disabled={props.busy || index() === 0}
+                    onClick={() => move(layer.id, -1)}
+                  >
+                    Lower
+                  </Button>
+                  <Button
+                    small
+                    disabled={props.busy || index() === document().layers.length - 1}
+                    onClick={() => move(layer.id, 1)}
+                  >
+                    Raise
+                  </Button>
+                  <Button
+                    small
+                    variant="danger"
+                    disabled={props.busy || document().layers.length === 1}
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          `Delete layer “${layer.name}”? Elements move to the layer below (or the next layer for the bottom layer).`,
+                        )
+                      )
+                        props.onChange(deleteBoardLayer(document(), layer.id));
+                    }}
+                  >
+                    Delete
+                  </Button>
+                </div>
+              </Show>
             </div>
           )}
         </For>
@@ -116,22 +140,25 @@ export function BoardLayers(props: {
           small
           disabled={props.busy || document().layers.length >= MAX_BOARD_LAYERS}
           onClick={() => {
-            const name = window.prompt("Layer name", "New layer");
-            if (!name?.trim()) return;
-            const id = crypto.randomUUID();
-            props.onChange({
-              ...document(),
-              layers: [
-                ...document().layers,
-                { id, name: name.trim().slice(0, 100), locked: false, hidden: false },
-              ],
+            setEntry({
+              value: "New layer",
+              save: (name) => {
+                const id = crypto.randomUUID();
+                props.onChange({
+                  ...document(),
+                  layers: [
+                    ...document().layers,
+                    { id, name: name.trim().slice(0, 100), locked: false, hidden: false },
+                  ],
+                });
+                props.onSelect(id);
+              },
             });
-            props.onSelect(id);
           }}
         >
           Add layer
         </Button>
       </div>
-    </details>
+    </BoardPopover>
   );
 }

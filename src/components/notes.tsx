@@ -191,7 +191,7 @@ export function NotesPanel(props: {
       <ErrorBanner message={error()} />
 
       <div {...sx(styles.notesLayout)}>
-        <div {...sx(styles.navList)}>
+        <div {...sx(styles.navList, noteStyles.list)}>
           <Show when={props.notes.length > 0} fallback={<EmptyState>No notes yet.</EmptyState>}>
             <For each={props.notes}>
               {(note) => (
@@ -331,12 +331,14 @@ export function NotesPanel(props: {
 }
 
 const noteStyles = stylex.create({
+  list: { maxHeight: 160, overflowY: "auto" },
   editor: { borderWidth: 0, margin: 0, padding: 0, minWidth: 0 },
   markdown: {
     color: colors.text,
     backgroundColor: colors.surface,
     lineHeight: 1.6,
-    overflowWrap: "anywhere",
+    overflowWrap: "break-word",
+    wordBreak: "normal",
     overflowX: "auto",
     padding: 12,
     borderRadius: 4,

@@ -82,10 +82,7 @@ export function MoodBoard(props: {
   const layerFor = (item: BoardElement) =>
     layers().find((layer) => layer.id === item.layerId) ?? layers()[0];
   const isLiveScene = () => sceneId() === props.sceneList.activeSceneId;
-  const sceneName = () =>
-    props.sceneList.scenes.find((scene) => scene.id === sceneId())?.name ??
-    published().sceneName ??
-    "Scene";
+
   const [revision, setRevision] = createSignal(props.snapshot.revision);
   const [dirty, setDirty] = createSignal(false);
   const [editing, setEditing] = createSignal(false);
@@ -774,45 +771,6 @@ export function MoodBoard(props: {
 
   return (
     <section {...sx(b.board)} aria-label="Mood board">
-      <Show when={props.isDm}>
-        <aside {...sx(b.scenePanels)} aria-label="Scene and layer controls">
-          <Show
-            when={
-              props.sceneList.scenes.length > 0 &&
-              !props.sceneList.scenes.some((scene) => scene.id === sceneId())
-            }
-          >
-            <p {...sx(b.status)} role="alert">
-              This scene was deleted in another tab. Open another scene to continue.
-            </p>
-          </Show>
-          <p {...sx(b.status)} role="status">
-            {sceneName()} · {isLiveScene() ? "LIVE" : "PRIVATE PREP — players see another scene"}
-          </p>
-          <BoardScenes
-            worldId={props.worldId}
-            scenes={props.sceneList.scenes}
-            activeId={props.sceneList.activeSceneId}
-            selectedId={sceneId()}
-            busy={busy() || interacting()}
-            onOpen={openScene}
-            onList={props.onSceneList}
-          />
-          <Show when={editing()}>
-            <BoardLayers
-              document={document()}
-              selectedId={selectedLayer().id}
-              busy={busy() || interacting()}
-              onSelect={setLayerId}
-              onChange={(next) => {
-                finishText();
-                commit(next);
-                setSelected(null);
-              }}
-            />
-          </Show>
-        </aside>
-      </Show>
       <Show when={document().background}>
         {(assetId) => (
           <img
@@ -1208,6 +1166,42 @@ export function MoodBoard(props: {
         )}
       </Show>
       <div {...sx(b.toolbar)} role="group" aria-label="Board tools">
+        <Show when={props.isDm}>
+          <Show
+            when={
+              props.sceneList.scenes.length > 0 &&
+              !props.sceneList.scenes.some((scene) => scene.id === sceneId())
+            }
+          >
+            <p {...sx(b.status)} role="alert">
+              This scene was deleted in another tab. Open another scene to continue.
+            </p>
+          </Show>
+          <BoardScenes
+            editing={editing()}
+            worldId={props.worldId}
+            scenes={props.sceneList.scenes}
+            activeId={props.sceneList.activeSceneId}
+            selectedId={sceneId()}
+            busy={busy() || interacting()}
+            onOpen={openScene}
+            onList={props.onSceneList}
+          />
+          <Show when={editing()}>
+            <BoardLayers
+              document={document()}
+              selectedId={selectedLayer().id}
+              busy={busy() || interacting()}
+              onSelect={setLayerId}
+              onChange={(next) => {
+                finishText();
+                commit(next);
+                setSelected(null);
+              }}
+            />
+          </Show>
+        </Show>
+
         <Show
           when={props.isDm}
           fallback={
@@ -1324,6 +1318,11 @@ export function MoodBoard(props: {
               Redo
             </Button>
           </Show>
+        </Show>
+        <Show when={props.isDm && !isLiveScene()}>
+          <span {...sx(b.status, b.prepBanner)} role="status">
+            PRIVATE PREP — players see another scene
+          </span>
         </Show>
       </div>
       <Show when={props.isDm}>

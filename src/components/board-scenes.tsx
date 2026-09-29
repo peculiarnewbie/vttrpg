@@ -1,4 +1,5 @@
-import { For, createSignal } from "solid-js";
+import type { JSX } from "@solidjs/web";
+import { For, Show, createSignal, createUniqueId, onSettled } from "solid-js";
 import { api } from "../client/api";
 import {
   MAX_BOARD_SCENES,
@@ -16,6 +17,7 @@ export function BoardScenes(props: {
   activeId: string;
   selectedId: string;
   busy: boolean;
+  editing: boolean;
   onOpen: (load: () => Promise<BoardSnapshot>) => Promise<void>;
   onList: (list: SceneList) => void;
 }) {
@@ -35,30 +37,59 @@ export function BoardScenes(props: {
       setBusy(false);
     }
   };
+  const [entry, setEntry] = createSignal<{
+    label: string;
+    value: string;
+    save: (name: string) => void;
+    allowEmpty?: boolean;
+  } | null>(null);
+  const [actions, setActions] = createSignal<string | null>(null);
   const create = (source?: SceneMetadata) => {
-    const name = window.prompt("Scene name", source ? `${source.name} copy` : "New scene");
-    if (!name?.trim()) return;
-    void run(() =>
-      props.onOpen(() =>
-        api.createScene(props.worldId, {
-          name: name.trim(),
-          ...(source ? { duplicateFrom: source.id } : {}),
-        }),
-      ),
-    );
+    setEntry({
+      label: "Scene name",
+      value: source ? `${source.name} copy` : "New scene",
+      save: (name) =>
+        void run(() =>
+          props.onOpen(() =>
+            api.createScene(props.worldId, {
+              name,
+              ...(source ? { duplicateFrom: source.id } : {}),
+            }),
+          ),
+        ),
+    });
   };
   const groups = () => [...new Set(props.scenes.map((scene) => scene.group))];
   return (
-    <details>
-      <summary {...sx(b.control)}>Scenes ({props.scenes.length})</summary>
+    <BoardPopover
+      label="Scenes"
+      summary={
+        <>
+          <span {...sx(b.sceneName)}>
+            {props.scenes.find((scene) => scene.id === props.selectedId)?.name ?? "Deleted scene"}
+          </span>
+          <span {...sx(b.sceneBadge)}>{props.selectedId === props.activeId ? "LIVE" : "PREP"}</span>
+        </>
+      }
+    >
       <div {...sx(b.panelContent)}>
-        <Button
-          small
-          disabled={disabled() || props.scenes.length >= MAX_BOARD_SCENES}
-          onClick={() => create()}
-        >
-          New scene
-        </Button>
+        <Show when={props.selectedId !== props.activeId}>
+          <p {...sx(b.status)} role="status">
+            PRIVATE PREP — players see another scene
+          </p>
+        </Show>
+        <Show when={props.editing}>
+          <Button
+            small
+            disabled={disabled() || props.scenes.length >= MAX_BOARD_SCENES}
+            onClick={() => create()}
+          >
+            New scene
+          </Button>
+        </Show>
+        <Show when={entry()}>
+          {(current) => <InlineName {...current()} onClose={() => setEntry(null)} />}
+        </Show>
         <For each={groups()}>
           {(group) => (
             <section aria-label={group ?? "Ungrouped scenes"}>
@@ -66,117 +97,143 @@ export function BoardScenes(props: {
               <For each={props.scenes.filter((scene) => scene.group === group)}>
                 {(scene) => (
                   <div {...sx(b.panelItem)}>
-                    <Button
-                      small
-                      disabled={disabled()}
-                      onClick={() =>
-                        void run(() => props.onOpen(() => api.getScene(props.worldId, scene.id)))
-                      }
-                    >
-                      {scene.id === props.selectedId ? "▸ " : ""}
-                      {scene.name}
-                      {scene.id === props.activeId ? " · LIVE" : ""}
-                    </Button>
-                    <span {...sx(b.status)}>{scene.elementCount} elements</span>
                     <div {...sx(b.panelActions)}>
-                      <Button
-                        small
-                        disabled={disabled() || scene.id === props.activeId}
-                        onClick={() =>
-                          void run(() =>
-                            props.onOpen(() => api.activateScene(props.worldId, scene.id)),
-                          )
-                        }
-                      >
-                        Show to players
-                      </Button>
-                      <Button
-                        small
-                        disabled={disabled() || props.scenes.length >= MAX_BOARD_SCENES}
-                        onClick={() => create(scene)}
-                      >
-                        Duplicate
-                      </Button>
-                      <Button
-                        small
+                      <button
+                        type="button"
+                        {...sx(
+                          b.control,
+                          b.itemName,
+                          scene.id === props.selectedId && b.activeControl,
+                        )}
+                        aria-pressed={scene.id === props.selectedId ? "true" : "false"}
                         disabled={disabled()}
-                        onClick={() => {
-                          const name = window.prompt("Scene name", scene.name);
-                          if (name?.trim())
-                            void run(() =>
-                              api.updateScene(props.worldId, scene.id, { name: name.trim() }),
-                            );
-                        }}
-                      >
-                        Rename
-                      </Button>
-                      <Button
-                        small
-                        disabled={disabled()}
-                        onClick={() => {
-                          const group = window.prompt(
-                            "Group (leave blank for ungrouped)",
-                            scene.group ?? "",
-                          );
-                          if (group !== null)
-                            void run(() =>
-                              api.updateScene(props.worldId, scene.id, {
-                                group: group.trim() || null,
-                              }),
-                            );
-                        }}
-                      >
-                        Set group
-                      </Button>
-                      <Button
-                        small
-                        disabled={disabled() || scene.sort === 0}
                         onClick={() =>
-                          void run(() =>
-                            api.updateScene(props.worldId, scene.id, { sort: scene.sort - 1 }),
-                          )
+                          void run(() => props.onOpen(() => api.getScene(props.worldId, scene.id)))
                         }
                       >
-                        Move up
-                      </Button>
-                      <Button
-                        small
-                        disabled={disabled() || scene.sort >= props.scenes.length - 1}
-                        onClick={() =>
-                          void run(() =>
-                            api.updateScene(props.worldId, scene.id, { sort: scene.sort + 1 }),
-                          )
-                        }
-                      >
-                        Move down
-                      </Button>
-                      <Button
-                        small
-                        variant="danger"
-                        disabled={disabled() || props.scenes.length === 1}
-                        onClick={() => {
-                          if (
-                            window.confirm(
-                              `Delete “${scene.name}”? Deleting the live scene shows a neighboring scene to players.`,
+                        {scene.id === props.selectedId ? "▸ " : ""}
+                        {scene.name}
+                      </button>
+                      <Show when={scene.id === props.activeId}>
+                        <span {...sx(b.sceneBadge)}>LIVE</span>
+                      </Show>
+                      <Show when={scene.id !== props.activeId}>
+                        <Button
+                          small
+                          disabled={disabled() || scene.id === props.activeId}
+                          onClick={() =>
+                            void run(() =>
+                              props.onOpen(() => api.activateScene(props.worldId, scene.id)),
                             )
-                          )
-                            void run(() =>
-                              props.onOpen(async () => {
-                                const list = await api.deleteScene(props.worldId, scene.id);
-                                props.onList(list);
-                                return api.getScene(
-                                  props.worldId,
-                                  scene.id === props.selectedId
-                                    ? list.activeSceneId
-                                    : props.selectedId,
-                                );
-                              }),
-                            );
-                        }}
-                      >
-                        Delete
-                      </Button>
+                          }
+                        >
+                          Show
+                        </Button>
+                      </Show>
+                      <Show when={props.editing}>
+                        <button
+                          type="button"
+                          {...sx(b.control)}
+                          aria-label={`More actions for ${scene.name}`}
+                          aria-expanded={actions() === scene.id ? "true" : "false"}
+                          onClick={() => setActions(actions() === scene.id ? null : scene.id)}
+                        >
+                          ⋯
+                        </button>
+                      </Show>
                     </div>
+                    <Show when={props.editing && actions() === scene.id}>
+                      <div {...sx(b.panelActions)}>
+                        <Button
+                          small
+                          disabled={disabled() || props.scenes.length >= MAX_BOARD_SCENES}
+                          onClick={() => create(scene)}
+                        >
+                          Duplicate
+                        </Button>
+                        <Button
+                          small
+                          disabled={disabled()}
+                          onClick={() => {
+                            setEntry({
+                              label: "Scene name",
+                              value: scene.name,
+                              save: (name) =>
+                                void run(() => api.updateScene(props.worldId, scene.id, { name })),
+                            });
+                          }}
+                        >
+                          Rename
+                        </Button>
+                        <Button
+                          small
+                          disabled={disabled()}
+                          onClick={() => {
+                            setEntry({
+                              label: "Group (leave blank for ungrouped)",
+                              value: scene.group ?? "",
+                              allowEmpty: true,
+                              save: (group) =>
+                                void run(() =>
+                                  api.updateScene(props.worldId, scene.id, {
+                                    group: group || null,
+                                  }),
+                                ),
+                            });
+                          }}
+                        >
+                          Set group
+                        </Button>
+                        <Button
+                          small
+                          disabled={disabled() || scene.sort === 0}
+                          onClick={() =>
+                            void run(() =>
+                              api.updateScene(props.worldId, scene.id, { sort: scene.sort - 1 }),
+                            )
+                          }
+                        >
+                          Move up
+                        </Button>
+                        <Button
+                          small
+                          disabled={disabled() || scene.sort >= props.scenes.length - 1}
+                          onClick={() =>
+                            void run(() =>
+                              api.updateScene(props.worldId, scene.id, { sort: scene.sort + 1 }),
+                            )
+                          }
+                        >
+                          Move down
+                        </Button>
+                        <Button
+                          small
+                          variant="danger"
+                          disabled={disabled() || props.scenes.length === 1}
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                `Delete “${scene.name}”? Deleting the live scene shows a neighboring scene to players.`,
+                              )
+                            )
+                              void run(() =>
+                                props.onOpen(async () => {
+                                  const list = await api.deleteScene(props.worldId, scene.id);
+                                  props.onList(list);
+                                  return api.getScene(
+                                    props.worldId,
+                                    scene.id === props.selectedId
+                                      ? list.activeSceneId
+                                      : props.selectedId,
+                                  );
+                                }),
+                              );
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                    </Show>
                   </div>
                 )}
               </For>
@@ -185,6 +242,107 @@ export function BoardScenes(props: {
         </For>
         <ErrorBanner message={error()} />
       </div>
-    </details>
+    </BoardPopover>
+  );
+}
+
+// Native popovers provide light dismissal and restore focus to their trigger on Escape.
+export function BoardPopover(props: {
+  label: string;
+  summary?: JSX.Element;
+  children: JSX.Element;
+}) {
+  const id = createUniqueId();
+  const [open, setOpen] = createSignal(false);
+  let panel!: HTMLDivElement;
+  return (
+    <>
+      <button
+        type="button"
+        {...sx(b.control, b.popoverTrigger)}
+        aria-label={props.label}
+        aria-expanded={open() ? "true" : "false"}
+        aria-controls={id}
+        popovertarget={id}
+        onClick={(event) => {
+          const toolbar = event.currentTarget.closest('[aria-label="Board tools"]');
+          if (toolbar) panel.style.top = `${toolbar.getBoundingClientRect().bottom + 8}px`;
+        }}
+      >
+        {props.label} {props.summary}
+      </button>
+      <div
+        ref={(element) => {
+          panel = element;
+        }}
+        id={id}
+        popover="auto"
+        {...sx(b.scenePanels)}
+        role="region"
+        aria-label={props.label}
+        tabindex={-1}
+        onToggle={(event) => {
+          const visible = event.newState === "open";
+          setOpen(visible);
+          if (visible) panel.focus();
+        }}
+      >
+        {props.children}
+      </div>
+    </>
+  );
+}
+
+export function InlineName(props: {
+  label: string;
+  value: string;
+  save: (value: string) => void;
+  onClose: () => void;
+  allowEmpty?: boolean;
+}) {
+  const [value, setValue] = createSignal(props.value);
+  let input!: HTMLInputElement;
+  onSettled(() => {
+    input.focus();
+    input.select();
+  });
+  return (
+    <form
+      {...sx(b.panelContent)}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!value().trim() && !props.allowEmpty) return;
+        props.save(value().trim());
+        props.onClose();
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          props.onClose();
+        }
+      }}
+    >
+      <label>
+        {props.label}
+        <input
+          ref={(element) => {
+            input = element;
+          }}
+          {...sx(b.nameInput)}
+          value={value()}
+          maxlength={100}
+          onInput={(event) => setValue(event.currentTarget.value)}
+        />
+      </label>
+      <div {...sx(b.panelActions)}>
+        <Button small type="submit" disabled={!props.allowEmpty && !value().trim()}>
+          Save
+        </Button>
+        <Button small onClick={props.onClose}>
+          Cancel
+        </Button>
+      </div>
+    </form>
   );
 }

@@ -486,7 +486,9 @@ export function CharacterSheets(props: Props) {
                                       />
                                     </div>
                                     <Show when={editing()}>
-                                      <Field label="Maximum (blank uses template)">
+                                      <Field
+                                        label={`${ticker.label} maximum (blank uses template)`}
+                                      >
                                         <input
                                           {...sx(styles.input)}
                                           type="number"

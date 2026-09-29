@@ -236,10 +236,12 @@ export default function WorldPage() {
     visibility: Visibility;
     recipientMemberIds: string[];
   }) => {
+    if (status() !== "open") return;
     controller?.send({ type: "chat", ...input });
   };
 
   const rollDice = (notation: string, visibility: Visibility) => {
+    if (status() !== "open") return;
     controller?.send({ type: "roll.dice", notation, visibility });
   };
 
@@ -426,6 +428,7 @@ export default function WorldPage() {
                     </button>
                   </div>
                   <Chat
+                    connected={status() === "open"}
                     worldId={params.id}
                     overlay
                     messages={messages()}

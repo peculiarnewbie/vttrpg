@@ -612,9 +612,8 @@ export const styles = stylex.create({
   // -------------------------------------------------------------------------
   notesLayout: {
     display: "grid",
-    gridTemplateColumns: "220px 1fr",
+    gridTemplateColumns: "minmax(0, 1fr)",
     gap: space.x4,
-    "@media (max-width: 720px)": { gridTemplateColumns: "1fr" },
   },
   noteItem: {
     display: "flex",

@@ -99,6 +99,7 @@ function MessageCard(props: { message: ChatMessage; me: WorldMember; worldId: st
 
 export function Chat(props: {
   overlay?: boolean;
+  connected: boolean;
   worldId: string;
   messages: ChatMessage[];
   hasMore: boolean;
@@ -191,7 +192,7 @@ export function Chat(props: {
   const submit = (event: Event) => {
     event.preventDefault();
     const raw = text().trim();
-    if (!raw) return;
+    if (!props.connected || !raw) return;
     const command = parseRollCommand(raw);
     if (command) {
       props.onRollDice(command, visibility());
@@ -222,7 +223,7 @@ export function Chat(props: {
 
   const rollPending = () => {
     const notation = pendingNotation();
-    if (!notation) return;
+    if (!props.connected || !notation) return;
     props.onRollDice(notation, visibility());
     setPending({});
     setLastTrayNotation(notation);
@@ -285,6 +286,11 @@ export function Chat(props: {
       </Show>
 
       <form {...sx(styles.composer)} onSubmit={submit}>
+        <Show when={!props.connected}>
+          <span {...sx(styles.faint)} role="status">
+            Connecting…
+          </span>
+        </Show>
         <Show when={showDice()}>
           <div {...sx(styles.dicePicker)}>
             <div {...sx(styles.rowWrap)}>
@@ -307,14 +313,19 @@ export function Chat(props: {
               <Button small onClick={() => setPending({})} disabled={pendingCount() === 0}>
                 Clear
               </Button>
-              <Button small variant="primary" onClick={rollPending} disabled={pendingCount() === 0}>
+              <Button
+                small
+                variant="primary"
+                onClick={rollPending}
+                disabled={!props.connected || pendingCount() === 0}
+              >
                 Roll
               </Button>
               <Button
                 small
-                disabled={!lastTrayNotation()}
+                disabled={!props.connected || !lastTrayNotation()}
                 onClick={() => {
-                  if (!lastTrayNotation()) return;
+                  if (!props.connected || !lastTrayNotation()) return;
                   props.onRollDice(lastTrayNotation(), visibility());
                   setPending({});
                 }}
@@ -398,7 +409,7 @@ export function Chat(props: {
             </For>
           </select>
           <div {...sx(styles.spacer)} />
-          <Button type="submit" variant="primary" disabled={!text().trim()}>
+          <Button type="submit" variant="primary" disabled={!props.connected || !text().trim()}>
             Send
           </Button>
         </div>
