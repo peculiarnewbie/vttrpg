@@ -6,7 +6,7 @@ export const root = stylex.create({
     minHeight: "100vh",
     backgroundColor: colors.canvas,
     color: colors.text,
-    fontFamily: fonts.sans,
+    fontFamily: fonts.body,
     fontSize: "16px",
     lineHeight: 1.5,
     transitionProperty: "background-color, color, border-color",

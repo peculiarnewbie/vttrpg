@@ -177,8 +177,8 @@ export function Avatar(props: { name: string }) {
 }
 
 export function ThemeToggle() {
-  const { theme, toggleTheme } = useTheme();
-  const label = () => (theme() === "factory" ? "Switch to light theme" : "Switch to dark theme");
+  const { toggleTheme, skin } = useTheme();
+  const label = () => `Theme: ${skin().label} (click for the next)`;
   return (
     <button
       type="button"
@@ -187,7 +187,7 @@ export function ThemeToggle() {
       title={label()}
       onClick={toggleTheme}
     >
-      <span aria-hidden="true">{theme() === "factory" ? "☀" : "☾"}</span>
+      <span aria-hidden="true">{skin().dark ? "☀" : "☾"}</span>
     </button>
   );
 }
