@@ -140,9 +140,14 @@ recovery, rather than repeatedly retrying it.
 Drafts and undo history stay in memory; leaving with unpublished changes prompts
 before discarding them. This first version has no collaborative editing or cursors.
 
+DMs can use **Look here** to share their current view or **Look at selection** to point
+to a selected element. Players can choose **Go** on the cue or enable **Follow DM**
+(remembered per world). Manual navigation keeps following enabled for the next cue.
+Cues briefly outline the region and are not saved.
+
 Boards are limited to 100 elements. Image uploads accept PNG, JPEG, and WebP;
-the client resizes them to at most 2560 pixels on the longest side and encodes WebP.
-The server limits each upload to 5 MB and serves images only to world members.
+the client resizes them to at most 4096 pixels on the longest side and encodes WebP.
+The server limits each upload to 10 MB and serves images only to world members.
 Images live in R2 at `world/<worldId>/board/<assetId>`; snapshots contain asset IDs,
 not image bytes. Offscreen elements are culled. Moves and resizes preview once per animation frame
 and commit to the document only when the pointer is released. Removed and abandoned

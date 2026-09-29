@@ -1,6 +1,12 @@
 import * as stylex from "@stylexjs/stylex";
 import { colors, radii, space } from "../theme/tokens.stylex";
 
+const focusFade = stylex.keyframes({
+  "0%": { opacity: 1 },
+  "65%": { opacity: 1 },
+  "100%": { opacity: 0 },
+});
+
 export const boardStyles = stylex.create({
   world: { height: "100dvh", minHeight: 0, overflow: "hidden" },
   content: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" },
@@ -53,6 +59,30 @@ export const boardStyles = stylex.create({
     position: "absolute",
     outline: `2px solid ${colors.accent}`,
     pointerEvents: "none",
+  },
+  focusOutline: {
+    position: "absolute",
+    outline: `3px solid ${colors.accent}`,
+    outlineOffset: "-3px",
+    pointerEvents: "none",
+    animationName: focusFade,
+    animationDuration: "2.4s",
+    animationFillMode: "forwards",
+  },
+  focusPrompt: {
+    position: "absolute",
+    zIndex: 4,
+    top: "124px",
+    left: "50%",
+    transform: "translateX(-50%)",
+    maxWidth: "calc(100% - 24px)",
+    display: "flex",
+    alignItems: "center",
+    gap: space.x2,
+    padding: space.x2,
+    backgroundColor: colors.surface,
+    borderRadius: radii.lg,
+    boxShadow: "0 4px 24px #0003",
   },
   resizeHandle: {
     position: "absolute",

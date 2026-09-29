@@ -174,6 +174,52 @@ describe("published board through real Worker, D1, R2, and SQLite DO", () => {
       }
     }
   });
+  it("relays focus only from the DM to other connections without persisting it", async () => {
+    const connect = async (authCookie: string) => {
+      const response = await mf.dispatchFetch(`https://tabletop.test/api/worlds/${worldId}/ws`, {
+        headers: { cookie: authCookie, Upgrade: "websocket" },
+      });
+      const socket = response.webSocket!;
+      const frames: ServerFrame[] = [];
+      socket.addEventListener("message", (event) =>
+        frames.push(Schema.decodeUnknownSync(ServerFrame)(JSON.parse(String(event.data)))),
+      );
+      socket.accept();
+      await expect.poll(() => frames.some((frame) => frame.type === "board")).toBe(true);
+      return { socket, frames };
+    };
+    const dm = await connect(cookie);
+    const player = await connect(playerCookie);
+    const dmTab = await connect(cookie);
+    const rect = { x: -100, y: 50, width: 800, height: 600 };
+    try {
+      player.socket.send(JSON.stringify({ type: "board.focus", rect }));
+      await expect.poll(() => player.frames.some((frame) => frame.type === "error")).toBe(true);
+      expect(dm.frames.some((frame) => frame.type === "board.focus")).toBe(false);
+      dm.socket.send(JSON.stringify({ type: "board.focus", rect, from: "Spoofed" }));
+      await expect
+        .poll(() => player.frames.some((frame) => frame.type === "board.focus"))
+        .toBe(true);
+      const cue = player.frames.find((frame) => frame.type === "board.focus");
+      expect(cue).toMatchObject({ type: "board.focus", rect });
+      expect(cue?.from).not.toBe("Spoofed");
+      await expect
+        .poll(() => dmTab.frames.some((frame) => frame.type === "board.focus"))
+        .toBe(true);
+      expect(dm.frames.some((frame) => frame.type === "board.focus")).toBe(false);
+      dm.socket.send(JSON.stringify({ type: "board.focus", rect: { ...rect, width: 0 } }));
+      await expect.poll(() => dm.frames.some((frame) => frame.type === "error")).toBe(true);
+      expect(player.frames.filter((frame) => frame.type === "board.focus")).toHaveLength(1);
+      expect(await (await call(`/worlds/${worldId}/board`)).json()).toEqual(emptyBoard());
+      const later = await connect(playerCookie);
+      expect(later.frames.some((frame) => frame.type === "board.focus")).toBe(false);
+      later.socket.close();
+    } finally {
+      dm.socket.close();
+      player.socket.close();
+      dmTab.socket.close();
+    }
+  });
   it("starts empty and denies anonymous access and player writes", async () => {
     expect(await (await call(`/worlds/${worldId}/board`)).json()).toEqual(emptyBoard());
     expect((await call(`/worlds/${worldId}/board`, { cookie: "" })).status).toBe(401);
@@ -275,12 +321,21 @@ describe("published board through real Worker, D1, R2, and SQLite DO", () => {
     );
     expect((await call(`/worlds/${id}/board/images/${assetId}`)).status).toBe(404);
     expect((await call(`/worlds/${id}/board`, { cookie: playerCookie })).status).toBe(403);
+    const atLimit = await mf.dispatchFetch(
+      `https://tabletop.test/api/worlds/${worldId}/board/images`,
+      {
+        method: "POST",
+        headers: { cookie, "content-type": "image/png" },
+        body: new Uint8Array(10 * 1024 * 1024),
+      },
+    );
+    expect(atLimit.status).toBe(201);
     const oversized = await mf.dispatchFetch(
       `https://tabletop.test/api/worlds/${worldId}/board/images`,
       {
         method: "POST",
         headers: { cookie, "content-type": "image/png" },
-        body: new Uint8Array(5 * 1024 * 1024 + 1),
+        body: new Uint8Array(10 * 1024 * 1024 + 1),
       },
     );
     expect(oversized.status).toBe(400);

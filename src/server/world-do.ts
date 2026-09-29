@@ -720,12 +720,15 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     }
   }
 
-  private broadcast(frame: ServerFrame, filter?: (session: SocketAttachment) => boolean) {
+  private broadcast(
+    frame: ServerFrame,
+    filter?: (session: SocketAttachment, socket: WebSocket) => boolean,
+  ) {
     const payload = JSON.stringify(frame);
     for (const socket of this.ctx.getWebSockets()) {
       const attachment = socket.deserializeAttachment() as SocketAttachment | null;
       if (!attachment) continue;
-      if (filter && !filter(attachment)) continue;
+      if (filter && !filter(attachment, socket)) continue;
       try {
         socket.send(payload);
       } catch {
@@ -1018,6 +1021,23 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     const attachment = socket.deserializeAttachment() as SocketAttachment | null;
     if (!attachment) return;
     const frame = decoded.success;
+
+    if (frame.type === "board.focus") {
+      if (attachment.role !== "dm") {
+        socket.send(
+          JSON.stringify({
+            type: "error",
+            message: "Only the DM can focus the board",
+          } satisfies ServerFrame),
+        );
+        return;
+      }
+      this.broadcast(
+        { type: "board.focus", rect: frame.rect, from: attachment.name },
+        (_session, connection) => connection !== socket,
+      );
+      return;
+    }
 
     if (frame.type === "cursors.subscribe") {
       attachment.cursorId ??= newId("cursor");

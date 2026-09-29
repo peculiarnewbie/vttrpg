@@ -1,4 +1,4 @@
-import { MAX_BOARD_IMAGE_BYTES } from "../domain/board";
+import { MAX_BOARD_IMAGE_BYTES, MAX_BOARD_IMAGE_PIXELS } from "../domain/board";
 
 /** Decode once and bound texture size before upload; the board only stores asset IDs. */
 export async function prepareBoardImage(file: File) {
@@ -8,7 +8,7 @@ export async function prepareBoardImage(file: File) {
   if (file.size > 20 * 1024 * 1024) throw new Error("Choose an image smaller than 20MB");
   const bitmap = await createImageBitmap(file);
   try {
-    const scale = Math.min(1, 2560 / Math.max(bitmap.width, bitmap.height));
+    const scale = Math.min(1, MAX_BOARD_IMAGE_PIXELS / Math.max(bitmap.width, bitmap.height));
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(bitmap.width * scale));
     canvas.height = Math.max(1, Math.round(bitmap.height * scale));

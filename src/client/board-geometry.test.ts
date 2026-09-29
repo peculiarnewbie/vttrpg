@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import * as Schema from "effect/Schema";
 import {
   BoardElement,
+  boardViewport,
+  fitBoardRect,
   MIN_BOARD_FONT_SIZE,
   MAX_BOARD_FONT_SIZE,
   screenToBoard,
@@ -197,5 +199,34 @@ describe("two finger board navigation", () => {
     const result = pinchCamera({ camera, initial, current });
     expect(result.zoom).toBe(4);
     expect(screenToBoard(current.center, result)).toEqual(screenToBoard(initial.center, camera));
+  });
+});
+
+describe("camera focus", () => {
+  it("expresses the visible rectangle in board coordinates", () => {
+    expect(boardViewport({ x: 80, y: -40, zoom: 2 }, { width: 1000, height: 600 })).toEqual({
+      x: -40,
+      y: 20,
+      width: 500,
+      height: 300,
+    });
+  });
+  it("centers negative bounds and fits the limiting axis with toolbar clearance", () => {
+    const rect = { x: -800, y: -500, width: 1600, height: 1000 };
+    const camera = fitBoardRect(rect, { width: 1000, height: 600 });
+    expect(camera.zoom).toBeCloseTo(0.44);
+    expect(screenToBoard({ x: 500, y: 300 }, camera)).toEqual({ x: 0, y: 0 });
+    expect(rect.width * camera.zoom).toBeLessThanOrEqual(920);
+    expect(rect.height * camera.zoom).toBeLessThanOrEqual(440);
+  });
+  it("uses horizontal clearance for wide regions and respects existing zoom limits", () => {
+    expect(
+      fitBoardRect({ x: 0, y: 0, width: 2000, height: 100 }, { width: 1000, height: 600 }).zoom,
+    ).toBe(0.46);
+    expect(fitBoardRect(initial, { width: 1000, height: 600 }).zoom).toBe(1);
+    expect(fitBoardRect(initial, { width: 0, height: 0 }).zoom).toBe(0.1);
+    expect(fitBoardRect({ ...initial, width: 100000 }, { width: 1000, height: 600 }).zoom).toBe(
+      0.1,
+    );
   });
 });

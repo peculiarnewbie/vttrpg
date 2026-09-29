@@ -15,6 +15,9 @@ import {
 } from "../client/board-geometry";
 import {
   MAX_BOARD_ELEMENTS,
+  boardViewport,
+  fitBoardRect,
+  type BoardFocusRect,
   isElementVisible,
   screenToBoard,
   zoomAt,
@@ -23,7 +26,7 @@ import {
   type BoardElement,
   type BoardSnapshot,
 } from "../domain/board";
-import type { CursorPosition, LiveCursor } from "../domain/schemas";
+import type { BoardFocus, CursorPosition, LiveCursor } from "../domain/schemas";
 import { createCursorPublisher, cursorColor } from "../client/live-cursors";
 import { sx } from "../theme/sx";
 import { boardStyles as b } from "./board.stylex";
@@ -53,6 +56,8 @@ export function MoodBoard(props: {
   worldId: string;
   isDm: boolean;
   snapshot: BoardSnapshot;
+  focus: BoardFocus | null;
+  onFocus: (rect: BoardFocusRect) => void;
   onPublished: (board: BoardSnapshot) => void;
   cursors: readonly LiveCursor[];
   cursorsEnabled: boolean;
@@ -68,6 +73,38 @@ export function MoodBoard(props: {
   const [error, setError] = createSignal("");
   const [selected, setSelected] = createSignal<string | null>(null);
   const [camera, setCamera] = createSignal<BoardCamera>({ x: 0, y: 0, zoom: 1 });
+  const [followDm, setFollowDm] = createSignal(false);
+  const [pendingFocus, setPendingFocus] = createSignal<BoardFocus | null>(null);
+  const [highlight, setHighlight] = createSignal<BoardFocusRect | null>(null);
+  let highlightTimer: ReturnType<typeof setTimeout> | undefined;
+  let cameraRaf = 0;
+  const stopCameraAnimation = () => cancelAnimationFrame(cameraRaf);
+  const showFocus = (rect: BoardFocusRect) => {
+    clearTimeout(highlightTimer);
+    setHighlight({ ...rect });
+    highlightTimer = setTimeout(() => setHighlight(null), 2400);
+  };
+  createEffect(
+    () => props.worldId,
+    (worldId) => {
+      try {
+        setFollowDm(localStorage.getItem(`ttrpg:follow-dm:${worldId}`) === "on");
+      } catch {
+        setFollowDm(false);
+      }
+    },
+  );
+  const toggleFollowDm = () => {
+    const enabled = !followDm();
+    setFollowDm(enabled);
+    try {
+      localStorage.setItem(`ttrpg:follow-dm:${props.worldId}`, enabled ? "on" : "off");
+    } catch {
+      // Following remains usable when storage is unavailable.
+    }
+    const pending = pendingFocus();
+    if (enabled && pending) goToFocus(pending.rect);
+  };
   const [pointer, setPointer] = createSignal<Point | null>(null);
   const cursorPublisher = createCursorPublisher((position) => props.onCursor(position));
   createEffect(
@@ -301,6 +338,7 @@ export function MoodBoard(props: {
   );
   const fit = () => {
     if (gesture) return;
+    stopCameraAnimation();
     const elements = document().elements;
     if (!elements.length) {
       setCamera({ x: 0, y: 0, zoom: 1 });
@@ -310,16 +348,47 @@ export function MoodBoard(props: {
       y = Math.min(...elements.map((item) => item.y));
     const right = Math.max(...elements.map((item) => item.x + item.width)),
       bottom = Math.max(...elements.map((item) => item.y + item.height));
-    const zoom = Math.max(
-      0.1,
-      Math.min(1, (size().width - 80) / (right - x), (size().height - 160) / (bottom - y)),
-    );
-    setCamera({
-      x: (size().width - (right - x) * zoom) / 2 - x * zoom,
-      y: (size().height - (bottom - y) * zoom) / 2 - y * zoom,
-      zoom,
-    });
+    setCamera(fitBoardRect({ x, y, width: right - x, height: bottom - y }, size()));
   };
+  const goToFocus = (rect: BoardFocusRect) => {
+    cancelGesture();
+    stopCameraAnimation();
+    setPendingFocus(null);
+    showFocus(rect);
+    const initial = camera();
+    const target = fitBoardRect(rect, size());
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setCamera(target);
+      return;
+    }
+    const started = performance.now();
+    const animate = (now: number) => {
+      const progress = Math.min(1, (now - started) / 350);
+      const eased = 1 - (1 - progress) ** 3;
+      setCamera({
+        x: initial.x + (target.x - initial.x) * eased,
+        y: initial.y + (target.y - initial.y) * eased,
+        zoom: initial.zoom + (target.zoom - initial.zoom) * eased,
+      });
+      if (progress < 1) cameraRaf = requestAnimationFrame(animate);
+    };
+    cameraRaf = requestAnimationFrame(animate);
+  };
+  const sendFocus = (rect = boardViewport(camera(), size())) => {
+    if (!props.isDm || rect.width <= 0 || rect.height <= 0) return;
+    props.onFocus(rect);
+    showFocus(rect);
+  };
+  createEffect(
+    () => props.focus,
+    (focus) => {
+      if (!focus) return;
+      showFocus(focus.rect);
+      if (!props.isDm && followDm()) goToFocus(focus.rect);
+      else setPendingFocus(focus);
+    },
+  );
+
   const paintGesture = () => {
     raf = 0;
     if (gesture?.type === "move" || gesture?.type === "resize") setPreview(gesture.next);
@@ -349,6 +418,7 @@ export function MoodBoard(props: {
   const start = (event: PointerEvent) => {
     if (event.button !== 0 && event.button !== 1) return;
     if (event.target instanceof HTMLTextAreaElement) return;
+    stopCameraAnimation();
     finishText();
     const point = localPoint(event);
     pointers.set(event.pointerId, point);
@@ -487,12 +557,14 @@ export function MoodBoard(props: {
       viewport.releasePointerCapture(event.pointerId);
   };
   const changeZoom = (zoom: number) => {
+    stopCameraAnimation();
     if (gesture) return;
     setCamera((previous) => zoomAt(previous, { x: size().width / 2, y: size().height / 2 }, zoom));
   };
   const wheel = (event: WheelEvent) => {
     if (event.target instanceof HTMLTextAreaElement) return;
     event.preventDefault();
+    stopCameraAnimation();
     if (gesture) return;
     const rect = viewport.getBoundingClientRect();
     const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? size().height : 1;
@@ -621,6 +693,8 @@ export function MoodBoard(props: {
   });
   onCleanup(() => {
     disposed = true;
+    stopCameraAnimation();
+    clearTimeout(highlightTimer);
     cursorPublisher.clear();
     cancelAnimationFrame(raf);
   });
@@ -764,6 +838,20 @@ export function MoodBoard(props: {
             }}
           </Show>
         </div>
+        <Show when={highlight()} keyed>
+          {(rect) => (
+            <div
+              aria-hidden="true"
+              {...sx(b.focusOutline)}
+              style={{
+                left: `${rect.x * camera().zoom + camera().x}px`,
+                top: `${rect.y * camera().zoom + camera().y}px`,
+                width: `${rect.width * camera().zoom}px`,
+                height: `${rect.height * camera().zoom}px`,
+              }}
+            />
+          )}
+        </Show>
         <For each={props.cursorsEnabled ? props.cursors : []}>
           {(cursor) => (
             <Show when={cursor.position}>
@@ -962,7 +1050,54 @@ export function MoodBoard(props: {
       <p id="board-help" {...sx(b.help)}>
         Pinch or Ctrl/⌘ + scroll to zoom · Drag empty space to pan · Double-click text to edit
       </p>
+      <Show when={pendingFocus()}>
+        {(focus) => (
+          <div {...sx(b.focusPrompt)} role="status">
+            <span>{focus().from} is pointing here</span>
+            <Button small onClick={() => goToFocus(focus().rect)}>
+              Go
+            </Button>
+            <Button small variant="ghost" onClick={() => setPendingFocus(null)}>
+              Dismiss
+            </Button>
+          </div>
+        )}
+      </Show>
       <div {...sx(b.toolbar)} role="group" aria-label="Board tools">
+        <Show
+          when={props.isDm}
+          fallback={
+            <button
+              type="button"
+              {...sx(b.control, followDm() && b.activeControl)}
+              aria-pressed={followDm() ? "true" : "false"}
+              onClick={toggleFollowDm}
+            >
+              Follow DM
+            </button>
+          }
+        >
+          <Button small onClick={() => sendFocus()}>
+            Look here
+          </Button>
+          <Show when={selectionBounds()}>
+            {(rect) => (
+              <Button
+                small
+                onClick={() =>
+                  sendFocus({
+                    x: rect().x - 40,
+                    y: rect().y - 40,
+                    width: rect().width + 80,
+                    height: rect().height + 80,
+                  })
+                }
+              >
+                Look at selection
+              </Button>
+            )}
+          </Show>
+        </Show>
         <Show when={props.isDm}>
           <Button
             small

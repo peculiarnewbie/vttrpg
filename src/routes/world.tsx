@@ -17,6 +17,7 @@ import { loadLiveCursors, saveLiveCursors } from "../client/live-cursors";
 import { styles } from "../components/styles.stylex";
 import { Badge, Button, ErrorBanner, Spinner, TopBar } from "../components/ui";
 import type {
+  BoardFocus,
   Character,
   ChatMessage,
   LiveCursor,
@@ -44,6 +45,7 @@ export default function WorldPage() {
   const session = useSession();
   const navigate = useNavigate();
 
+  const [boardFocus, setBoardFocus] = createSignal<BoardFocus | null>(null);
   const [board, setBoard] = createSignal<BoardSnapshot>(emptyBoard());
   const [panels, setPanels] = createSignal(loadWorldPanels(params.id));
   const [unreadChat, setUnreadChat] = createSignal(0);
@@ -135,6 +137,9 @@ export default function WorldPage() {
                     : previous.filter((cursor) => cursor.id !== frame.cursor.id),
                 );
               }
+              break;
+            case "board.focus":
+              setBoardFocus(frame);
               break;
             case "board":
               acceptBoard(frame.board);
@@ -313,6 +318,8 @@ export default function WorldPage() {
                   worldId={params.id}
                   isDm={isDm()}
                   snapshot={board()}
+                  focus={boardFocus()}
+                  onFocus={(rect) => controller?.send({ type: "board.focus", rect })}
                   onPublished={acceptBoard}
                   cursors={cursors()}
                   cursorsEnabled={cursorsEnabled() && status() === "open"}
