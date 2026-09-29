@@ -16,6 +16,13 @@ import { sx } from "../theme/sx";
 const sheetStyles = stylex.create({
   longtext: { whiteSpace: "pre-wrap" },
   tickerInput: { width: "7ch" },
+  compactGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+    gap: "8px",
+  },
+  fieldGroup: { display: "flex", flexDirection: "column", gap: "8px" },
+  fieldSummary: { cursor: "pointer", paddingBlock: "4px", userSelect: "none" },
 });
 
 const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
@@ -170,8 +177,8 @@ export function CharacterSheets(props: Props) {
     return (
       <For each={[...groups.entries()]}>
         {([group, fields]) => (
-          <section {...sx(styles.col)}>
-            <span {...sx(styles.eyebrow)}>{group}</span>
+          <details {...sx(sheetStyles.fieldGroup)} open>
+            <summary {...sx(styles.eyebrow, sheetStyles.fieldSummary)}>{group}</summary>
             <div {...sx(styles.sheetGrid)}>
               <For each={fields}>
                 {(field) => {
@@ -231,7 +238,7 @@ export function CharacterSheets(props: Props) {
                 }}
               </For>
             </div>
-          </section>
+          </details>
         )}
       </For>
     );
@@ -239,18 +246,14 @@ export function CharacterSheets(props: Props) {
 
   return (
     <div {...sx(styles.col)}>
-      <div {...sx(styles.row)}>
-        <h3 {...sx(styles.h3)}>Characters</h3>
-        <div {...sx(styles.spacer)} />
-        <Show when={view() === "sheet" && props.characters.length > 1}>
-          <Button small onClick={() => setView("list")}>
-            All characters
+      <Show when={view() === "list" || props.characters.length === 0}>
+        <div {...sx(styles.row)}>
+          <div {...sx(styles.spacer)} />
+          <Button variant="primary" small onClick={() => setCreating(true)}>
+            New character
           </Button>
-        </Show>
-        <Button variant="primary" small onClick={() => setCreating(true)}>
-          New character
-        </Button>
-      </div>
+        </div>
+      </Show>
 
       <Show
         when={props.characters.length > 0}
@@ -284,7 +287,7 @@ export function CharacterSheets(props: Props) {
                   <div {...sx(styles.window)}>
                     <div {...sx(styles.windowTitle)}>
                       <button {...sx(styles.link)} onClick={() => setView("list")}>
-                        ← All characters
+                        ← All
                       </button>
                       <div {...sx(styles.spacer)} />
                       <span>{sheet().name}</span>
@@ -347,71 +350,10 @@ export function CharacterSheets(props: Props) {
                         </div>
                       </div>
 
-                      <section {...sx(styles.col)}>
-                        <span {...sx(styles.eyebrow)}>Rolls</span>
-                        <Show when={editing()}>
-                          <span {...sx(styles.faint)}>
-                            Rolls are paused while you edit the sheet.
-                          </span>
-                        </Show>
-                        <div {...sx(styles.sheetGrid)}>
-                          <For each={sheet().rolls}>
-                            {(roll) => (
-                              <button
-                                {...sx(styles.rollButton)}
-                                disabled={editing()}
-                                onClick={() =>
-                                  props.onRoll(character().id, roll.id, roll.visibility)
-                                }
-                              >
-                                <span>{roll.label}</span>
-                                <span {...sx(styles.row)}>
-                                  <span {...sx(styles.mono)}>
-                                    {roll.dice.map((die) => `${die.count}d${die.sides}`).join("+")}
-                                  </span>
-                                  <Badge
-                                    tone={
-                                      roll.visibility === "dm"
-                                        ? "dm"
-                                        : roll.visibility === "private"
-                                          ? "private"
-                                          : "plain"
-                                    }
-                                  >
-                                    {roll.visibility}
-                                  </Badge>
-                                </span>
-                              </button>
-                            )}
-                          </For>
-                        </div>
-                      </section>
-
-                      <Show when={sheet().stats.length > 0}>
-                        <section {...sx(styles.col)}>
-                          <span {...sx(styles.eyebrow)}>Stats</span>
-                          <div {...sx(styles.sheetGrid)}>
-                            <For each={sheet().stats}>
-                              {(stat) => {
-                                const values = () =>
-                                  editing() ? draftValues() : character().values;
-                                const stats = () => computeStats(sheet().stats, values());
-                                return (
-                                  <div {...sx(styles.statBox)}>
-                                    <span {...sx(styles.label)}>{stat.label}</span>
-                                    <span {...sx(styles.statValue)}>{stats()[stat.id] ?? 0}</span>
-                                  </div>
-                                );
-                              }}
-                            </For>
-                          </div>
-                        </section>
-                      </Show>
-
                       <Show when={sheet().tickers.length > 0}>
                         <section {...sx(styles.col)}>
                           <span {...sx(styles.eyebrow)}>Trackers</span>
-                          <div {...sx(styles.sheetGrid)}>
+                          <div {...sx(sheetStyles.compactGrid)}>
                             <For each={sheet().tickers}>
                               {(ticker) => {
                                 const current = () =>
@@ -529,6 +471,67 @@ export function CharacterSheets(props: Props) {
                                         +
                                       </Button>
                                     </div>
+                                  </div>
+                                );
+                              }}
+                            </For>
+                          </div>
+                        </section>
+                      </Show>
+
+                      <section {...sx(styles.col)}>
+                        <span {...sx(styles.eyebrow)}>Rolls</span>
+                        <Show when={editing()}>
+                          <span {...sx(styles.faint)}>
+                            Rolls are paused while you edit the sheet.
+                          </span>
+                        </Show>
+                        <div {...sx(styles.sheetGrid)}>
+                          <For each={sheet().rolls}>
+                            {(roll) => (
+                              <button
+                                {...sx(styles.rollButton)}
+                                disabled={editing()}
+                                onClick={() =>
+                                  props.onRoll(character().id, roll.id, roll.visibility)
+                                }
+                              >
+                                <span>{roll.label}</span>
+                                <span {...sx(styles.row)}>
+                                  <span {...sx(styles.mono)}>
+                                    {roll.dice.map((die) => `${die.count}d${die.sides}`).join("+")}
+                                  </span>
+                                  <Badge
+                                    tone={
+                                      roll.visibility === "dm"
+                                        ? "dm"
+                                        : roll.visibility === "private"
+                                          ? "private"
+                                          : "plain"
+                                    }
+                                  >
+                                    {roll.visibility}
+                                  </Badge>
+                                </span>
+                              </button>
+                            )}
+                          </For>
+                        </div>
+                      </section>
+
+                      <Show when={sheet().stats.length > 0}>
+                        <section {...sx(styles.col)}>
+                          <span {...sx(styles.eyebrow)}>Stats</span>
+                          <div {...sx(sheetStyles.compactGrid)}>
+                            <For each={sheet().stats}>
+                              {(stat) => {
+                                const values = () =>
+                                  editing() ? draftValues() : character().values;
+                                const stats = () => computeStats(sheet().stats, values());
+                                return (
+                                  <div {...sx(styles.statBox)}>
+                                    <span {...sx(styles.label)}>{stat.label}</span>
+                                    <span {...sx(styles.statValue)}>{stats()[stat.id] ?? 0}</span>
                                   </div>
                                 );
                               }}

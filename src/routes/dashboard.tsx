@@ -54,7 +54,7 @@ export default function Dashboard() {
         <div {...sx(styles.row)}>
           <div>
             <h1 {...sx(styles.h2)}>Your worlds</h1>
-            <p {...sx(styles.muted)}>Each world is its own Durable Object with isolated storage.</p>
+            <p {...sx(styles.muted)}>Pick a table to join, or start a new world.</p>
           </div>
           <div {...sx(styles.spacer)} />
           <Button variant="primary" onClick={() => setCreating(true)}>
@@ -68,7 +68,7 @@ export default function Dashboard() {
           when={session.worlds().length > 0}
           fallback={
             <EmptyState>
-              No worlds yet. Create one to get a Durable Object, a file prefix, and a place to play.
+              No worlds yet. Start one, then invite your players from its settings.
             </EmptyState>
           }
         >

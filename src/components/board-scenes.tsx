@@ -269,7 +269,8 @@ export function BoardPopover(props: {
           if (toolbar) panel.style.top = `${toolbar.getBoundingClientRect().bottom + 8}px`;
         }}
       >
-        {props.label} {props.summary}
+        {props.summary ?? props.label}
+        <span aria-hidden="true">▾</span>
       </button>
       <div
         ref={(element) => {

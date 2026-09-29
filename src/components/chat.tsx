@@ -1,6 +1,6 @@
 import { createVirtualizer } from "../client/virtual";
 import { For, Show, createEffect, createSignal } from "solid-js";
-import { showDiceTotals, setShowDiceTotals } from "../client/dice-display";
+import { showDiceTotals } from "../client/dice-display";
 import { api } from "../client/api";
 import { parseRollCommand } from "../domain/dice";
 import type { ChatMessage, Visibility, WorldMember } from "../domain/schemas";
@@ -113,7 +113,7 @@ export function Chat(props: {
     visibility: Visibility;
     recipientMemberIds: string[];
   }) => void;
-  onRollDice: (notation: string, visibility: Visibility) => void;
+  onRollDice: (notation: string, visibility: Visibility, recipientMemberIds: string[]) => void;
 }) {
   let scrollRef: HTMLDivElement | undefined;
   let pendingPreserve: number | null = null;
@@ -121,8 +121,12 @@ export function Chat(props: {
   const [atBottom, setAtBottom] = createSignal(true);
   const [text, setText] = createSignal("");
   const [kind, setKind] = createSignal<"ic" | "ooc">("ic");
-  const [visibility, setVisibility] = createSignal<Visibility>("public");
-  const [whisperTo, setWhisperTo] = createSignal("");
+  // One "who hears this" choice: everyone, DM only, only me, or a whisper to one member.
+  const [audience, setAudience] = createSignal("public");
+  const whisperTo = () => (audience().startsWith("whisper:") ? audience().slice(8) : "");
+  const visibility = (): Visibility =>
+    audience() === "dm" ? "dm" : audience() === "private" ? "private" : "public";
+  const recipients = () => (whisperTo() ? [whisperTo()] : []);
   const [showDice, setShowDice] = createSignal(false);
   const [lastTrayNotation, setLastTrayNotation] = createSignal("");
   const [pending, setPending] = createSignal<Record<number, number>>({});
@@ -195,7 +199,7 @@ export function Chat(props: {
     if (!props.connected || !raw) return;
     const command = parseRollCommand(raw);
     if (command) {
-      props.onRollDice(command, visibility());
+      props.onRollDice(command, visibility(), recipients());
       setText("");
       return;
     }
@@ -203,7 +207,7 @@ export function Chat(props: {
       content: raw,
       kind: kind(),
       visibility: visibility(),
-      recipientMemberIds: whisperTo() ? [whisperTo()] : [],
+      recipientMemberIds: recipients(),
     });
     setText("");
   };
@@ -224,16 +228,14 @@ export function Chat(props: {
   const rollPending = () => {
     const notation = pendingNotation();
     if (!props.connected || !notation) return;
-    props.onRollDice(notation, visibility());
+    props.onRollDice(notation, visibility(), recipients());
     setPending({});
     setLastTrayNotation(notation);
   };
 
-  const restricted = () => visibility() !== "public" || whisperTo() !== "";
-  const resetAudience = () => {
-    setVisibility("public");
-    setWhisperTo("");
-  };
+  const restricted = () => audience() !== "public";
+  const memberName = (id: string) =>
+    props.members.find((member) => member.id === id)?.displayName ?? "selected player";
 
   return (
     <div {...sx(styles.chatColumn, props.overlay && boardStyles.chat)}>
@@ -244,6 +246,12 @@ export function Chat(props: {
         }}
         onScroll={handleScroll}
       >
+        <Show when={props.messages.length === 0 && !props.loadingMore}>
+          <div {...sx(styles.chatEmpty)}>
+            <strong>No messages yet</strong>
+            <span>Say hello, or roll with the 🎲 tray or /roll 2d6.</span>
+          </div>
+        </Show>
         <div
           style={{
             height: `${virtualizer.getTotalSize()}px`,
@@ -326,7 +334,7 @@ export function Chat(props: {
                 disabled={!props.connected || !lastTrayNotation()}
                 onClick={() => {
                   if (!props.connected || !lastTrayNotation()) return;
-                  props.onRollDice(lastTrayNotation(), visibility());
+                  props.onRollDice(lastTrayNotation(), visibility(), recipients());
                   setPending({});
                 }}
               >
@@ -337,19 +345,20 @@ export function Chat(props: {
         </Show>
         <Show when={restricted()}>
           <div {...sx(styles.chatAudience)} role="status">
-            <Show when={visibility() !== "public"}>
-              <span>{visibility() === "dm" ? "DM only" : "Private (only me)"}</span>
-            </Show>
-            <Show when={whisperTo()}>
-              <span>
-                Whispering to{" "}
-                {props.members.find((member) => member.id === whisperTo())?.displayName ??
-                  "selected player"}
-              </span>
-            </Show>
+            <span>
+              {whisperTo()
+                ? `Whispering to ${memberName(whisperTo())}${
+                    props.members.find((member) => member.id === whisperTo())?.role === "dm"
+                      ? ""
+                      : " (the DM also sees it)"
+                  }`
+                : visibility() === "dm"
+                  ? "DM only"
+                  : "Only you can see this"}
+            </span>
             <div {...sx(styles.spacer)} />
-            <Button small onClick={resetAudience}>
-              × Reset to public
+            <Button small onClick={() => setAudience("public")}>
+              × Everyone
             </Button>
           </div>
         </Show>
@@ -373,41 +382,37 @@ export function Chat(props: {
           >
             🎲 Dice
           </Button>
-          <label {...sx(styles.chatPreference)}>
-            <input
-              type="checkbox"
-              checked={showDiceTotals()}
-              onChange={(event) => setShowDiceTotals(event.currentTarget.checked)}
-            />
-            Show totals
+          <button
+            type="button"
+            {...sx(styles.button, styles.buttonSmall, kind() === "ooc" && styles.buttonGhost)}
+            title={
+              kind() === "ic"
+                ? "In character — click for out of character"
+                : "Out of character — click for in character"
+            }
+            aria-label={kind() === "ic" ? "In character" : "Out of character"}
+            onClick={() => setKind(kind() === "ic" ? "ooc" : "ic")}
+          >
+            {kind() === "ic" ? "IC" : "OOC"}
+          </button>
+          <label {...sx(styles.chatAudienceSelect)}>
+            <span {...sx(styles.faint)}>To</span>
+            <select
+              {...sx(styles.select)}
+              aria-label="Who hears this"
+              value={audience()}
+              onChange={(event) => setAudience(event.currentTarget.value)}
+            >
+              <option value="public">Everyone</option>
+              <option value="dm">DM only</option>
+              <option value="private">Only me</option>
+              <For each={otherMembers()}>
+                {(member) => (
+                  <option value={`whisper:${member.id}`}>Whisper {member.displayName}</option>
+                )}
+              </For>
+            </select>
           </label>
-          <select
-            {...sx(styles.select)}
-            value={kind()}
-            onChange={(event) => setKind(event.currentTarget.value as "ic" | "ooc")}
-          >
-            <option value="ic">In character</option>
-            <option value="ooc">Out of character</option>
-          </select>
-          <select
-            {...sx(styles.select)}
-            value={visibility()}
-            onChange={(event) => setVisibility(event.currentTarget.value as Visibility)}
-          >
-            <option value="public">Public</option>
-            <option value="private">Private (only me)</option>
-            <option value="dm">DM only</option>
-          </select>
-          <select
-            {...sx(styles.select)}
-            value={whisperTo()}
-            onChange={(event) => setWhisperTo(event.currentTarget.value)}
-          >
-            <option value="">Whisper: no one</option>
-            <For each={otherMembers()}>
-              {(member) => <option value={member.id}>{member.displayName}</option>}
-            </For>
-          </select>
           <div {...sx(styles.spacer)} />
           <Button type="submit" variant="primary" disabled={!props.connected || !text().trim()}>
             Send

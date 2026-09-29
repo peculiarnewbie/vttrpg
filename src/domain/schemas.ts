@@ -300,6 +300,7 @@ export const ClientFrame = Schema.Union([
     type: Schema.Literals(["roll.dice"]),
     notation: Schema.String,
     visibility: Visibility,
+    recipientMemberIds: Schema.optional(Schema.Array(Schema.String)),
   }),
   Schema.Struct({
     type: Schema.Literals(["character.save"]),

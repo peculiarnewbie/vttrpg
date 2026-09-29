@@ -4,6 +4,7 @@ import { SessionProvider } from "./client/session";
 import Dashboard from "./routes/dashboard";
 import SignIn from "./routes/signin";
 import WorldPage from "./routes/world";
+import WorldSettings from "./routes/world-settings";
 import { ThemeProvider, useTheme } from "./theme/theme-context";
 
 const Router = createRouter({
@@ -11,6 +12,7 @@ const Router = createRouter({
     { path: "/", component: SignIn },
     { path: "/dashboard", component: Dashboard },
     { path: "/worlds/:id", component: WorldPage },
+    { path: "/worlds/:id/settings", component: WorldSettings },
   ],
 });
 

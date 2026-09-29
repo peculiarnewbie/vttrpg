@@ -60,11 +60,12 @@ a {
   z-index: 250;
   pointer-events: none;
   display: flex;
-  flex-wrap: wrap;
-  align-content: center;
+  flex-wrap: wrap-reverse;
+  /* Roll above the bottom edge, between the side panels, so the board stays readable. */
+  align-content: flex-start;
   justify-content: center;
-  gap: 16px;
-  padding: 24px;
+  gap: 12px;
+  padding: 24px 24px 116px;
   overflow: hidden;
 }
 
@@ -74,11 +75,11 @@ a {
   position: absolute;
   left: -9999px;
   top: -9999px;
-  width: 300px;
-  height: 220px;
+  width: 240px;
+  height: 170px;
   overflow: hidden;
-  border-radius: 16px;
-  background: rgba(10, 10, 10, 0.28);
+  border-radius: 14px;
+  background: rgba(10, 10, 10, 0.14);
   border: 1px solid var(--lane-color, rgba(255, 255, 255, 0.5));
   box-shadow: 0 20px 60px -24px rgba(0, 0, 0, 0.75);
   opacity: 0;

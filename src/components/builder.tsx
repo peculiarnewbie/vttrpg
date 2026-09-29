@@ -24,6 +24,44 @@ const slug = (value: string) =>
     .replace(/^_+|_+$/g, "")
     .slice(0, 32) || "field";
 
+/** An id derived from the label that doesn't collide with the other items in the list. */
+export const idFromLabel = (label: string, taken: readonly { id: string }[], self: number) => {
+  const base = slug(label);
+  const used = new Set(taken.filter((_, index) => index !== self).map((item) => item.id));
+  let id = base;
+  for (let n = 2; used.has(id); n++) id = `${base}_${n}`;
+  return id;
+};
+
+/** Label input with its stable id shown underneath; ids follow the label until first saved. */
+function LabelCell(props: { label: string; id: string; onLabel: (label: string) => void }) {
+  return (
+    <div {...sx(styles.builderLabelCell)}>
+      <Input value={props.label} onInput={props.onLabel} />
+      <span {...sx(styles.builderId)} title="Used by rolls and stats to refer to this">
+        id: {props.id}
+      </span>
+    </div>
+  );
+}
+
+function Headings(props: { style: "fields" | "stats" | "trackers" | "rolls"; labels: string[] }) {
+  return (
+    <div
+      {...sx(
+        styles.builderHeadings,
+        props.style === "fields" && styles.builderFieldsGrid,
+        props.style === "stats" && styles.builderStatsGrid,
+        props.style === "trackers" && styles.builderTrackersGrid,
+        props.style === "rolls" && styles.builderRollsGrid,
+      )}
+      aria-hidden="true"
+    >
+      <For each={props.labels}>{(label) => <span>{label}</span>}</For>
+    </div>
+  );
+}
+
 const emptyTemplate = (): SaveTemplateInput => ({
   name: "New template",
   description: "",
@@ -221,6 +259,10 @@ export function BuilderPanel(props: {
 
   const patch = (partial: Partial<SaveTemplateInput>) =>
     setDraft((prev) => ({ ...prev, ...partial }));
+  // Saved ids are referenced by characters, rolls and stats, so only unsaved items rename.
+  const savedTemplate = () => props.templates.find((template) => template.id === draft().id);
+  const isFresh = (list: "fields" | "stats" | "tickers" | "rolls", id: string) =>
+    !savedTemplate()?.[list].some((item) => item.id === id);
 
   const loadTemplate = (template: SheetTemplate) =>
     setDraft({
@@ -274,10 +316,9 @@ export function BuilderPanel(props: {
   return (
     <div>
       <div {...sx(styles.row)}>
-        <h3 {...sx(styles.h3)}>Sheet builder</h3>
-        <div {...sx(styles.spacer)} />
         <select
           {...sx(styles.select)}
+          aria-label="Template"
           value={draft().id ?? ""}
           onChange={(event) => {
             const template = props.templates.find((item) => item.id === event.currentTarget.value);
@@ -290,6 +331,7 @@ export function BuilderPanel(props: {
             {(template) => <option value={template.id}>{template.name}</option>}
           </For>
         </select>
+        <div {...sx(styles.spacer)} />
         <Button variant="primary" small disabled={busy()} onClick={save}>
           {busy() ? "Saving..." : "Save template"}
         </Button>
@@ -315,16 +357,22 @@ export function BuilderPanel(props: {
 
         <section {...sx(styles.builderSection)}>
           <span {...sx(styles.eyebrow)}>Fields</span>
+          <Headings style="fields" labels={["Label", "Type", "Group", ""]} />
           <For each={draft().fields}>
             {(field, index) => (
-              <div {...sx(styles.builderRow)}>
-                <Input
-                  value={field.label}
-                  onInput={(value) => updateField(index(), { ...field, label: value })}
-                />
-                <Input
-                  value={field.id}
-                  onInput={(value) => updateField(index(), { ...field, id: value })}
+              <div {...sx(styles.builderRow, styles.builderFieldsGrid)}>
+                <LabelCell
+                  label={field.label}
+                  id={field.id}
+                  onLabel={(label) =>
+                    updateField(index(), {
+                      ...field,
+                      label,
+                      id: isFresh("fields", field.id)
+                        ? idFromLabel(label, draft().fields, index())
+                        : field.id,
+                    })
+                  }
                 />
                 <select
                   {...sx(styles.select)}
@@ -371,24 +419,29 @@ export function BuilderPanel(props: {
 
         <section {...sx(styles.builderSection)}>
           <span {...sx(styles.eyebrow)}>Stats</span>
+          <Headings style="stats" labels={["Label", "Base", ""]} />
           <For each={draft().stats}>
             {(stat, index) => (
               <div {...sx(styles.col)}>
-                <div {...sx(styles.builderRow)}>
-                  <Input
-                    value={stat.label}
-                    onInput={(value) => updateStat(index(), { ...stat, label: value })}
-                  />
-                  <Input
-                    value={stat.id}
-                    onInput={(value) => updateStat(index(), { ...stat, id: value })}
+                <div {...sx(styles.builderRow, styles.builderStatsGrid)}>
+                  <LabelCell
+                    label={stat.label}
+                    id={stat.id}
+                    onLabel={(label) =>
+                      updateStat(index(), {
+                        ...stat,
+                        label,
+                        id: isFresh("stats", stat.id)
+                          ? idFromLabel(label, draft().stats, index())
+                          : stat.id,
+                      })
+                    }
                   />
                   <Input
                     type="number"
                     value={stat.base ?? 0}
                     onInput={(value) => updateStat(index(), { ...stat, base: Number(value) })}
                   />
-                  <span />
                   <Button
                     small
                     variant="danger"
@@ -428,16 +481,22 @@ export function BuilderPanel(props: {
 
         <section {...sx(styles.builderSection)}>
           <span {...sx(styles.eyebrow)}>Trackers</span>
+          <Headings style="trackers" labels={["Label", "Min", "Max", "Start", ""]} />
           <For each={draft().tickers}>
             {(ticker, index) => (
-              <div {...sx(styles.builderRow)}>
-                <Input
-                  value={ticker.label}
-                  onInput={(value) => updateTicker(index(), { ...ticker, label: value })}
-                />
-                <Input
-                  value={ticker.id}
-                  onInput={(value) => updateTicker(index(), { ...ticker, id: value })}
+              <div {...sx(styles.builderRow, styles.builderTrackersGrid)}>
+                <LabelCell
+                  label={ticker.label}
+                  id={ticker.id}
+                  onLabel={(label) =>
+                    updateTicker(index(), {
+                      ...ticker,
+                      label,
+                      id: isFresh("tickers", ticker.id)
+                        ? idFromLabel(label, draft().tickers, index())
+                        : ticker.id,
+                    })
+                  }
                 />
                 <Input
                   type="number"
@@ -456,15 +515,13 @@ export function BuilderPanel(props: {
                     })
                   }
                 />
-                <Field label="Start">
-                  <Input
-                    type="number"
-                    value={ticker.defaultValue}
-                    onInput={(value) =>
-                      updateTicker(index(), { ...ticker, defaultValue: Number(value) })
-                    }
-                  />
-                </Field>
+                <Input
+                  type="number"
+                  value={ticker.defaultValue}
+                  onInput={(value) =>
+                    updateTicker(index(), { ...ticker, defaultValue: Number(value) })
+                  }
+                />
                 <Button
                   small
                   variant="danger"
@@ -503,14 +560,19 @@ export function BuilderPanel(props: {
           <For each={draft().rolls}>
             {(roll, index) => (
               <div {...sx(styles.col, styles.panel)}>
-                <div {...sx(styles.builderRowRoll)}>
-                  <Input
-                    value={roll.label}
-                    onInput={(value) => updateRoll(index(), { ...roll, label: value })}
-                  />
-                  <Input
-                    value={roll.id}
-                    onInput={(value) => updateRoll(index(), { ...roll, id: value })}
+                <div {...sx(styles.builderRow, styles.builderRollsGrid)}>
+                  <LabelCell
+                    label={roll.label}
+                    id={roll.id}
+                    onLabel={(label) =>
+                      updateRoll(index(), {
+                        ...roll,
+                        label,
+                        id: isFresh("rolls", roll.id)
+                          ? idFromLabel(label, draft().rolls, index())
+                          : roll.id,
+                      })
+                    }
                   />
                   <select
                     {...sx(styles.select)}

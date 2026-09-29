@@ -1,5 +1,5 @@
 import type { JSX } from "@solidjs/web";
-import { Show, type Component } from "solid-js";
+import { Show, createSignal, createUniqueId, onCleanup, onSettled, type Component } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { sx } from "../theme/sx";
 import { useTheme } from "../theme/theme-context";
@@ -178,10 +178,92 @@ export function Avatar(props: { name: string }) {
 
 export function ThemeToggle() {
   const { theme, toggleTheme } = useTheme();
+  const label = () => (theme() === "factory" ? "Switch to light theme" : "Switch to dark theme");
   return (
-    <Button variant="ghost" small onClick={toggleTheme}>
-      {theme() === "factory" ? "Factory (dark)" : "PostHog (light)"}
-    </Button>
+    <button
+      type="button"
+      {...sx(styles.iconButton)}
+      aria-label={label()}
+      title={label()}
+      onClick={toggleTheme}
+    >
+      <span aria-hidden="true">{theme() === "factory" ? "☀" : "☾"}</span>
+    </button>
+  );
+}
+
+/** A small dropdown anchored to its trigger; closes on outside click and Escape. */
+export function Menu(props: { label: string; trigger: JSX.Element; children: JSX.Element }) {
+  const [open, setOpen] = createSignal(false);
+  const id = createUniqueId();
+  let root: HTMLDivElement | undefined;
+  onSettled(() => {
+    const outside = (event: PointerEvent) => {
+      if (open() && root && !root.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (open() && event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", escape);
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("keydown", escape);
+    });
+  });
+  return (
+    <div {...sx(styles.menu)} ref={(element) => (root = element)}>
+      <button
+        type="button"
+        {...sx(styles.iconButton)}
+        aria-label={props.label}
+        title={props.label}
+        aria-haspopup="true"
+        aria-expanded={open() ? "true" : "false"}
+        aria-controls={id}
+        onClick={() => setOpen(!open())}
+      >
+        {props.trigger}
+      </button>
+      <Show when={open()}>
+        <div id={id} {...sx(styles.menuPanel)} role="menu" onClick={() => setOpen(false)}>
+          {props.children}
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+export function MenuItem(props: { onClick: () => void; children: JSX.Element }) {
+  return (
+    <button type="button" role="menuitem" {...sx(styles.menuItem)} onClick={props.onClick}>
+      {props.children}
+    </button>
+  );
+}
+
+/** A menu row that flips a boolean preference; the menu stays open while toggling. */
+export function MenuToggle(props: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  children: JSX.Element;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitemcheckbox"
+      aria-checked={props.checked ? "true" : "false"}
+      {...sx(styles.menuItem)}
+      onClick={(event) => {
+        event.stopPropagation();
+        props.onChange(!props.checked);
+      }}
+    >
+      <span {...sx(styles.menuCheck)} aria-hidden="true">
+        {props.checked ? "✓" : ""}
+      </span>
+      {props.children}
+    </button>
   );
 }
 

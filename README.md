@@ -92,20 +92,37 @@ forwards to the world Durable Object. Frames are validated with Effect Schema
 (`src/domain/schemas.ts`). The DO broadcasts messages, roll results, character
 updates, and presence, filtering private/DM frames per recipient.
 
+## Table layout
+
+A world opens on one thin header: the world name, who is here, the theme toggle,
+and a ⚙ menu for per-browser preferences (dice totals, live cursors on mouse
+devices), **World settings…** for the DM, and sign-out. Member management and
+sheet templates live on the DM-only settings page (`/worlds/:id/settings`), not in
+the in-session panels. Template field, stat, tracker, and roll ids are derived
+from their labels until the template is first saved, then stay fixed.
+
+Chat sits on the left and **Characters** / **Notes** on the right. Collapse either
+panel to reveal the board; visibility is remembered per world on this browser and
+hiding a panel preserves its form state. On phones the panels open as bottom
+sheets, one at a time, from tabs in the bottom corners.
+
+The chat composer has one **To** picker (Everyone, DM only, Only me, or a whisper
+to one member) that applies to messages and rolls alike; a banner shows whenever
+it isn’t Everyone. **IC/OOC** toggles in- and out-of-character.
+
+Character sheets list trackers first, then rolls, stats, and collapsible field groups.
+
 ## Mood board
 
-Use **Hide chat** and **Hide tools** to reveal the board. Each panel’s visibility
-is remembered per world on this browser; hiding it preserves its form state.
-On narrow screens, opening one panel closes the other.
-
-The DM’s collapsible **Scenes** panel holds up to 50 scenes, with groups, renaming,
+The DM’s **Scenes** menu in the board toolbar holds up to 50 scenes, with groups, renaming,
 duplication, reordering, and deletion. **LIVE** marks the only scene players receive.
 Open any other scene for private prep; **Show to players** makes its saved version
 live. Deleting the live scene activates a neighbor; the last scene cannot be deleted.
 Players fit their camera to a newly active scene. Existing boards become **Scene 1**.
 
-DMs choose **Edit board**, upload a **Background**, and use **Add image** or
-**Add text** for movable elements. Drag an element to move it; drag its corner or
+DMs choose **Edit board**, upload a **Background**, and use **+ Image** or
+**+ Text** for movable elements; **Done** leaves editing. Actions for the selected
+element appear at the bottom of the board. Drag an element to move it; drag its corner or
 edge handles to resize it. Text corners and top/bottom handles scale the lettering
 and card together; left/right handles change its wrapping width at the same font
 size. Image corners preserve their aspect ratio (hold Shift to resize freely).

@@ -1,3 +1,4 @@
+import type { JSX } from "@solidjs/web";
 import { useBeforeLeave } from "@solidjs/router";
 import { For, Show, createEffect, createSignal, onCleanup, onSettled } from "solid-js";
 import { api } from "../client/api";
@@ -57,6 +58,27 @@ type Gesture =
       camera: BoardCamera;
       initial: ReturnType<typeof touchPair>;
     };
+
+/** Every board toolbar control shares one look: quiet, same size, clear hover and pressed states. */
+function ToolButton(props: {
+  onClick: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+  title?: string;
+  children: JSX.Element;
+}) {
+  return (
+    <button
+      type="button"
+      {...sx(b.control, props.danger && b.dangerControl)}
+      disabled={props.disabled}
+      title={props.title}
+      onClick={props.onClick}
+    >
+      {props.children}
+    </button>
+  );
+}
 
 export function MoodBoard(props: {
   worldId: string;
@@ -123,6 +145,25 @@ export function MoodBoard(props: {
     }
     const pending = pendingFocus();
     if (enabled && pending) goToFocus(pending.rect);
+  };
+  const helpKey = "ttrpg:board-help-seen";
+  const [helpSeen, setHelpSeen] = createSignal(
+    (() => {
+      try {
+        return localStorage.getItem(helpKey) === "1";
+      } catch {
+        return false;
+      }
+    })(),
+  );
+  const dismissHelp = () => {
+    if (helpSeen()) return;
+    setHelpSeen(true);
+    try {
+      localStorage.setItem(helpKey, "1");
+    } catch {
+      // The tip simply reappears next visit.
+    }
   };
   const [pointer, setPointer] = createSignal<Point | null>(null);
   const cursorPublisher = createCursorPublisher((position) => props.onCursor(position));
@@ -533,6 +574,7 @@ export function MoodBoard(props: {
     } else {
       if (!navigating) setSelected(null);
       gesture = { ...common, type: "pan" };
+      dismissHelp();
     }
   };
   const move = (event: PointerEvent) => {
@@ -627,6 +669,7 @@ export function MoodBoard(props: {
       viewport.releasePointerCapture(event.pointerId);
   };
   const changeZoom = (zoom: number) => {
+    dismissHelp();
     stopCameraAnimation();
     if (gesture) return;
     setCamera((previous) => zoomAt(previous, { x: size().width / 2, y: size().height / 2 }, zoom));
@@ -634,6 +677,7 @@ export function MoodBoard(props: {
   const wheel = (event: WheelEvent) => {
     if (event.target instanceof HTMLTextAreaElement) return;
     event.preventDefault();
+    dismissHelp();
     stopCameraAnimation();
     if (gesture) return;
     const rect = viewport.getBoundingClientRect();
@@ -1047,9 +1091,9 @@ export function MoodBoard(props: {
             <Show
               when={textEdit()}
               fallback={
-                <Button small disabled={busy()} onClick={() => editText()}>
+                <ToolButton disabled={busy()} onClick={() => editText()}>
                   Edit text
-                </Button>
+                </ToolButton>
               }
             >
               <button
@@ -1065,8 +1109,24 @@ export function MoodBoard(props: {
               </button>
             </Show>
           </Show>
-          <Button
-            small
+          <Show when={selectionBounds()}>
+            {(rect) => (
+              <ToolButton
+                disabled={!isLiveScene() || !!(current() && layerFor(current()!).hidden)}
+                onClick={() =>
+                  sendFocus({
+                    x: rect().x - 40,
+                    y: rect().y - 40,
+                    width: rect().width + 80,
+                    height: rect().height + 80,
+                  })
+                }
+              >
+                Look at selection
+              </ToolButton>
+            )}
+          </Show>
+          <ToolButton
             disabled={busy()}
             onClick={() => {
               const item = current();
@@ -1074,9 +1134,8 @@ export function MoodBoard(props: {
             }}
           >
             Bring to front
-          </Button>
-          <Button
-            small
+          </ToolButton>
+          <ToolButton
             disabled={busy()}
             onClick={() => {
               const item = current();
@@ -1084,8 +1143,8 @@ export function MoodBoard(props: {
             }}
           >
             Send to back
-          </Button>
-          <label>
+          </ToolButton>
+          <label {...sx(b.controlLabel)}>
             Move to layer
             <select
               {...sx(b.control)}
@@ -1110,15 +1169,15 @@ export function MoodBoard(props: {
               </For>
             </select>
           </label>
-          <Button small variant="danger" disabled={busy()} onClick={remove}>
+          <ToolButton danger disabled={busy()} onClick={remove}>
             Delete
-          </Button>
+          </ToolButton>
         </div>
       </Show>
       <div {...sx(b.navigation)} role="group" aria-label="Board navigation">
         <button
           type="button"
-          {...sx(b.control)}
+          {...sx(b.control, b.zoomStep)}
           aria-label="Zoom out"
           title="Zoom out (−)"
           disabled={camera().zoom <= 0.1}
@@ -1128,7 +1187,7 @@ export function MoodBoard(props: {
         </button>
         <button
           type="button"
-          {...sx(b.control, b.zoomValue)}
+          {...sx(b.control, b.zoomValue, b.zoomStep)}
           aria-label="Reset zoom to 100%"
           title="Reset zoom (0)"
           onClick={() => changeZoom(1)}
@@ -1137,7 +1196,7 @@ export function MoodBoard(props: {
         </button>
         <button
           type="button"
-          {...sx(b.control)}
+          {...sx(b.control, b.zoomStep)}
           aria-label="Zoom in"
           title="Zoom in (+)"
           disabled={camera().zoom >= 4}
@@ -1149,19 +1208,26 @@ export function MoodBoard(props: {
           Fit
         </button>
       </div>
-      <p id="board-help" {...sx(b.help)}>
-        Pinch or Ctrl/⌘ + scroll to zoom · Drag empty space to pan · Double-click text to edit
-      </p>
+      <Show when={!helpSeen()}>
+        <p id="board-help" {...sx(b.help)}>
+          Pinch or Ctrl/⌘ + scroll to zoom · Drag empty space to pan
+          {props.isDm ? " · Double-click text to edit" : ""}
+          <button
+            type="button"
+            {...sx(b.helpDismiss)}
+            aria-label="Dismiss navigation tips"
+            onClick={dismissHelp}
+          >
+            ×
+          </button>
+        </p>
+      </Show>
       <Show when={pendingFocus()}>
         {(focus) => (
           <div {...sx(b.focusPrompt)} role="status">
             <span>{focus().from} is pointing here</span>
-            <Button small onClick={() => goToFocus(focus().rect)}>
-              Go
-            </Button>
-            <Button small variant="ghost" onClick={() => setPendingFocus(null)}>
-              Dismiss
-            </Button>
+            <ToolButton onClick={() => goToFocus(focus().rect)}>Go</ToolButton>
+            <ToolButton onClick={() => setPendingFocus(null)}>Dismiss</ToolButton>
           </div>
         )}
       </Show>
@@ -1215,31 +1281,12 @@ export function MoodBoard(props: {
             </button>
           }
         >
-          <Button small disabled={!isLiveScene()} onClick={() => sendFocus()}>
+          <ToolButton disabled={!isLiveScene()} onClick={() => sendFocus()}>
             Look here
-          </Button>
-          <Show when={selectionBounds()}>
-            {(rect) => (
-              <Button
-                small
-                disabled={!isLiveScene() || !!(current() && layerFor(current()!).hidden)}
-                onClick={() =>
-                  sendFocus({
-                    x: rect().x - 40,
-                    y: rect().y - 40,
-                    width: rect().width + 80,
-                    height: rect().height + 80,
-                  })
-                }
-              >
-                Look at selection
-              </Button>
-            )}
-          </Show>
+          </ToolButton>
         </Show>
         <Show when={props.isDm}>
-          <Button
-            small
+          <ToolButton
             disabled={busy()}
             onClick={() => {
               finishText();
@@ -1248,8 +1295,8 @@ export function MoodBoard(props: {
               setSelected(null);
             }}
           >
-            {editing() ? "View board" : "Edit board"}
-          </Button>
+            {editing() ? "Done" : "Edit board"}
+          </ToolButton>
           <Show when={editing()}>
             <button
               type="button"
@@ -1281,42 +1328,45 @@ export function MoodBoard(props: {
                 if (file) void upload(file);
               }}
             />
-            <Button small disabled={busy()} onClick={() => chooseImage("background")}>
+            <ToolButton disabled={busy()} onClick={() => chooseImage("background")}>
               Background
-            </Button>
+            </ToolButton>
             <Show when={document().background}>
-              <Button
-                small
+              <ToolButton
                 disabled={busy()}
                 onClick={() => commit({ ...document(), background: null })}
               >
                 Clear background
-              </Button>
+              </ToolButton>
             </Show>
-            <Button
-              small
+            <ToolButton
               disabled={
                 busy() || selectedLayer().locked || document().elements.length >= MAX_BOARD_ELEMENTS
               }
               onClick={() => chooseImage("element")}
             >
-              Add image
-            </Button>
-            <Button
-              small
+              + Image
+            </ToolButton>
+            <ToolButton
               disabled={
                 busy() || selectedLayer().locked || document().elements.length >= MAX_BOARD_ELEMENTS
               }
               onClick={addText}
             >
-              Add text
-            </Button>
-            <Button small disabled={busy() || !past().length} onClick={undo}>
-              Undo
-            </Button>
-            <Button small disabled={busy() || !future().length} onClick={redo}>
-              Redo
-            </Button>
+              + Text
+            </ToolButton>
+            <ToolButton disabled={busy() || !past().length} onClick={undo} title="Undo (Ctrl/⌘+Z)">
+              <span aria-hidden="true">↶</span>
+              <span {...sx(styles.srOnly)}>Undo</span>
+            </ToolButton>
+            <ToolButton
+              disabled={busy() || !future().length}
+              onClick={redo}
+              title="Redo (Ctrl/⌘+Shift+Z)"
+            >
+              <span aria-hidden="true">↷</span>
+              <span {...sx(styles.srOnly)}>Redo</span>
+            </ToolButton>
           </Show>
         </Show>
         <Show when={props.isDm && !isLiveScene()}>
@@ -1325,7 +1375,7 @@ export function MoodBoard(props: {
           </span>
         </Show>
       </div>
-      <Show when={props.isDm}>
+      <Show when={props.isDm && editing()}>
         <div {...sx(b.sharing)}>
           <Show when={editing()}>
             <label {...sx(styles.row, b.status)}>
@@ -1370,10 +1420,10 @@ export function MoodBoard(props: {
                   ? "Sharing…"
                   : "Unpublished changes"
                 : !isLiveScene()
-                  ? "Private scene"
+                  ? "Private scene · players can’t see it"
                   : live()
-                    ? "Live sharing"
-                    : "Shared board"}
+                    ? "Live sharing on"
+                    : "Published · players see this"}
           </span>
           <Show
             when={
