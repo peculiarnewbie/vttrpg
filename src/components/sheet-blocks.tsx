@@ -527,6 +527,9 @@ type Props = {
   onRoll: (label: string, dice: string) => void;
   /** Overrides the active theme's header style (the lab renders several themes at once). */
   header?: "centered" | "band";
+  /** Controlled page id (the layout editor keeps its outline and preview in step). */
+  page?: string;
+  onPage?: (pageId: string) => void;
   /** Hide the name header (the character sheet draws its own, with the portrait). */
   showName?: boolean;
   /** Fields, text, plain stats, and list rows become inputs; trackers show a max input. */
@@ -789,7 +792,10 @@ function Cell(props: {
   );
 }
 
-type Ctx = Omit<Props, "layout" | "name" | "subtitle" | "header" | "showName"> & {
+type Ctx = Omit<
+  Props,
+  "layout" | "name" | "subtitle" | "header" | "showName" | "page" | "onPage"
+> & {
   mode: GridMode;
 };
 
@@ -1456,7 +1462,7 @@ export function SheetBlocks(props: Props) {
     onCleanup(() => observer.disconnect());
   });
   const current = () =>
-    props.layout.pages.find((item) => item.id === page()) ?? props.layout.pages[0];
+    props.layout.pages.find((item) => item.id === (props.page ?? page())) ?? props.layout.pages[0];
   const band = () => (props.header ?? themeSkin().header) === "band";
   const ctx = (): Ctx => ({
     values: props.values,
@@ -1492,7 +1498,10 @@ export function SheetBlocks(props: Props) {
                 role="tab"
                 aria-selected={item.id === current()?.id ? "true" : "false"}
                 {...sx(s.tab, item.id === current()?.id && s.tabOn)}
-                onClick={() => setPage(item.id)}
+                onClick={() => {
+                  setPage(item.id);
+                  props.onPage?.(item.id);
+                }}
               >
                 {item.title}
               </button>

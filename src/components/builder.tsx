@@ -14,6 +14,10 @@ import type {
   Visibility,
 } from "../domain/schemas";
 import { Button, ErrorBanner, Field, Input } from "./ui";
+import { LayoutEditor } from "./layout-editor";
+import { layoutFromTemplate } from "../domain/layout-from-template";
+import { presetTemplates } from "../domain/preset-templates";
+import { exportTemplate, importTemplate } from "../domain/template-io";
 import { styles } from "./styles.stylex";
 import { sx } from "../theme/sx";
 
@@ -68,6 +72,17 @@ function Headings(props: { style: "fields" | "stats" | "trackers" | "rolls"; lab
     </div>
   );
 }
+
+const toDraft = (template: SheetTemplate): SaveTemplateInput => ({
+  id: template.id,
+  name: template.name,
+  description: template.description,
+  fields: [...template.fields],
+  stats: [...template.stats],
+  tickers: [...template.tickers],
+  rolls: [...template.rolls],
+  layout: template.layout,
+});
 
 const emptyTemplate = (): SaveTemplateInput => ({
   name: "New template",
@@ -248,17 +263,7 @@ export function BuilderPanel(props: {
   onTemplates: (templates: SheetTemplate[]) => void;
 }) {
   const [draft, setDraft] = createSignal<SaveTemplateInput>(
-    props.templates[0]
-      ? {
-          id: props.templates[0].id,
-          name: props.templates[0].name,
-          description: props.templates[0].description,
-          fields: [...props.templates[0].fields],
-          stats: [...props.templates[0].stats],
-          tickers: [...props.templates[0].tickers],
-          rolls: [...props.templates[0].rolls],
-        }
-      : emptyTemplate(),
+    props.templates[0] ? toDraft(props.templates[0]) : emptyTemplate(),
   );
   const [error, setError] = createSignal("");
   const [saved, setSaved] = createSignal("");
@@ -271,16 +276,33 @@ export function BuilderPanel(props: {
   const isFresh = (list: "fields" | "stats" | "tickers" | "rolls", id: string) =>
     !savedTemplate()?.[list].some((item) => item.id === id);
 
-  const loadTemplate = (template: SheetTemplate) =>
-    setDraft({
-      id: template.id,
-      name: template.name,
-      description: template.description,
-      fields: [...template.fields],
-      stats: [...template.stats],
-      tickers: [...template.tickers],
-      rolls: [...template.rolls],
-    });
+  const loadTemplate = (template: SheetTemplate) => setDraft(toDraft(template));
+  const presets = presetTemplates();
+  const asTemplate = (): SheetTemplate => ({
+    ...draft(),
+    id: draft().id ?? "",
+    worldId: props.worldId,
+    updatedAt: "",
+  });
+  const exportDraft = () => {
+    const url = URL.createObjectURL(
+      new Blob([exportTemplate(asTemplate())], { type: "application/json" }),
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${slug(draft().name) || "template"}.ttrpg-template.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+  // Imports load as an unsaved draft so the DM can review before saving.
+  const importFile = async (file: File) => {
+    setError("");
+    setSaved("");
+    const result = importTemplate(await file.text());
+    if (!result.ok) return setError(`Could not import: ${result.error}`);
+    setDraft({ ...result.input, id: undefined });
+    setSaved(`Imported “${result.input.name}”. Review it, then save.`);
+  };
 
   const save = async () => {
     setBusy(true);
@@ -328,17 +350,44 @@ export function BuilderPanel(props: {
           aria-label="Template"
           value={draft().id ?? ""}
           onChange={(event) => {
-            const template = props.templates.find((item) => item.id === event.currentTarget.value);
+            const value = event.currentTarget.value;
+            const template = props.templates.find((item) => item.id === value);
+            setSaved("");
             if (template) loadTemplate(template);
-            else setDraft(emptyTemplate());
+            else if (value.startsWith("preset:")) {
+              const preset = presets[Number(value.slice(7))];
+              setDraft({ ...preset, layout: preset.layout && structuredClone(preset.layout) });
+              setSaved(`Started from “${preset.name}”. Adjust it, then save.`);
+            } else setDraft(emptyTemplate());
           }}
         >
-          <option value="">New template…</option>
+          <option value="">New blank template…</option>
           <For each={props.templates}>
             {(template) => <option value={template.id}>{template.name}</option>}
           </For>
+          <optgroup label="Start from a premade layout">
+            <For each={presets}>
+              {(preset, index) => <option value={`preset:${index()}`}>{preset.name}</option>}
+            </For>
+          </optgroup>
         </select>
         <div {...sx(styles.spacer)} />
+        <Button small onClick={exportDraft}>
+          Export
+        </Button>
+        <label {...sx(styles.button, styles.buttonSmall)}>
+          Import
+          <input
+            type="file"
+            accept="application/json,.json"
+            style={{ display: "none" }}
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              if (file) void importFile(file);
+              event.currentTarget.value = "";
+            }}
+          />
+        </label>
         <Button variant="primary" small disabled={busy()} onClick={save}>
           {busy() ? "Saving..." : "Save template"}
         </Button>
@@ -362,298 +411,328 @@ export function BuilderPanel(props: {
           </Field>
         </div>
 
-        <section {...sx(styles.builderSection)}>
-          <span {...sx(styles.eyebrow)}>Fields</span>
-          <Headings style="fields" labels={["Label", "Type", "Group", ""]} />
-          <For each={draft().fields}>
-            {(field, index) => (
-              <div {...sx(styles.builderRow, styles.builderFieldsGrid)}>
-                <LabelCell
-                  label={field.label}
-                  id={field.id}
-                  onLabel={(label) =>
-                    updateField(index(), {
-                      ...field,
-                      label,
-                      id: isFresh("fields", field.id)
-                        ? idFromLabel(label, draft().fields, index())
-                        : field.id,
-                    })
-                  }
-                />
-                <select
-                  {...sx(styles.select)}
-                  value={field.kind}
-                  onChange={(event) =>
-                    updateField(index(), {
-                      ...field,
-                      kind: event.currentTarget.value as SheetFieldKind,
-                    })
-                  }
-                >
-                  <option value="text">text</option>
-                  <option value="number">number</option>
-                  <option value="longtext">longtext</option>
-                </select>
-                <Input
-                  value={field.group ?? ""}
-                  onInput={(value) => updateField(index(), { ...field, group: value })}
-                />
-                <Button
-                  small
-                  variant="danger"
-                  onClick={() => patch({ fields: draft().fields.filter((_, i) => i !== index()) })}
-                >
-                  ×
-                </Button>
-              </div>
-            )}
-          </For>
-          <Button
-            small
-            onClick={() =>
-              patch({
-                fields: [
-                  ...draft().fields,
-                  { id: `field_${draft().fields.length + 1}`, label: "New field", kind: "text" },
-                ],
-              })
-            }
-          >
-            Add field
-          </Button>
-        </section>
+        <Show
+          when={draft().layout}
+          fallback={
+            <div {...sx(styles.successBanner)}>
+              This template uses the classic sheet. Convert it to a layout to arrange blocks, add
+              lists and checkboxes, and pick styles.{" "}
+              <Button small onClick={() => patch({ layout: layoutFromTemplate(asTemplate()) })}>
+                Convert to layout
+              </Button>
+            </div>
+          }
+        >
+          {(layout) => (
+            <LayoutEditor layout={layout()} onChange={(next) => patch({ layout: next })} />
+          )}
+        </Show>
 
-        <section {...sx(styles.builderSection)}>
-          <span {...sx(styles.eyebrow)}>Stats</span>
-          <Headings style="stats" labels={["Label", "Base", ""]} />
-          <For each={draft().stats}>
-            {(stat, index) => (
-              <div {...sx(styles.col)}>
-                <div {...sx(styles.builderRow, styles.builderStatsGrid)}>
+        <details {...sx(styles.builderSection)} open={!draft().layout}>
+          <summary {...sx(styles.eyebrow)} style={{ cursor: "pointer" }}>
+            {draft().layout
+              ? "Classic data — formulas and roll modifiers used by this layout"
+              : "Classic sheet"}
+          </summary>
+          <section {...sx(styles.builderSection)}>
+            <span {...sx(styles.eyebrow)}>Fields</span>
+            <Headings style="fields" labels={["Label", "Type", "Group", ""]} />
+            <For each={draft().fields}>
+              {(field, index) => (
+                <div {...sx(styles.builderRow, styles.builderFieldsGrid)}>
                   <LabelCell
-                    label={stat.label}
-                    id={stat.id}
+                    label={field.label}
+                    id={field.id}
                     onLabel={(label) =>
-                      updateStat(index(), {
-                        ...stat,
+                      updateField(index(), {
+                        ...field,
                         label,
-                        id: isFresh("stats", stat.id)
-                          ? idFromLabel(label, draft().stats, index())
-                          : stat.id,
-                      })
-                    }
-                  />
-                  <Input
-                    type="number"
-                    value={stat.base ?? 0}
-                    onInput={(value) => updateStat(index(), { ...stat, base: Number(value) })}
-                  />
-                  <Button
-                    small
-                    variant="danger"
-                    onClick={() => patch({ stats: draft().stats.filter((_, i) => i !== index()) })}
-                  >
-                    ×
-                  </Button>
-                </div>
-                <ModifierEditor
-                  modifiers={[...stat.modifiers]}
-                  stats={draft().stats}
-                  fields={draft().fields}
-                  onChange={(modifiers) => updateStat(index(), { ...stat, modifiers })}
-                />
-              </div>
-            )}
-          </For>
-          <Button
-            small
-            onClick={() =>
-              patch({
-                stats: [
-                  ...draft().stats,
-                  {
-                    id: `stat_${draft().stats.length + 1}`,
-                    label: "New stat",
-                    base: 0,
-                    modifiers: [],
-                  },
-                ],
-              })
-            }
-          >
-            Add stat
-          </Button>
-        </section>
-
-        <section {...sx(styles.builderSection)}>
-          <span {...sx(styles.eyebrow)}>Trackers</span>
-          <Headings style="trackers" labels={["Label", "Min", "Max", "Start", "Display", ""]} />
-          <For each={draft().tickers}>
-            {(ticker, index) => (
-              <div {...sx(styles.builderRow, builderStyles.trackersGrid)}>
-                <LabelCell
-                  label={ticker.label}
-                  id={ticker.id}
-                  onLabel={(label) =>
-                    updateTicker(index(), {
-                      ...ticker,
-                      label,
-                      id: isFresh("tickers", ticker.id)
-                        ? idFromLabel(label, draft().tickers, index())
-                        : ticker.id,
-                    })
-                  }
-                />
-                <Input
-                  type="number"
-                  value={ticker.min}
-                  onInput={(value) => updateTicker(index(), { ...ticker, min: Number(value) })}
-                />
-                <Input
-                  type="number"
-                  value={ticker.max}
-                  onInput={(value) =>
-                    updateTicker(index(), {
-                      ...ticker,
-                      max: Number(value),
-                      defaultValue:
-                        ticker.defaultValue === ticker.max ? Number(value) : ticker.defaultValue,
-                    })
-                  }
-                />
-                <Input
-                  type="number"
-                  value={ticker.defaultValue}
-                  onInput={(value) =>
-                    updateTicker(index(), { ...ticker, defaultValue: Number(value) })
-                  }
-                />
-                <select
-                  {...sx(styles.select)}
-                  aria-label={`${ticker.label} display`}
-                  value={ticker.display ?? "auto"}
-                  onChange={(event) =>
-                    updateTicker(index(), {
-                      ...ticker,
-                      display: event.currentTarget.value as TickerDefinition["display"],
-                    })
-                  }
-                >
-                  <option value="auto">Auto</option>
-                  <option value="pips">Pips</option>
-                  <option value="bar">Bar</option>
-                  <option value="number">Number</option>
-                </select>
-                <Button
-                  small
-                  variant="danger"
-                  onClick={() =>
-                    patch({ tickers: draft().tickers.filter((_, i) => i !== index()) })
-                  }
-                >
-                  ×
-                </Button>
-              </div>
-            )}
-          </For>
-          <Button
-            small
-            onClick={() =>
-              patch({
-                tickers: [
-                  ...draft().tickers,
-                  {
-                    id: `tracker_${draft().tickers.length + 1}`,
-                    label: "New tracker",
-                    min: 0,
-                    max: 10,
-                    defaultValue: 10,
-                  },
-                ],
-              })
-            }
-          >
-            Add tracker
-          </Button>
-        </section>
-
-        <section {...sx(styles.builderSection)}>
-          <span {...sx(styles.eyebrow)}>Rolls</span>
-          <For each={draft().rolls}>
-            {(roll, index) => (
-              <div {...sx(styles.col, styles.panel)}>
-                <div {...sx(styles.builderRow, styles.builderRollsGrid)}>
-                  <LabelCell
-                    label={roll.label}
-                    id={roll.id}
-                    onLabel={(label) =>
-                      updateRoll(index(), {
-                        ...roll,
-                        label,
-                        id: isFresh("rolls", roll.id)
-                          ? idFromLabel(label, draft().rolls, index())
-                          : roll.id,
+                        id: isFresh("fields", field.id)
+                          ? idFromLabel(label, draft().fields, index())
+                          : field.id,
                       })
                     }
                   />
                   <select
                     {...sx(styles.select)}
-                    value={roll.visibility}
+                    value={field.kind}
                     onChange={(event) =>
-                      updateRoll(index(), {
-                        ...roll,
-                        visibility: event.currentTarget.value as Visibility,
+                      updateField(index(), {
+                        ...field,
+                        kind: event.currentTarget.value as SheetFieldKind,
                       })
                     }
                   >
-                    <option value="public">public</option>
-                    <option value="private">private</option>
-                    <option value="dm">dm</option>
+                    <option value="text">text</option>
+                    <option value="number">number</option>
+                    <option value="longtext">longtext</option>
                   </select>
+                  <Input
+                    value={field.group ?? ""}
+                    onInput={(value) => updateField(index(), { ...field, group: value })}
+                  />
                   <Button
                     small
                     variant="danger"
-                    onClick={() => patch({ rolls: draft().rolls.filter((_, i) => i !== index()) })}
+                    onClick={() =>
+                      patch({ fields: draft().fields.filter((_, i) => i !== index()) })
+                    }
                   >
                     ×
                   </Button>
                 </div>
-                <span {...sx(styles.faint)}>Dice</span>
-                <DiceEditor
-                  dice={[...roll.dice]}
-                  onChange={(dice) => updateRoll(index(), { ...roll, dice })}
-                />
-                <span {...sx(styles.faint)}>Modifiers</span>
-                <ModifierEditor
-                  modifiers={[...roll.modifiers]}
-                  stats={draft().stats}
-                  fields={draft().fields}
-                  onChange={(modifiers) => updateRoll(index(), { ...roll, modifiers })}
-                />
-              </div>
-            )}
-          </For>
-          <Button
-            small
-            onClick={() =>
-              patch({
-                rolls: [
-                  ...draft().rolls,
-                  {
-                    id: slug(`roll_${draft().rolls.length + 1}`),
-                    label: "New roll",
-                    dice: [{ count: 1, sides: 20 }],
-                    modifiers: [],
-                    visibility: "public",
-                  },
-                ],
-              })
-            }
-          >
-            Add roll
-          </Button>
-        </section>
+              )}
+            </For>
+            <Button
+              small
+              onClick={() =>
+                patch({
+                  fields: [
+                    ...draft().fields,
+                    { id: `field_${draft().fields.length + 1}`, label: "New field", kind: "text" },
+                  ],
+                })
+              }
+            >
+              Add field
+            </Button>
+          </section>
+
+          <section {...sx(styles.builderSection)}>
+            <span {...sx(styles.eyebrow)}>Stats</span>
+            <Headings style="stats" labels={["Label", "Base", ""]} />
+            <For each={draft().stats}>
+              {(stat, index) => (
+                <div {...sx(styles.col)}>
+                  <div {...sx(styles.builderRow, styles.builderStatsGrid)}>
+                    <LabelCell
+                      label={stat.label}
+                      id={stat.id}
+                      onLabel={(label) =>
+                        updateStat(index(), {
+                          ...stat,
+                          label,
+                          id: isFresh("stats", stat.id)
+                            ? idFromLabel(label, draft().stats, index())
+                            : stat.id,
+                        })
+                      }
+                    />
+                    <Input
+                      type="number"
+                      value={stat.base ?? 0}
+                      onInput={(value) => updateStat(index(), { ...stat, base: Number(value) })}
+                    />
+                    <Button
+                      small
+                      variant="danger"
+                      onClick={() =>
+                        patch({ stats: draft().stats.filter((_, i) => i !== index()) })
+                      }
+                    >
+                      ×
+                    </Button>
+                  </div>
+                  <ModifierEditor
+                    modifiers={[...stat.modifiers]}
+                    stats={draft().stats}
+                    fields={draft().fields}
+                    onChange={(modifiers) => updateStat(index(), { ...stat, modifiers })}
+                  />
+                </div>
+              )}
+            </For>
+            <Button
+              small
+              onClick={() =>
+                patch({
+                  stats: [
+                    ...draft().stats,
+                    {
+                      id: `stat_${draft().stats.length + 1}`,
+                      label: "New stat",
+                      base: 0,
+                      modifiers: [],
+                    },
+                  ],
+                })
+              }
+            >
+              Add stat
+            </Button>
+          </section>
+
+          <section {...sx(styles.builderSection)}>
+            <span {...sx(styles.eyebrow)}>Trackers</span>
+            <Headings style="trackers" labels={["Label", "Min", "Max", "Start", "Display", ""]} />
+            <For each={draft().tickers}>
+              {(ticker, index) => (
+                <div {...sx(styles.builderRow, builderStyles.trackersGrid)}>
+                  <LabelCell
+                    label={ticker.label}
+                    id={ticker.id}
+                    onLabel={(label) =>
+                      updateTicker(index(), {
+                        ...ticker,
+                        label,
+                        id: isFresh("tickers", ticker.id)
+                          ? idFromLabel(label, draft().tickers, index())
+                          : ticker.id,
+                      })
+                    }
+                  />
+                  <Input
+                    type="number"
+                    value={ticker.min}
+                    onInput={(value) => updateTicker(index(), { ...ticker, min: Number(value) })}
+                  />
+                  <Input
+                    type="number"
+                    value={ticker.max}
+                    onInput={(value) =>
+                      updateTicker(index(), {
+                        ...ticker,
+                        max: Number(value),
+                        defaultValue:
+                          ticker.defaultValue === ticker.max ? Number(value) : ticker.defaultValue,
+                      })
+                    }
+                  />
+                  <Input
+                    type="number"
+                    value={ticker.defaultValue}
+                    onInput={(value) =>
+                      updateTicker(index(), { ...ticker, defaultValue: Number(value) })
+                    }
+                  />
+                  <select
+                    {...sx(styles.select)}
+                    aria-label={`${ticker.label} display`}
+                    value={ticker.display ?? "auto"}
+                    onChange={(event) =>
+                      updateTicker(index(), {
+                        ...ticker,
+                        display: event.currentTarget.value as TickerDefinition["display"],
+                      })
+                    }
+                  >
+                    <option value="auto">Auto</option>
+                    <option value="pips">Pips</option>
+                    <option value="bar">Bar</option>
+                    <option value="number">Number</option>
+                  </select>
+                  <Button
+                    small
+                    variant="danger"
+                    onClick={() =>
+                      patch({ tickers: draft().tickers.filter((_, i) => i !== index()) })
+                    }
+                  >
+                    ×
+                  </Button>
+                </div>
+              )}
+            </For>
+            <Button
+              small
+              onClick={() =>
+                patch({
+                  tickers: [
+                    ...draft().tickers,
+                    {
+                      id: `tracker_${draft().tickers.length + 1}`,
+                      label: "New tracker",
+                      min: 0,
+                      max: 10,
+                      defaultValue: 10,
+                    },
+                  ],
+                })
+              }
+            >
+              Add tracker
+            </Button>
+          </section>
+
+          <section {...sx(styles.builderSection)}>
+            <span {...sx(styles.eyebrow)}>Rolls</span>
+            <For each={draft().rolls}>
+              {(roll, index) => (
+                <div {...sx(styles.col, styles.panel)}>
+                  <div {...sx(styles.builderRow, styles.builderRollsGrid)}>
+                    <LabelCell
+                      label={roll.label}
+                      id={roll.id}
+                      onLabel={(label) =>
+                        updateRoll(index(), {
+                          ...roll,
+                          label,
+                          id: isFresh("rolls", roll.id)
+                            ? idFromLabel(label, draft().rolls, index())
+                            : roll.id,
+                        })
+                      }
+                    />
+                    <select
+                      {...sx(styles.select)}
+                      value={roll.visibility}
+                      onChange={(event) =>
+                        updateRoll(index(), {
+                          ...roll,
+                          visibility: event.currentTarget.value as Visibility,
+                        })
+                      }
+                    >
+                      <option value="public">public</option>
+                      <option value="private">private</option>
+                      <option value="dm">dm</option>
+                    </select>
+                    <Button
+                      small
+                      variant="danger"
+                      onClick={() =>
+                        patch({ rolls: draft().rolls.filter((_, i) => i !== index()) })
+                      }
+                    >
+                      ×
+                    </Button>
+                  </div>
+                  <span {...sx(styles.faint)}>Dice</span>
+                  <DiceEditor
+                    dice={[...roll.dice]}
+                    onChange={(dice) => updateRoll(index(), { ...roll, dice })}
+                  />
+                  <span {...sx(styles.faint)}>Modifiers</span>
+                  <ModifierEditor
+                    modifiers={[...roll.modifiers]}
+                    stats={draft().stats}
+                    fields={draft().fields}
+                    onChange={(modifiers) => updateRoll(index(), { ...roll, modifiers })}
+                  />
+                </div>
+              )}
+            </For>
+            <Button
+              small
+              onClick={() =>
+                patch({
+                  rolls: [
+                    ...draft().rolls,
+                    {
+                      id: slug(`roll_${draft().rolls.length + 1}`),
+                      label: "New roll",
+                      dice: [{ count: 1, sides: 20 }],
+                      modifiers: [],
+                      visibility: "public",
+                    },
+                  ],
+                })
+              }
+            >
+              Add roll
+            </Button>
+          </section>
+        </details>
       </div>
     </div>
   );
