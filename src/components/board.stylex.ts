@@ -8,6 +8,29 @@ const focusFade = stylex.keyframes({
 });
 
 export const boardStyles = stylex.create({
+  scenePanels: {
+    position: "absolute",
+    top: space.x3,
+    left: space.x3,
+    zIndex: 3,
+    maxHeight: "65%",
+    overflowY: "auto",
+    width: "min(340px, 85%)",
+    backgroundColor: colors.surface,
+    borderRadius: radii.md,
+    padding: space.x2,
+  },
+  panelContent: { display: "flex", flexDirection: "column", gap: space.x2, padding: space.x2 },
+  panelItem: {
+    display: "flex",
+    flexDirection: "column",
+    gap: space.x2,
+    paddingBlock: space.x2,
+    borderBottomWidth: 1,
+    borderBottomStyle: "solid",
+    borderBottomColor: colors.border,
+  },
+  panelActions: { display: "flex", flexWrap: "wrap", gap: space.x2, alignItems: "center" },
   world: { height: "100dvh", minHeight: 0, overflow: "hidden" },
   content: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" },
   header: { padding: space.x3, marginBottom: 0, backgroundColor: colors.surface },

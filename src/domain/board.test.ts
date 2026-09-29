@@ -4,6 +4,11 @@ import { describe, expect, it } from "vitest";
 import {
   BoardSnapshot,
   emptyBoard,
+  normalizeBoard,
+  orderedBoardElements,
+  orderBoardElement,
+  deleteBoardLayer,
+  stripHiddenLayers,
   isElementVisible,
   screenToBoard,
   zoomAt,
@@ -111,5 +116,103 @@ describe("board focus frames", () => {
     const frame = { type: "board.focus", rect: { ...rect, ...invalid }, from: "DM" };
     expect(Schema.decodeUnknownResult(ClientFrame)(frame)._tag).toBe("Failure");
     expect(Schema.decodeUnknownResult(ServerFrame)(frame)._tag).toBe("Failure");
+  });
+});
+
+describe("board layers", () => {
+  const layers = [
+    { id: "map", name: "Map", locked: true, hidden: false },
+    { id: "secret", name: "DM prep", locked: false, hidden: true },
+    { id: "tokens", name: "Tokens", locked: false, hidden: false },
+  ];
+  const document = {
+    background: "ambient",
+    layers,
+    elements: [
+      { ...element, id: "token-a", layerId: "tokens" },
+      { ...element, id: "map-a", layerId: "map" },
+      { ...element, id: "hidden", layerId: "secret", text: "A secret", assetId: "private-asset" },
+      { ...element, id: "token-b", layerId: "tokens" },
+      { ...element, id: "map-b", layerId: "map" },
+    ],
+  };
+  const order = (document: Parameters<typeof orderedBoardElements>[0]) =>
+    orderedBoardElements(document).map((item) => item.id);
+  it("normalizes legacy documents without changing their content or order", () => {
+    const normalized = normalizeBoard(valid.document);
+    expect(normalized.layers).toEqual([
+      { id: "default", name: "Default", locked: false, hidden: false },
+    ]);
+    expect(normalized.elements).toEqual([{ ...element, layerId: "default" }]);
+    expect(normalized.background).toBe("forest");
+    expect(normalizeBoard(normalized)).toEqual(normalized);
+    expect(
+      normalizeBoard({ ...document, elements: [{ ...element, layerId: "missing" }] }).elements[0]
+        .layerId,
+    ).toBe("map");
+  });
+  it("renders by layer, preserving order within each layer", () => {
+    expect(order(document)).toEqual(["map-a", "map-b", "hidden", "token-a", "token-b"]);
+    expect(order(orderBoardElement(document, "map-a", "front"))).toEqual([
+      "map-b",
+      "map-a",
+      "hidden",
+      "token-a",
+      "token-b",
+    ]);
+    expect(order(orderBoardElement(document, "token-b", "back"))).toEqual([
+      "map-a",
+      "map-b",
+      "hidden",
+      "token-b",
+      "token-a",
+    ]);
+    expect(order({ ...document, layers: [...layers].reverse() })).toEqual([
+      "token-a",
+      "token-b",
+      "hidden",
+      "map-a",
+      "map-b",
+    ]);
+  });
+  it("strips hidden elements and metadata without mutating the DM snapshot", () => {
+    const snapshot = { revision: 7, sceneId: "scene", sceneName: "Live", document };
+    const visible = stripHiddenLayers(snapshot);
+    expect(visible.revision).toBe(7);
+    expect(visible.sceneId).toBe("scene");
+    expect(visible.document.background).toBe("ambient");
+    expect(visible.document.layers?.map((layer) => layer.id)).toEqual(["map", "tokens"]);
+    expect(visible.document.elements.map((item) => item.id)).not.toContain("hidden");
+    expect(JSON.stringify(visible)).not.toContain("A secret");
+    expect(JSON.stringify(visible)).not.toContain("private-asset");
+    expect(snapshot.document.elements).toHaveLength(5);
+    const allHidden = stripHiddenLayers({
+      ...snapshot,
+      document: { ...document, layers: layers.map((layer) => ({ ...layer, hidden: true })) },
+    });
+    expect(allHidden.document.elements).toEqual([]);
+    expect(decode(allHidden)._tag).toBe("Success");
+  });
+  it("moves deleted layer elements to the layer below, preserving the last layer", () => {
+    const next = deleteBoardLayer(document, "secret");
+    expect(next.layers?.map((layer) => layer.id)).toEqual(["map", "tokens"]);
+    expect(next.elements.find((item) => item.id === "hidden")?.layerId).toBe("map");
+    expect(
+      deleteBoardLayer(document, "map").elements.find((item) => item.id === "map-a")?.layerId,
+    ).toBe("secret");
+    const single = normalizeBoard(valid.document);
+    expect(deleteBoardLayer(single, "default")).toEqual(single);
+  });
+  it("limits layers and rejects duplicate IDs and malformed fields", () => {
+    for (const invalid of [
+      [],
+      [layers[0], layers[0]],
+      Array.from({ length: 13 }, (_, id) => ({ ...layers[0], id: `layer-${id}` })),
+      [{ ...layers[0], locked: "yes" }],
+    ]) {
+      expect(decode({ ...valid, document: { ...valid.document, layers: invalid } })._tag).toBe(
+        "Failure",
+      );
+    }
   });
 });

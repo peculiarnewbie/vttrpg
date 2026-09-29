@@ -12,7 +12,7 @@ import { MembersPanel } from "../components/members";
 import { NotesPanel } from "../components/notes";
 import { MoodBoard } from "../components/mood-board";
 import { boardStyles as b } from "../components/board.stylex";
-import { emptyBoard, type BoardSnapshot } from "../domain/board";
+import { emptyBoard, type BoardSnapshot, type SceneList } from "../domain/board";
 import { loadWorldPanels, saveWorldPanels } from "../client/world-panels";
 import { loadLiveCursors, saveLiveCursors } from "../client/live-cursors";
 import { styles } from "../components/styles.stylex";
@@ -47,6 +47,7 @@ export default function WorldPage() {
   const navigate = useNavigate();
 
   const [boardFocus, setBoardFocus] = createSignal<BoardFocus | null>(null);
+  const [sceneList, setSceneList] = createSignal<SceneList>({ scenes: [], activeSceneId: "" });
   const [board, setBoard] = createSignal<BoardSnapshot>(emptyBoard());
   const [panels, setPanels] = createSignal(loadWorldPanels(params.id));
   const [unreadChat, setUnreadChat] = createSignal(0);
@@ -66,8 +67,7 @@ export default function WorldPage() {
     if (next.chat) setUnreadChat(0);
     saveWorldPanels(params.id, next);
   };
-  const acceptBoard = (next: BoardSnapshot) =>
-    setBoard((previous) => (next.revision >= previous.revision ? next : previous));
+  const acceptBoard = (next: BoardSnapshot) => setBoard(next);
   const [boot, setBoot] = createSignal<WorldBootstrap | null>(null);
   const [messages, setMessages] = createSignal<ChatMessage[]>([]);
   const [hasMore, setHasMore] = createSignal(false);
@@ -125,6 +125,10 @@ export default function WorldPage() {
         const bootstrap = await api.bootstrapWorld(params.id);
         setBoot(bootstrap);
         acceptBoard(bootstrap.board);
+        setSceneList({
+          scenes: bootstrap.scenes ?? [],
+          activeSceneId: bootstrap.activeSceneId ?? bootstrap.board.sceneId ?? "",
+        });
         setMessages(bootstrap.messages);
         setHasMore(bootstrap.hasMoreMessages);
         setCharacters(bootstrap.characters);
@@ -162,7 +166,11 @@ export default function WorldPage() {
             case "board.focus":
               setBoardFocus(frame);
               break;
+            case "scenes":
+              setSceneList({ scenes: frame.scenes, activeSceneId: frame.activeSceneId });
+              break;
             case "board":
+              setSceneList((previous) => ({ ...previous, activeSceneId: frame.activeSceneId }));
               acceptBoard(frame.board);
               break;
             case "message":
@@ -357,8 +365,12 @@ export default function WorldPage() {
                   worldId={params.id}
                   isDm={isDm()}
                   snapshot={board()}
+                  sceneList={sceneList()}
+                  onSceneList={setSceneList}
                   focus={boardFocus()}
-                  onFocus={(rect) => controller?.send({ type: "board.focus", rect })}
+                  onFocus={(rect, sceneId) =>
+                    controller?.send({ type: "board.focus", sceneId, rect })
+                  }
                   onPublished={acceptBoard}
                   cursors={cursors()}
                   cursorsEnabled={cursorsEnabled() && status() === "open"}

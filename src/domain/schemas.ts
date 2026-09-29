@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { BoardSnapshot, BoardFocusRect } from "./board";
+import { BoardSnapshot, BoardFocusRect, BoardAssetId, SceneList } from "./board";
 
 export type Infer<S> = Schema.Schema.Type<S>;
 
@@ -268,12 +268,17 @@ export type LiveCursor = Infer<typeof LiveCursor>;
 export const BoardFocus = Schema.Struct({
   type: Schema.Literal("board.focus"),
   rect: BoardFocusRect,
+  sceneId: Schema.optionalKey(BoardAssetId),
   from: Schema.String,
 });
 export type BoardFocus = Infer<typeof BoardFocus>;
 
 export const ClientFrame = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("board.focus"), rect: BoardFocusRect }),
+  Schema.Struct({
+    type: Schema.Literal("board.focus"),
+    sceneId: Schema.optionalKey(BoardAssetId),
+    rect: BoardFocusRect,
+  }),
   Schema.Struct({ type: Schema.Literal("cursors.subscribe"), enabled: Schema.Boolean }),
   Schema.Struct({ type: Schema.Literal("cursor"), position: Schema.NullOr(CursorPosition) }),
   Schema.Struct({ type: Schema.Literals(["ping"]) }),
@@ -315,7 +320,14 @@ export const ServerFrame = Schema.Union([
   BoardFocus,
   Schema.Struct({ type: Schema.Literal("notes.updated") }),
   Schema.Struct({ type: Schema.Literal("cursor"), cursor: LiveCursor }),
-  Schema.Struct({ type: Schema.Literal("board"), board: BoardSnapshot }),
+  Schema.Struct({
+    type: Schema.Literal("board"),
+    board: BoardSnapshot,
+    sceneId: BoardAssetId,
+    sceneName: Schema.String,
+    activeSceneId: BoardAssetId,
+  }),
+  Schema.Struct({ type: Schema.Literal("scenes"), ...SceneList.fields }),
   Schema.Struct({
     type: Schema.Literals(["hello"]),
     worldId: Schema.String,

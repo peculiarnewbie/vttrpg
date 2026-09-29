@@ -29,7 +29,17 @@ import {
   type ServerFrame,
   type Visibility,
 } from "../domain/schemas";
-import { BoardSnapshot, PublishBoardInput, emptyBoard } from "../domain/board";
+import {
+  BoardSnapshot,
+  PublishBoardInput,
+  emptyBoard,
+  normalizeBoard,
+  stripHiddenLayers,
+  CreateSceneInput,
+  UpdateSceneInput,
+  MAX_BOARD_SCENES,
+  type SceneMetadata,
+} from "../domain/board";
 import { newId, nowIso } from "./crypto";
 
 export type WorldDoEnv = {
@@ -174,11 +184,187 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     });
   }
 
-  private getBoard(): BoardSnapshot {
+  private activeSceneId(): string {
+    return this.ctx.storage.sql
+      .exec<{ value: string }>("SELECT value FROM settings WHERE key = 'active_scene_id'")
+      .one().value;
+  }
+
+  private getBoard(sceneId = this.activeSceneId()): BoardSnapshot {
     const row = this.ctx.storage.sql
-      .exec<{ snapshot: string }>("SELECT snapshot FROM board WHERE id = 1")
-      .toArray()[0];
-    return row ? Schema.decodeUnknownSync(BoardSnapshot)(JSON.parse(row.snapshot)) : emptyBoard();
+      .exec<{ snapshot: string; name: string }>(
+        "SELECT snapshot, name FROM scenes WHERE id = ?",
+        sceneId,
+      )
+      .one();
+    const snapshot = Schema.decodeUnknownSync(BoardSnapshot)(JSON.parse(row.snapshot));
+    return {
+      ...snapshot,
+      sceneId,
+      sceneName: row.name,
+      document: normalizeBoard(snapshot.document),
+    };
+  }
+
+  private listScenes(): SceneMetadata[] {
+    return this.ctx.storage.sql
+      .exec<{
+        id: string;
+        name: string;
+        sort: number;
+        group_name: string | null;
+        snapshot: string;
+        updated_at: string;
+      }>("SELECT * FROM scenes ORDER BY sort, id")
+      .toArray()
+      .map((row) => {
+        const snapshot = Schema.decodeUnknownSync(BoardSnapshot)(JSON.parse(row.snapshot));
+        return {
+          id: row.id,
+          name: row.name,
+          sort: row.sort,
+          group: row.group_name,
+          updatedAt: row.updated_at,
+          revision: snapshot.revision,
+          elementCount: snapshot.document.elements.length,
+        };
+      });
+  }
+
+  private boardFrame(sceneId: string, role: string): Extract<ServerFrame, { type: "board" }> {
+    const board = this.getBoard(sceneId);
+    return {
+      type: "board",
+      sceneId,
+      sceneName: board.sceneName ?? "Scene",
+      activeSceneId: this.activeSceneId(),
+      board: role === "dm" ? board : stripHiddenLayers(board),
+    };
+  }
+
+  private broadcastBoard(sceneId: string) {
+    this.broadcast(this.boardFrame(sceneId, "dm"), (session) => session.role === "dm");
+    if (sceneId === this.activeSceneId())
+      this.broadcast(this.boardFrame(sceneId, "player"), (session) => session.role !== "dm");
+    this.broadcastScenes();
+  }
+
+  private broadcastScenes() {
+    this.broadcast(
+      { type: "scenes", scenes: this.listScenes(), activeSceneId: this.activeSceneId() },
+      (session) => session.role === "dm",
+    );
+  }
+
+  private publishScene(sceneId: string, body: unknown): Response {
+    const decoded = Schema.decodeUnknownResult(PublishBoardInput)(body);
+    if (decoded._tag === "Failure") return json({ error: "Invalid board" }, 400);
+    if (decoded.success.sceneId !== undefined && decoded.success.sceneId !== sceneId)
+      return json({ error: "The active scene changed. Load it before publishing again." }, 400);
+    const current = this.getBoard(sceneId);
+    if (decoded.success.revision !== current.revision)
+      return json(
+        { error: "The shared board changed. Load the published board before publishing again." },
+        400,
+      );
+    const board: BoardSnapshot = {
+      sceneId,
+      sceneName: current.sceneName,
+      revision: current.revision + 1,
+      document: normalizeBoard(decoded.success.document),
+    };
+    this.ctx.storage.sql.exec(
+      "UPDATE scenes SET snapshot = ?, updated_at = ? WHERE id = ?",
+      JSON.stringify(board),
+      nowIso(),
+      sceneId,
+    );
+    this.broadcastBoard(sceneId);
+    return json(board);
+  }
+
+  private handleScenes(method: string, path: string, body: unknown): Response {
+    const [, sceneId, action] = path.split("/");
+    const scenes = this.listScenes();
+    const sql = this.ctx.storage.sql;
+    if (!sceneId) {
+      if (method === "GET") return json({ scenes, activeSceneId: this.activeSceneId() });
+      if (method !== "POST") return json({ error: "Not found" }, 404);
+      const input = Schema.decodeUnknownResult(CreateSceneInput)(body);
+      if (input._tag === "Failure") return json({ error: "Invalid scene" }, 400);
+      if (scenes.length >= MAX_BOARD_SCENES)
+        return json({ error: "A world can have at most 50 scenes" }, 400);
+      if (
+        input.success.duplicateFrom &&
+        !scenes.some((scene) => scene.id === input.success.duplicateFrom)
+      )
+        return json({ error: "Scene not found" }, 404);
+      const document = input.success.duplicateFrom
+        ? this.getBoard(input.success.duplicateFrom).document
+        : emptyBoard().document;
+      const id = crypto.randomUUID();
+      sql.exec(
+        "INSERT INTO scenes (id, name, sort, group_name, snapshot, updated_at) VALUES (?, ?, ?, NULL, ?, ?)",
+        id,
+        input.success.name,
+        scenes.length,
+        JSON.stringify({ revision: 0, document }),
+        nowIso(),
+      );
+      this.broadcastScenes();
+      return json(this.getBoard(id), 201);
+    }
+    if (!scenes.some((scene) => scene.id === sceneId))
+      return json({ error: "Scene not found" }, 404);
+    if (action === "active" && method === "POST") {
+      sql.exec("UPDATE settings SET value = ? WHERE key = 'active_scene_id'", sceneId);
+      this.broadcastBoard(sceneId);
+      return json(this.getBoard(sceneId));
+    }
+    if (action) return json({ error: "Not found" }, 404);
+    if (method === "GET") return json(this.getBoard(sceneId));
+    if (method === "PUT") return this.publishScene(sceneId, body);
+    if (method === "PATCH") {
+      const input = Schema.decodeUnknownResult(UpdateSceneInput)(body);
+      if (input._tag === "Failure") return json({ error: "Invalid scene" }, 400);
+      const update = input.success;
+      if (update.name !== undefined)
+        sql.exec("UPDATE scenes SET name = ? WHERE id = ?", update.name, sceneId);
+      if (update.group !== undefined)
+        sql.exec("UPDATE scenes SET group_name = ? WHERE id = ?", update.group, sceneId);
+      if (update.sort !== undefined) {
+        const order = scenes.map((scene) => scene.id).filter((id) => id !== sceneId);
+        order.splice(Math.min(update.sort, order.length), 0, sceneId);
+        order.forEach((id, index) =>
+          sql.exec("UPDATE scenes SET sort = ? WHERE id = ?", index, id),
+        );
+      }
+      sql.exec("UPDATE scenes SET updated_at = ? WHERE id = ?", nowIso(), sceneId);
+      this.broadcastBoard(sceneId);
+      return json(this.getBoard(sceneId));
+    }
+    if (method === "DELETE") {
+      if (scenes.length === 1) return json({ error: "Cannot delete the last scene" }, 400);
+      const active = this.activeSceneId() === sceneId;
+      const remaining = scenes.filter((scene) => scene.id !== sceneId);
+      sql.exec("DELETE FROM scenes WHERE id = ?", sceneId);
+      remaining.forEach((scene, index) =>
+        sql.exec("UPDATE scenes SET sort = ? WHERE id = ?", index, scene.id),
+      );
+      if (active) {
+        const neighbor =
+          remaining[
+            Math.min(
+              scenes.findIndex((scene) => scene.id === sceneId),
+              remaining.length - 1,
+            )
+          ];
+        sql.exec("UPDATE settings SET value = ? WHERE key = 'active_scene_id'", neighbor.id);
+        this.broadcastBoard(neighbor.id);
+      } else this.broadcastScenes();
+      return json({ scenes: this.listScenes(), activeSceneId: this.activeSceneId() });
+    }
+    return json({ error: "Not found" }, 404);
   }
 
   private get worldId() {
@@ -190,6 +376,26 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     sql.exec(
       "CREATE TABLE IF NOT EXISTS board (id INTEGER PRIMARY KEY CHECK (id = 1), snapshot TEXT NOT NULL)",
     );
+    sql.exec(
+      "CREATE TABLE IF NOT EXISTS scenes (id TEXT PRIMARY KEY, name TEXT NOT NULL, sort INTEGER NOT NULL, group_name TEXT, snapshot TEXT NOT NULL, updated_at TEXT NOT NULL)",
+    );
+    sql.exec("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    if (!sql.exec("SELECT id FROM scenes LIMIT 1").toArray().length) {
+      const legacy = sql
+        .exec<{ snapshot: string }>("SELECT snapshot FROM board WHERE id = 1")
+        .toArray()[0];
+      const id = crypto.randomUUID();
+      sql.exec(
+        "INSERT INTO scenes (id, name, sort, snapshot, updated_at) VALUES (?, 'Scene 1', 0, ?, ?)",
+        id,
+        legacy?.snapshot ?? JSON.stringify(emptyBoard()),
+        nowIso(),
+      );
+      sql.exec(
+        "INSERT INTO settings (key, value) VALUES ('active_scene_id', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        id,
+      );
+    }
     sql.exec(`CREATE TABLE IF NOT EXISTS templates (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -888,7 +1094,15 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         members: this.presence(),
       } satisfies ServerFrame),
     );
-    server.send(JSON.stringify({ type: "board", board: this.getBoard() } satisfies ServerFrame));
+    server.send(JSON.stringify(this.boardFrame(this.activeSceneId(), role)));
+    if (role === "dm")
+      server.send(
+        JSON.stringify({
+          type: "scenes",
+          scenes: this.listScenes(),
+          activeSceneId: this.activeSceneId(),
+        } satisfies ServerFrame),
+      );
     this.broadcast({ type: "presence", members: this.presence() });
 
     return new Response(null, { status: 101, webSocket: client });
@@ -904,39 +1118,24 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     const path = url.pathname.replace(/^\/internal\//, "");
 
     try {
+      if (path === "scenes" || path.startsWith("scenes/")) {
+        if (role !== "dm") return json({ error: "Only the DM can manage scenes" }, 403);
+        return this.handleScenes(request.method, path, body);
+      }
       switch (`${request.method} ${path}`) {
         case "GET board":
-          return json(this.getBoard());
+          return json(role === "dm" ? this.getBoard() : stripHiddenLayers(this.getBoard()));
         case "PUT board": {
-          if (request.headers.get("x-ttrpg-role") !== "dm")
-            return json({ error: "Only the DM can publish the board" }, 403);
-          const decoded = Schema.decodeUnknownResult(PublishBoardInput)(body);
-          if (decoded._tag === "Failure") return json({ error: "Invalid board" }, 400);
-          const current = this.getBoard();
-          if (decoded.success.revision !== current.revision) {
-            return json(
-              {
-                error:
-                  "The shared board changed. Load the published board before publishing again.",
-              },
-              400,
-            );
-          }
-          const board: BoardSnapshot = {
-            revision: current.revision + 1,
-            document: decoded.success.document,
-          };
-          this.ctx.storage.sql.exec(
-            "INSERT INTO board (id, snapshot) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET snapshot = excluded.snapshot",
-            JSON.stringify(board),
-          );
-          this.broadcast({ type: "board", board });
-          return json(board);
+          if (role !== "dm") return json({ error: "Only the DM can publish the board" }, 403);
+          return this.publishScene(this.activeSceneId(), body);
         }
         case "GET state": {
           const page = this.listMessages({ limit: 50 });
           return json({
-            board: this.getBoard(),
+            board: role === "dm" ? this.getBoard() : stripHiddenLayers(this.getBoard()),
+            ...(role === "dm"
+              ? { scenes: this.listScenes(), activeSceneId: this.activeSceneId() }
+              : {}),
             templates: this.listTemplates(),
             characters: this.listCharacters(),
             messages: page.messages,
@@ -1128,8 +1327,14 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         );
         return;
       }
+      if (frame.sceneId !== undefined && frame.sceneId !== this.activeSceneId()) return;
       this.broadcast(
-        { type: "board.focus", rect: frame.rect, from: attachment.name },
+        {
+          type: "board.focus",
+          sceneId: this.activeSceneId(),
+          rect: frame.rect,
+          from: attachment.name,
+        },
         (_session, connection) => connection !== socket,
       );
       return;

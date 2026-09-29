@@ -24,6 +24,9 @@ import {
   BoardSnapshot,
   MAX_BOARD_IMAGE_BYTES,
   PublishBoardInput,
+  CreateSceneInput,
+  UpdateSceneInput,
+  type SceneMetadata,
 } from "../domain/board";
 import { hashPassword, randomToken, verifyPassword } from "./crypto";
 import * as repo from "./db";
@@ -282,6 +285,8 @@ const WorldBootstrap = HttpRouter.route(
       const { db, user, world, member, stub } = yield* loadWorld();
       const state = yield* doJson<{
         board: BoardSnapshot;
+        scenes?: SceneMetadata[];
+        activeSceneId?: string;
         templates: unknown[];
         characters: unknown[];
         messages: ChatMessage[];
@@ -295,6 +300,9 @@ const WorldBootstrap = HttpRouter.route(
         member,
         members: members.map(repo.toWorldMember),
         board: state.board,
+        ...(member.role === "dm"
+          ? { scenes: state.scenes, activeSceneId: state.activeSceneId }
+          : {}),
         templates: state.templates,
         characters: state.characters,
         messages: state.messages.filter((message) => canSeeMessage(message, member)),
@@ -332,6 +340,134 @@ const PublishBoard = HttpRouter.route(
             headers: { "content-type": "application/json" },
             body: JSON.stringify(input),
           },
+          member,
+        ),
+      );
+    }),
+  ),
+);
+
+const ListScenes = HttpRouter.route(
+  "GET",
+  "/api/worlds/:id/scenes",
+  route(
+    Effect.gen(function* () {
+      const { member, stub } = yield* loadWorld(["dm"]);
+      return json(yield* doJson<unknown>(stub, "scenes", { method: "GET" }, member));
+    }),
+  ),
+);
+
+const CreateScene = HttpRouter.route(
+  "POST",
+  "/api/worlds/:id/scenes",
+  route(
+    Effect.gen(function* () {
+      const { member, stub } = yield* loadWorld(["dm"]);
+      const input = yield* readBody(CreateSceneInput);
+      return json(
+        yield* doJson<unknown>(
+          stub,
+          "scenes",
+          { method: "POST", body: JSON.stringify(input) },
+          member,
+        ),
+        201,
+      );
+    }),
+  ),
+);
+
+const GetScene = HttpRouter.route(
+  "GET",
+  "/api/worlds/:id/scenes/:sceneId",
+  route(
+    Effect.gen(function* () {
+      const { member, stub } = yield* loadWorld(["dm"]);
+      const params = yield* HttpRouter.params;
+      const decoded = Schema.decodeUnknownResult(BoardAssetId)(params.sceneId);
+      if (decoded._tag === "Failure") return yield* new BadRequest({ message: "Invalid scene id" });
+      return json(
+        yield* doJson<unknown>(stub, `scenes/${decoded.success}`, { method: "GET" }, member),
+      );
+    }),
+  ),
+);
+
+const PublishScene = HttpRouter.route(
+  "PUT",
+  "/api/worlds/:id/scenes/:sceneId",
+  route(
+    Effect.gen(function* () {
+      const { member, stub } = yield* loadWorld(["dm"]);
+      const params = yield* HttpRouter.params;
+      const decoded = Schema.decodeUnknownResult(BoardAssetId)(params.sceneId);
+      if (decoded._tag === "Failure") return yield* new BadRequest({ message: "Invalid scene id" });
+      const input = yield* readBody(PublishBoardInput);
+      return json(
+        yield* doJson<unknown>(
+          stub,
+          `scenes/${decoded.success}`,
+          { method: "PUT", body: JSON.stringify(input) },
+          member,
+        ),
+      );
+    }),
+  ),
+);
+
+const UpdateScene = HttpRouter.route(
+  "PATCH",
+  "/api/worlds/:id/scenes/:sceneId",
+  route(
+    Effect.gen(function* () {
+      const { member, stub } = yield* loadWorld(["dm"]);
+      const params = yield* HttpRouter.params;
+      const decoded = Schema.decodeUnknownResult(BoardAssetId)(params.sceneId);
+      if (decoded._tag === "Failure") return yield* new BadRequest({ message: "Invalid scene id" });
+      const input = yield* readBody(UpdateSceneInput);
+      return json(
+        yield* doJson<unknown>(
+          stub,
+          `scenes/${decoded.success}`,
+          { method: "PATCH", body: JSON.stringify(input) },
+          member,
+        ),
+      );
+    }),
+  ),
+);
+
+const DeleteScene = HttpRouter.route(
+  "DELETE",
+  "/api/worlds/:id/scenes/:sceneId",
+  route(
+    Effect.gen(function* () {
+      const { member, stub } = yield* loadWorld(["dm"]);
+      const params = yield* HttpRouter.params;
+      const decoded = Schema.decodeUnknownResult(BoardAssetId)(params.sceneId);
+      if (decoded._tag === "Failure") return yield* new BadRequest({ message: "Invalid scene id" });
+      return json(
+        yield* doJson<unknown>(stub, `scenes/${decoded.success}`, { method: "DELETE" }, member),
+      );
+    }),
+  ),
+);
+
+const ActivateScene = HttpRouter.route(
+  "POST",
+  "/api/worlds/:id/scenes/:sceneId/active",
+  route(
+    Effect.gen(function* () {
+      const { member, stub } = yield* loadWorld(["dm"]);
+      const params = yield* HttpRouter.params;
+      const decoded = Schema.decodeUnknownResult(BoardAssetId)(params.sceneId);
+      if (decoded._tag === "Failure") return yield* new BadRequest({ message: "Invalid scene id" });
+      return json(
+        yield* doJson<unknown>(
+          stub,
+          `scenes/${decoded.success}/active`,
+          { method: "POST" },
           member,
         ),
       );
@@ -828,6 +964,13 @@ export const Api = HttpRouter.addAll([
   Logout,
   CreateWorld,
   WorldBootstrap,
+  ListScenes,
+  CreateScene,
+  GetScene,
+  PublishScene,
+  UpdateScene,
+  DeleteScene,
+  ActivateScene,
   GetBoard,
   PublishBoard,
   UploadBoardImage,
