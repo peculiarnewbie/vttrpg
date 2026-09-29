@@ -151,12 +151,19 @@ const sheetStyles = stylex.create({
   },
   summary: { cursor: "pointer", userSelect: "none", listStyle: "none" },
   rule: { flex: 1, height: skin.ruleHeight, backgroundImage: skin.rule },
-  trackers: { display: "flex", flexDirection: "column", gap: "3px" },
-  tracker: {
+  // One column set for every tracker row (rows use subgrid), so bars and pips line up
+  // even when a theme's letter-spaced labels are wider than the minimum.
+  trackers: {
     display: "grid",
-    gridTemplateColumns: "minmax(44px, max-content) 22px minmax(0, 1fr) 22px",
-    alignItems: "center",
+    gridTemplateColumns: "minmax(44px, max-content) 22px minmax(0, 1fr) auto",
     columnGap: "4px",
+    rowGap: "3px",
+  },
+  tracker: {
+    gridColumn: "1 / -1",
+    display: "grid",
+    gridTemplateColumns: "subgrid",
+    alignItems: "center",
     rowGap: "2px",
   },
   trackerLabel: {
@@ -189,8 +196,14 @@ const sheetStyles = stylex.create({
     transform: "none",
     fontSize: "20px",
   },
-  pipTracker: { gridTemplateColumns: "minmax(44px, max-content) minmax(0, 1fr) auto" },
-  pips: { display: "flex", flexWrap: "wrap", gap: "3px", paddingBlock: "3px" },
+  pipValue: { minWidth: 0, justifySelf: "end" },
+  pips: {
+    gridColumn: "2 / 4",
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "3px",
+    paddingBlock: "3px",
+  },
   pip: {
     width: skin.pipSize,
     height: skin.pipSize,
@@ -786,12 +799,7 @@ export function CharacterSheets(props: Props) {
                             const pct = () =>
                               `${Math.max(0, Math.min(100, Math.round(((current() - ticker.min) / Math.max(1, maximum() - ticker.min)) * 100)))}%`;
                             return (
-                              <div
-                                {...sx(
-                                  sheetStyles.tracker,
-                                  display() === "pips" && sheetStyles.pipTracker,
-                                )}
-                              >
+                              <div {...sx(sheetStyles.tracker)}>
                                 <span {...sx(sheetStyles.trackerLabel)}>{ticker.label}</span>
                                 <Show when={display() === "pips"}>
                                   <div
@@ -841,6 +849,7 @@ export function CharacterSheets(props: Props) {
                                 <div
                                   {...sx(
                                     sheetStyles.trackerValue,
+                                    display() === "pips" && sheetStyles.pipValue,
                                     display() === "bar" && sheetStyles.meter,
                                     display() === "number" && sheetStyles.ledgerValue,
                                   )}

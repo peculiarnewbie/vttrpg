@@ -1,5 +1,14 @@
 import * as stylex from "@stylexjs/stylex";
-import { For, Match, Show, Switch, createSignal, onCleanup, onSettled } from "solid-js";
+import {
+  For,
+  Match,
+  Show,
+  Switch,
+  createSignal,
+  createUniqueId,
+  onCleanup,
+  onSettled,
+} from "solid-js";
 import {
   blockVariants,
   gridMode,
@@ -115,6 +124,58 @@ const s = stylex.create({
     backgroundColor: colors.surface,
     color: colors.text,
   },
+  picker: { position: "relative" },
+  pickerButton: { cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "3px" },
+  pickerPanel: {
+    position: "absolute",
+    zIndex: 30,
+    top: "calc(100% + 4px)",
+    left: 0,
+    width: "280px",
+    maxHeight: "420px",
+    overflowY: "auto",
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+    padding: "4px",
+    ...hair,
+    borderColor: colors.borderStrong,
+    borderRadius: skin.controlRadius,
+    backgroundColor: colors.surface,
+    backgroundImage: skin.paper,
+    backgroundSize: skin.paperSize,
+    boxShadow: "0 8px 28px rgba(0,0,0,0.35)",
+  },
+  pickerOption: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "stretch",
+    gap: "3px",
+    padding: "4px 6px 6px",
+    ...hair,
+    borderRadius: skin.controlRadius,
+    backgroundColor: { default: "transparent", ":hover": colors.surfaceHover },
+    color: colors.text,
+    textAlign: "left",
+    cursor: "pointer",
+  },
+  pickerOptionOn: { borderColor: colors.accent, boxShadow: `inset 0 0 0 1px ${colors.accent}` },
+  pickerName: {
+    fontFamily: fonts.display,
+    fontSize: "10px",
+    textTransform: skin.headTransform,
+    letterSpacing: skin.headTracking,
+    color: colors.accent,
+  },
+  // Clipped so a long list previews as a few rows; inert, so nothing inside is clickable.
+  pickerPreview: {
+    display: "block",
+    maxHeight: "110px",
+    overflow: "hidden",
+    pointerEvents: "none",
+    fontSize: "12px",
+    maskImage: "linear-gradient(to bottom, #000 75%, transparent)",
+  },
   editKind: {
     fontFamily: fonts.display,
     textTransform: skin.headTransform,
@@ -159,11 +220,18 @@ const s = stylex.create({
     ...hair,
     borderRadius: skin.controlRadius,
   },
-  trackerLine: {
+  // Label/value rows share their block's columns (subgrid), so values line up even
+  // when a theme's letter-spaced labels outgrow the minimum width.
+  labelled: {
     display: "grid",
     gridTemplateColumns: "minmax(52px, max-content) minmax(0, 1fr)",
+    gap: "3px 6px",
+  },
+  trackerLine: {
+    gridColumn: "1 / -1",
+    display: "grid",
+    gridTemplateColumns: "subgrid",
     alignItems: "center",
-    gap: "6px",
     minHeight: "22px",
   },
   bigNumber: { fontFamily: fonts.numeric, fontSize: "26px", fontWeight: 700, lineHeight: 1 },
@@ -234,12 +302,11 @@ const s = stylex.create({
     ":last-child": { borderRightWidth: 0 },
   },
   statValue: { fontFamily: fonts.numeric, fontSize: "17px", fontWeight: 700, lineHeight: 1.1 },
-  statBars: { display: "flex", flexDirection: "column", gap: "3px" },
   statBar: {
+    gridColumn: "1 / -1",
     display: "grid",
-    gridTemplateColumns: "minmax(52px, max-content) minmax(0, 1fr)",
+    gridTemplateColumns: "subgrid",
     alignItems: "center",
-    gap: "6px",
   },
   statBoxes: {
     display: "grid",
@@ -600,6 +667,81 @@ const Heading = (props: { text: string }) => (
 );
 
 /** Customize-mode controls: pick a variant and how many of the 6 columns to span. */
+/**
+ * Style picker: each option is the block itself, rendered small and inert with
+ * that variant, in the current theme and with the character's real values.
+ */
+function VariantPicker(props: { block: LayoutBlock; ctx: Ctx }) {
+  const [open, setOpen] = createSignal(false);
+  const id = createUniqueId();
+  let root: HTMLDivElement | undefined;
+  const current = () => resolveVariant(props.block, props.ctx.overrides);
+  const variants = () => blockVariants[props.block.type] as readonly string[];
+  onSettled(() => {
+    const outside = (event: PointerEvent) => {
+      if (open() && root && !root.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (open() && event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", escape);
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("keydown", escape);
+    });
+  });
+  const preview = (variant: string): Ctx => ({
+    ...props.ctx,
+    customize: false,
+    overrides: { ...props.ctx.overrides, [props.block.id]: variant },
+    onChange: () => {},
+    onRoll: () => {},
+  });
+  const choose = (variant: string) => {
+    props.ctx.onVariant?.(props.block.id, variant);
+    setOpen(false);
+  };
+  return (
+    <div {...sx(s.picker)} ref={(element) => (root = element)}>
+      <button
+        {...sx(s.editSelect, s.pickerButton)}
+        aria-label={`${props.block.id} style`}
+        aria-haspopup="listbox"
+        aria-expanded={open() ? "true" : "false"}
+        aria-controls={id}
+        onClick={() => setOpen(!open())}
+      >
+        {current()} <span aria-hidden="true">▾</span>
+      </button>
+      <Show when={open()}>
+        <div id={id} {...sx(s.pickerPanel)} role="listbox" aria-label={`${props.block.id} styles`}>
+          <For each={variants()}>
+            {(variant) => (
+              <button
+                role="option"
+                aria-selected={variant === current() ? "true" : "false"}
+                {...sx(s.pickerOption, variant === current() && s.pickerOptionOn)}
+                onClick={() => choose(variant)}
+              >
+                <span {...sx(s.pickerName)}>{variant}</span>
+                <span {...sx(s.pickerPreview)} aria-hidden="true" inert>
+                  <Show
+                    when={props.block.type === "group" && (props.block as GroupBlock)}
+                    fallback={<Leaf block={props.block as LeafBlock} ctx={preview(variant)} />}
+                  >
+                    {(group) => <Group block={group()} ctx={preview(variant)} />}
+                  </Show>
+                </span>
+              </button>
+            )}
+          </For>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
 function EditBar(props: { block: LayoutBlock; ctx: Ctx; nested?: boolean }) {
   const variants = () => blockVariants[props.block.type] as readonly string[];
   const spanKey = () => (props.ctx.mode === "wide" ? "wide" : "span");
@@ -607,14 +749,7 @@ function EditBar(props: { block: LayoutBlock; ctx: Ctx; nested?: boolean }) {
     <div {...sx(s.editBar)}>
       <span {...sx(s.editKind)}>{props.block.type}</span>
       <Show when={variants().length > 1}>
-        <select
-          {...sx(s.editSelect)}
-          aria-label={`${props.block.id} style`}
-          value={resolveVariant(props.block, props.ctx.overrides)}
-          onChange={(event) => props.ctx.onVariant?.(props.block.id, event.currentTarget.value)}
-        >
-          <For each={variants()}>{(variant) => <option value={variant}>{variant}</option>}</For>
-        </select>
+        <VariantPicker block={props.block} ctx={props.ctx} />
       </Show>
       <Show when={!props.nested && props.ctx.mode !== "narrow"}>
         <select
@@ -641,7 +776,7 @@ function Stats(props: { items: readonly StatItem[]; variant: string; values: She
   return (
     <Switch>
       <Match when={props.variant === "bars"}>
-        <div {...sx(s.statBars)}>
+        <div {...sx(s.labelled)}>
           <For each={props.items}>
             {(item) => (
               <div {...sx(s.statBar)}>
@@ -857,7 +992,7 @@ function Leaf(props: { block: LeafBlock; ctx: Ctx }) {
       <Match when={b.type === "heading" && b}>{(block) => <Heading text={block().text} />}</Match>
       <Match when={b.type === "trackers" && b}>
         {(block) => (
-          <div {...sx(variant() === "boxes" ? s.trackerRow : s.blockCol)}>
+          <div {...sx(variant() === "boxes" ? s.trackerRow : s.labelled)}>
             <For each={block().items}>
               {(item) => (
                 <Tracker
