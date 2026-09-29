@@ -73,6 +73,16 @@ export default function WorldPage() {
   const [characters, setCharacters] = createSignal<Character[]>([]);
   const [templates, setTemplates] = createSignal<SheetTemplate[]>([]);
   const [notes, setNotes] = createSignal<NoteSummary[]>([]);
+  let notesRefresh = 0;
+  const refreshNotes = async () => {
+    const revision = ++notesRefresh;
+    try {
+      const next = await api.listNotes(params.id);
+      if (revision === notesRefresh) setNotes(next);
+    } catch {
+      setError("Could not refresh notes");
+    }
+  };
   const [members, setMembers] = createSignal<WorldMember[]>([]);
   const [presence, setPresence] = createSignal<PresenceMember[]>([]);
   const [activeRolls, setActiveRolls] = createSignal<ChatMessage[]>([]);
@@ -128,11 +138,16 @@ export default function WorldPage() {
           setStatus(next);
           if (next !== "open") resetTickers();
           setCursors([]);
-          if (next === "open")
+          if (next === "open") {
             controller?.send({ type: "cursors.subscribe", enabled: cursorsEnabled() });
+            void refreshNotes();
+          }
         },
         onFrame: (frame) => {
           switch (frame.type) {
+            case "notes.updated":
+              void refreshNotes();
+              break;
             case "cursor":
               if (cursorsEnabled()) {
                 setCursors((previous) =>
@@ -459,7 +474,7 @@ export default function WorldPage() {
                             onUploadAvatar={uploadAvatar}
                           />
                         </Show>
-                        <Show when={tab() === "notes"}>
+                        <div hidden={tab() !== "notes"}>
                           <NotesPanel
                             worldId={params.id}
                             me={world().member}
@@ -467,7 +482,7 @@ export default function WorldPage() {
                             notes={notes()}
                             onNotes={setNotes}
                           />
-                        </Show>
+                        </div>
                         <Show when={tab() === "members" && isDm()}>
                           <MembersPanel
                             worldId={params.id}

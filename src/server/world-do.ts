@@ -1,3 +1,4 @@
+import { canSeeNote, canSaveNote } from "../domain/note-permissions";
 import { DurableObject } from "cloudflare:workers";
 import * as Schema from "effect/Schema";
 import {
@@ -83,6 +84,7 @@ type MessageRow = {
 };
 
 type NoteRow = {
+  editable_by_all: number;
   id: string;
   title: string;
   owner_member_id: string;
@@ -231,6 +233,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       updated_at TEXT NOT NULL
     )`);
     // Additive columns for instances created before the feature existed.
+    this.ensureColumn("notes", "editable_by_all", "editable_by_all INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("characters", "avatar_key", "avatar_key TEXT");
     this.ensureColumn("characters", "ticker_max", "ticker_max TEXT");
     this.ensureColumn("messages", "author_avatar_key", "author_avatar_key TEXT");
@@ -304,6 +307,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       id: row.id,
       title: row.title,
       ownerMemberId: row.owner_member_id,
+      editableByAll: row.editable_by_all === 1,
       visibility: row.visibility as Visibility,
       updatedAt: row.updated_at,
     };
@@ -651,17 +655,40 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     return { character, definition, result: evaluateRoll(definition, resolver) };
   }
 
-  private async saveNote(
+  private noteWrites: Promise<void> = Promise.resolve();
+
+  private writeNote<T>(write: () => Promise<T>): Promise<T> {
+    // R2 awaits allow other requests to run; keep permission checks and writes ordered.
+    const result = this.noteWrites.then(write);
+    this.noteWrites = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
+  }
+
+  private saveNote(
     input: SaveNoteInput & { id?: string; ownerMemberId: string },
+    role: MemberRole,
+  ) {
+    return this.writeNote(() => this.persistNote(input, role));
+  }
+
+  private async persistNote(
+    input: SaveNoteInput & { id?: string; ownerMemberId: string },
+    role: MemberRole,
   ): Promise<{ note: Note } | { forbidden: true }> {
     const id = input.id ?? newId("note");
     const existing = this.ctx.storage.sql
       .exec<NoteRow>("SELECT * FROM notes WHERE id = ? LIMIT 1", id)
       .toArray()[0];
-    // Notes are author-owned: once created, only the original writer may edit.
-    if (existing && existing.owner_member_id !== input.ownerMemberId) {
+    if (
+      existing &&
+      !canSaveNote(this.toNoteSummary(existing), input, { id: input.ownerMemberId, role })
+    ) {
       return { forbidden: true };
     }
+    const editableByAll = input.editableByAll ?? existing?.editable_by_all === 1;
     const prefix = `world/${this.worldId}`;
     const key = existing?.r2_key ?? `${prefix}/notes/${id}.md`;
     await this.env.BUCKET.put(key, input.content, {
@@ -670,36 +697,51 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     const updatedAt = nowIso();
     if (existing) {
       this.ctx.storage.sql.exec(
-        "UPDATE notes SET title = ?, visibility = ?, updated_at = ? WHERE id = ?",
+        "UPDATE notes SET title = ?, visibility = ?, editable_by_all = ?, updated_at = ? WHERE id = ?",
         input.title,
         input.visibility,
+        editableByAll ? 1 : 0,
         updatedAt,
         id,
       );
     } else {
       this.ctx.storage.sql.exec(
-        "INSERT INTO notes (id, title, owner_member_id, visibility, r2_key, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO notes (id, title, owner_member_id, visibility, r2_key, updated_at, editable_by_all) VALUES (?, ?, ?, ?, ?, ?, ?)",
         id,
         input.title,
         input.ownerMemberId,
         input.visibility,
         key,
         updatedAt,
+        editableByAll ? 1 : 0,
       );
     }
+    this.broadcastNotes(existing ? this.toNoteSummary(existing) : undefined, {
+      id,
+      title: input.title,
+      ownerMemberId: existing?.owner_member_id ?? input.ownerMemberId,
+      visibility: input.visibility,
+      editableByAll,
+      updatedAt,
+    });
     return {
       note: {
         id,
         title: input.title,
         ownerMemberId: existing?.owner_member_id ?? input.ownerMemberId,
         visibility: input.visibility,
+        editableByAll,
         content: input.content,
         updatedAt,
       },
     };
   }
 
-  private async deleteNote(
+  private deleteNote(id: string, ownerMemberId: string) {
+    return this.writeNote(() => this.removeNote(id, ownerMemberId));
+  }
+
+  private async removeNote(
     id: string,
     ownerMemberId: string,
   ): Promise<{ ok: true } | { forbidden: true }> {
@@ -709,6 +751,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     if (row && row.owner_member_id !== ownerMemberId) return { forbidden: true };
     if (row) await this.env.BUCKET.delete(row.r2_key);
     this.ctx.storage.sql.exec("DELETE FROM notes WHERE id = ?", id);
+    if (row) this.broadcastNotes(this.toNoteSummary(row));
     return { ok: true };
   }
 
@@ -763,6 +806,16 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         // socket is closing; ignore
       }
     }
+  }
+
+  private broadcastNotes(previous?: NoteSummary, current?: NoteSummary) {
+    this.broadcast({ type: "notes.updated" }, (session) => {
+      const viewer = { id: session.memberId, role: session.role };
+      return !!(
+        (previous && canSeeNote(previous, viewer)) ||
+        (current && canSeeNote(current, viewer))
+      );
+    });
   }
 
   private broadcastMessage(message: ChatMessage) {
@@ -983,15 +1036,20 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         }
 
         case "POST note": {
-          const result = await this.saveNote({
-            id: body.id as string | undefined,
-            title: String(body.title ?? "Untitled"),
-            visibility: (body.visibility as Visibility) ?? "private",
-            content: String(body.content ?? ""),
-            ownerMemberId: (body.ownerMemberId as string | undefined) ?? memberId,
-          });
+          const result = await this.saveNote(
+            {
+              id: body.id as string | undefined,
+              title: String(body.title ?? "Untitled"),
+              visibility: (body.visibility as Visibility) ?? "private",
+              content: String(body.content ?? ""),
+              editableByAll:
+                typeof body.editableByAll === "boolean" ? body.editableByAll : undefined,
+              ownerMemberId: memberId,
+            },
+            request.headers.get("x-ttrpg-role") === "dm" ? "dm" : "player",
+          );
           if ("forbidden" in result) {
-            return json({ error: "Only the author can edit this note" }, 403);
+            return json({ error: "You cannot make these changes to this note" }, 403);
           }
           return json(result.note);
         }
@@ -1167,6 +1225,15 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       socket.send(
         JSON.stringify({ type: "presence", members: this.presence() } satisfies ServerFrame),
       );
+      const row = this.ctx.storage.sql
+        .exec<NoteRow>("SELECT * FROM notes WHERE id = ?", frame.noteId)
+        .toArray()[0];
+      if (
+        row &&
+        canSeeNote(this.toNoteSummary(row), { id: attachment.memberId, role: attachment.role })
+      ) {
+        this.broadcastNotes(undefined, this.toNoteSummary(row));
+      }
     }
   }
 

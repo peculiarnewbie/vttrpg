@@ -184,6 +184,7 @@ export const NoteSummary = Schema.Struct({
   title: Schema.String,
   ownerMemberId: Schema.String,
   visibility: Visibility,
+  editableByAll: Schema.optionalKey(Schema.Boolean),
   updatedAt: Schema.String,
 });
 export type NoteSummary = Infer<typeof NoteSummary>;
@@ -193,6 +194,7 @@ export const Note = Schema.Struct({
   title: Schema.String,
   ownerMemberId: Schema.String,
   visibility: Visibility,
+  editableByAll: Schema.optionalKey(Schema.Boolean),
   content: Schema.String,
   updatedAt: Schema.String,
 });
@@ -302,6 +304,7 @@ export const ClientFrame = Schema.Union([
 export type ClientFrame = Infer<typeof ClientFrame>;
 
 export const ServerFrame = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("notes.updated") }),
   Schema.Struct({ type: Schema.Literal("cursor"), cursor: LiveCursor }),
   Schema.Struct({ type: Schema.Literal("board"), board: BoardSnapshot }),
   Schema.Struct({
@@ -385,6 +388,7 @@ export const SaveNoteInput = Schema.Struct({
   id: Schema.optional(Schema.String),
   title: Schema.String,
   visibility: Visibility,
+  editableByAll: Schema.optionalKey(Schema.Boolean),
   content: Schema.String,
 });
 export type SaveNoteInput = Infer<typeof SaveNoteInput>;
