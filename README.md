@@ -81,9 +81,21 @@ pnpm db:migrate:preview
 
 ## Theming
 
-Two themes ship: `posthog` (warm light paper) and `factory` (dark terminal).
-Design tokens live in `src/theme/tokens.stylex.ts`; toggling happens in
-`src/theme/theme-context.tsx`.
+Three art directions ship, chosen per player from the ⚙ menu (stored per browser):
+**Rulebook** (a printed page: paper grain, EB Garamond and IM Fell small caps, one
+oxblood accent), **OSR zine** (black on off-white with one riso pink, Anton and IBM
+Plex Mono, hard offsets), and **Dark fantasy** (black, bronze and gold, Cinzel and
+Alegreya). Older saved choices migrate: PostHog → Rulebook, Factory → Dark fantasy.
+
+Tokens live in `src/theme/tokens.stylex.ts`: colours, font roles (`display`, `body`,
+`numeric`), and a `skin` group for texture, rules, ornaments, control and tracker
+shapes. Each theme is a set of `stylex.createTheme` overrides in `src/theme/themes.ts`;
+`skins` there holds the few structural differences CSS can't express (the zine's
+halftone name band). Fonts are self-hosted via Fontsource and only download when a
+theme uses them. Prototypes of the three sheets live at `/lab/sheets`.
+
+Tracker display is a per-tracker template option (Auto, Pips, Bar, Number); Auto
+shows pips for ranges of 12 or less and a bar otherwise.
 
 ## Realtime protocol
 
@@ -92,20 +104,37 @@ forwards to the world Durable Object. Frames are validated with Effect Schema
 (`src/domain/schemas.ts`). The DO broadcasts messages, roll results, character
 updates, and presence, filtering private/DM frames per recipient.
 
+## Table layout
+
+A world opens on one thin header: the world name, who is here, the theme toggle,
+and a ⚙ menu for per-browser preferences (dice totals, live cursors on mouse
+devices), **World settings…** for the DM, and sign-out. Member management and
+sheet templates live on the DM-only settings page (`/worlds/:id/settings`), not in
+the in-session panels. Template field, stat, tracker, and roll ids are derived
+from their labels until the template is first saved, then stay fixed.
+
+Chat sits on the left and **Characters** / **Notes** on the right. Collapse either
+panel to reveal the board; visibility is remembered per world on this browser and
+hiding a panel preserves its form state. On phones the panels open as bottom
+sheets, one at a time, from tabs in the bottom corners.
+
+The chat composer has one **To** picker (Everyone, DM only, Only me, or a whisper
+to one member) that applies to messages and rolls alike; a banner shows whenever
+it isn’t Everyone. **IC/OOC** toggles in- and out-of-character.
+
+Character sheets list trackers first, then rolls, stats, and collapsible field groups.
+
 ## Mood board
 
-Use **Hide chat** and **Hide tools** to reveal the board. Each panel’s visibility
-is remembered per world on this browser; hiding it preserves its form state.
-On narrow screens, opening one panel closes the other.
-
-The DM’s collapsible **Scenes** panel holds up to 50 scenes, with groups, renaming,
+The DM’s **Scenes** menu in the board toolbar holds up to 50 scenes, with groups, renaming,
 duplication, reordering, and deletion. **LIVE** marks the only scene players receive.
 Open any other scene for private prep; **Show to players** makes its saved version
 live. Deleting the live scene activates a neighbor; the last scene cannot be deleted.
 Players fit their camera to a newly active scene. Existing boards become **Scene 1**.
 
-DMs choose **Edit board**, upload a **Background**, and use **Add image** or
-**Add text** for movable elements. Drag an element to move it; drag its corner or
+DMs choose **Edit board**, upload a **Background**, and use **+ Image** or
+**+ Text** for movable elements; **Done** leaves editing. Actions for the selected
+element appear at the bottom of the board. Drag an element to move it; drag its corner or
 edge handles to resize it. Text corners and top/bottom handles scale the lettering
 and card together; left/right handles change its wrapping width at the same font
 size. Image corners preserve their aspect ratio (hold Shift to resize freely).

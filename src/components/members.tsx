@@ -101,7 +101,7 @@ export function MembersPanel(props: {
             <div {...sx(styles.panel, styles.row)}>
               <div {...sx(styles.grow)}>
                 <div {...sx(styles.row)}>
-                  <span>{member.displayName}</span>
+                  <span {...sx(styles.h4)}>{member.displayName}</span>
                   <Badge tone={member.role === "dm" ? "tag" : "accent"}>{member.role}</Badge>
                   <Badge tone="plain">{member.kind}</Badge>
                   <Show when={member.id === props.me.id}>

@@ -40,8 +40,55 @@ export const colors = stylex.defineVars({
 });
 
 export const fonts = stylex.defineVars({
-  sans: "'Open Runde', Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+  /** Running text (alias kept for existing styles; equals `body` in every theme). */
+  sans: "'EB Garamond', Georgia, serif",
+  /** Running text: chat, notes, field values. */
+  body: "'EB Garamond', Georgia, serif",
+  /** Character names, section heads, panel titles, tab labels. */
+  display: "'IM Fell English SC', Georgia, serif",
+  /** Tracker values, stat numbers, dice results. */
+  numeric: "'EB Garamond', Georgia, serif",
   mono: "'ui-monospace', 'SFMono-Regular', Menlo, Consolas, monospace",
+});
+
+/**
+ * Skin tokens: the "art direction" knobs beyond colour and type. Values are raw
+ * CSS so a theme can swap a flat rule for a gradient, round steppers for
+ * diamonds, or a soft shadow for a hard riso offset without component changes.
+ * Structural differences that CSS can't express live in `skins` (themes.ts).
+ */
+export const skin = stylex.defineVars({
+  // headings (display font)
+  headTransform: "none",
+  headTracking: "0.02em",
+  headWeight: "400",
+  nameTransform: "none",
+  nameTracking: "0.02em",
+  // surfaces: panels, sheets, cards
+  paper:
+    "radial-gradient(rgba(110,80,30,0.07) 1px, transparent 1.2px), radial-gradient(ellipse at 30% 0%, rgba(255,255,255,0.5), transparent 60%)",
+  paperSize: "3px 3px, 100% 100%",
+  panelBorderWidth: "0px",
+  panelShadow: "0 1px 0 #fff8 inset, 0 6px 24px rgba(40,25,5,0.25)",
+  // header band behind a character name when skins[theme].header === "band"
+  band: "none",
+  bandSize: "auto",
+  // section heads: a rule (background-image) and an ornament (CSS `content`)
+  rule: "linear-gradient(#8a765a, #8a765a)",
+  ruleHeight: "1px",
+  ornament: '"❦"',
+  // controls
+  controlRadius: "2px",
+  controlShadow: "none",
+  stepperRadius: "50%",
+  stepperRotate: "0deg",
+  // trackers
+  meterTrack: "#e6dcc3",
+  meterFill: "linear-gradient(#7a1f1a, #7a1f1a)",
+  pipSize: "11px",
+  pipRadius: "50%",
+  pipBorder: "#5a4a36",
+  pipOn: "#1f1a14",
 });
 
 export const fontSize = stylex.defineVars({

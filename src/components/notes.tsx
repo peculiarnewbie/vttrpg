@@ -1,6 +1,6 @@
 import { useBeforeLeave } from "@solidjs/router";
 import * as stylex from "@stylexjs/stylex";
-import { colors } from "../theme/tokens.stylex";
+import { colors, fonts, radii, skin } from "../theme/tokens.stylex";
 import { createNoteAutosave, type NoteSaveStatus } from "../client/note-autosave";
 import { renderNoteMarkdown } from "../client/note-markdown";
 import { For, Show, createSignal, createEffect, onCleanup, onSettled } from "solid-js";
@@ -257,7 +257,7 @@ export function NotesPanel(props: {
                 <>
                   <h3 {...sx(styles.h3)}>{title()}</h3>
                   <div
-                    {...sx(noteStyles.markdown)}
+                    class={`ttrpg-note-markdown ${sx(noteStyles.markdown).class}`}
                     innerHTML={renderNoteMarkdown(content() || "Empty note.")}
                   />
                 </>
@@ -307,7 +307,7 @@ export function NotesPanel(props: {
                   when={!preview()}
                   fallback={
                     <div
-                      {...sx(noteStyles.markdown)}
+                      class={`ttrpg-note-markdown ${sx(noteStyles.markdown).class}`}
                       innerHTML={renderNoteMarkdown(content() || "Empty note.")}
                     />
                   }
@@ -334,6 +334,11 @@ const noteStyles = stylex.create({
   list: { maxHeight: 160, overflowY: "auto" },
   editor: { borderWidth: 0, margin: 0, padding: 0, minWidth: 0 },
   markdown: {
+    "--note-display": fonts.display,
+    "--note-head-weight": skin.headWeight,
+    "--note-head-tracking": skin.headTracking,
+    "--note-head-transform": skin.headTransform,
+    "--note-ornament": skin.ornament,
     color: colors.text,
     backgroundColor: colors.surface,
     lineHeight: 1.6,
@@ -341,6 +346,13 @@ const noteStyles = stylex.create({
     wordBreak: "normal",
     overflowX: "auto",
     padding: 12,
-    borderRadius: 4,
+    borderRadius: radii.sm,
+    fontFamily: fonts.body,
+    backgroundImage: skin.paper,
+    backgroundSize: skin.paperSize,
+    borderWidth: skin.panelBorderWidth,
+    borderStyle: "solid",
+    borderColor: colors.border,
+    boxShadow: skin.panelShadow,
   },
 });

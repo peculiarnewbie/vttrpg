@@ -106,6 +106,7 @@ export const StatDefinition = Schema.Struct({
 export type StatDefinition = Infer<typeof StatDefinition>;
 
 export const TickerDefinition = Schema.Struct({
+  display: Schema.optional(Schema.Literals(["auto", "pips", "bar", "number"])),
   id: Schema.String,
   label: Schema.String,
   min: Schema.Int,
@@ -300,6 +301,7 @@ export const ClientFrame = Schema.Union([
     type: Schema.Literals(["roll.dice"]),
     notation: Schema.String,
     visibility: Visibility,
+    recipientMemberIds: Schema.optional(Schema.Array(Schema.String)),
   }),
   Schema.Struct({
     type: Schema.Literals(["character.save"]),

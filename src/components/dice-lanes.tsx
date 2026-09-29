@@ -1,3 +1,5 @@
+import * as stylex from "@stylexjs/stylex";
+import { colors, fonts, radii, skin } from "../theme/tokens.stylex";
 import DiceBox from "@3d-dice/dice-box-threejs";
 import { Show, For, createEffect, createSignal, onCleanup, onSettled } from "solid-js";
 import type { ChatMessage, RollResult } from "../domain/schemas";
@@ -182,7 +184,7 @@ function DiceLane(props: {
                       {(value) => (
                         <span {...sx(styles.die)}>
                           <span>{value}</span>
-                          <span {...sx(styles.dieLabel)}>d{die.sides}</span>
+                          <sub {...sx(styles.dieLabel)}>d{die.sides}</sub>
                         </span>
                       )}
                     </For>
@@ -227,7 +229,7 @@ export function DiceLanes(props: {
   };
 
   return (
-    <div class="ttrpg-dice-lanes">
+    <div class={`ttrpg-dice-lanes ${sx(laneStyles.theme).class}`}>
       <For each={memberIds()}>
         {(member) => (
           <DiceLane
@@ -244,3 +246,22 @@ export function DiceLanes(props: {
     </div>
   );
 }
+
+const laneStyles = stylex.create({
+  theme: {
+    "--dice-surface": colors.surface,
+    "--dice-text": colors.text,
+    "--dice-muted": colors.textMuted,
+    "--dice-border": colors.border,
+    "--dice-paper": skin.paper,
+    "--dice-paper-size": skin.paperSize,
+    "--dice-border-width": skin.panelBorderWidth,
+    "--dice-shadow": skin.panelShadow,
+    "--dice-radius": radii.sm,
+    "--dice-display": fonts.display,
+    "--dice-numeric": fonts.numeric,
+    "--dice-head-weight": skin.headWeight,
+    "--dice-head-transform": skin.headTransform,
+    "--dice-head-tracking": skin.headTracking,
+  },
+});
