@@ -1,6 +1,8 @@
 import { canSeeNote, canSaveNote } from "../domain/note-permissions";
 import { DurableObject } from "cloudflare:workers";
 import * as Schema from "effect/Schema";
+import { SheetLayout } from "../domain/sheet-layout";
+import { layoutLimitsError } from "../domain/template-io";
 import {
   capDice,
   computeStats,
@@ -25,7 +27,7 @@ import {
   type PresenceMember,
   SaveCharacterInput,
   type SaveNoteInput,
-  type SaveTemplateInput,
+  SaveTemplateInput,
   type ServerFrame,
   type Visibility,
 } from "../domain/schemas";
@@ -63,6 +65,7 @@ type TemplateRow = {
   stats: string;
   tickers: string;
   rolls: string;
+  layout: string | null;
   updated_at: string;
 };
 
@@ -439,6 +442,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       updated_at TEXT NOT NULL
     )`);
     // Additive columns for instances created before the feature existed.
+    this.ensureColumn("templates", "layout", "layout TEXT");
     this.ensureColumn("notes", "editable_by_all", "editable_by_all INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("characters", "avatar_key", "avatar_key TEXT");
     this.ensureColumn("characters", "ticker_max", "ticker_max TEXT");
@@ -462,6 +466,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
   // -------------------------------------------------------------------------
 
   private toTemplate(row: TemplateRow): SheetTemplate {
+    const layout = Schema.decodeUnknownResult(SheetLayout)(parse<unknown>(row.layout, undefined));
     return {
       id: row.id,
       worldId: this.worldId,
@@ -471,6 +476,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       stats: parse(row.stats, []),
       tickers: parse(row.tickers, []),
       rolls: parse(row.rolls, []),
+      layout: layout._tag === "Success" ? layout.success : undefined,
       updatedAt: row.updated_at,
     };
   }
@@ -606,7 +612,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
 
   private insertTemplate(template: SheetTemplate) {
     this.ctx.storage.sql.exec(
-      "INSERT OR REPLACE INTO templates (id, name, description, fields, stats, tickers, rolls, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT OR REPLACE INTO templates (id, name, description, fields, stats, tickers, rolls, layout, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       template.id,
       template.name,
       template.description ?? null,
@@ -614,6 +620,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       JSON.stringify(template.stats),
       JSON.stringify(template.tickers),
       JSON.stringify(template.rolls),
+      template.layout ? JSON.stringify(template.layout) : null,
       template.updatedAt,
     );
   }
@@ -630,17 +637,19 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       stats: input.stats,
       tickers: input.tickers,
       rolls: input.rolls,
+      layout: input.layout,
       updatedAt: nowIso(),
     };
     if (existing) {
       this.ctx.storage.sql.exec(
-        "UPDATE templates SET name = ?, description = ?, fields = ?, stats = ?, tickers = ?, rolls = ?, updated_at = ? WHERE id = ?",
+        "UPDATE templates SET name = ?, description = ?, fields = ?, stats = ?, tickers = ?, rolls = ?, layout = ?, updated_at = ? WHERE id = ?",
         template.name,
         template.description ?? null,
         JSON.stringify(template.fields),
         JSON.stringify(template.stats),
         JSON.stringify(template.tickers),
         JSON.stringify(template.rolls),
+        template.layout ? JSON.stringify(template.layout) : null,
         template.updatedAt,
         id,
       );
@@ -1226,16 +1235,12 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         }
 
         case "POST template": {
-          const template = this.saveTemplate({
-            id: body.id as string | undefined,
-            name: String(body.name ?? "Untitled"),
-            description: body.description as string | undefined,
-            fields: (body.fields as SaveTemplateInput["fields"]) ?? [],
-            stats: (body.stats as SaveTemplateInput["stats"]) ?? [],
-            tickers: (body.tickers as SaveTemplateInput["tickers"]) ?? [],
-            rolls: (body.rolls as SaveTemplateInput["rolls"]) ?? [],
-          });
-          return json(template);
+          if (role !== "dm") return json({ error: "Only the DM can save templates" }, 403);
+          const input = Schema.decodeUnknownResult(SaveTemplateInput)(body);
+          if (input._tag === "Failure") return json({ error: "Invalid template data" }, 400);
+          const error = layoutLimitsError(input.success.layout);
+          if (error) return json({ error }, 400);
+          return json(this.saveTemplate(input.success));
         }
 
         case "POST note": {
