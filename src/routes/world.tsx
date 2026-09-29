@@ -1,4 +1,5 @@
-import { createTickerUpdates } from "../client/ticker-updates";
+import { createCharacterUpdates } from "../client/character-updates";
+import { trackerDefinitions } from "../domain/trackers-definitions";
 import { useNavigate, useParams } from "@solidjs/router";
 import { For, Show, createSignal, onCleanup, onSettled } from "solid-js";
 import { api, ApiError, type WorldBootstrap } from "../client/api";
@@ -27,6 +28,7 @@ import {
 import type {
   BoardFocus,
   Character,
+  CharacterValue,
   ChatMessage,
   LiveCursor,
   NoteSummary,
@@ -106,9 +108,10 @@ export default function WorldPage() {
   const [status, setStatus] = createSignal<RealtimeStatus>("connecting");
 
   let controller: RealtimeController | undefined;
-  const tickerUpdates = createTickerUpdates();
-  const resetTickers = () => {
-    for (const character of tickerUpdates.reset()) setCharacters((prev) => upsert(prev, character));
+  const characterUpdates = createCharacterUpdates();
+  const resetCharacterUpdates = () => {
+    for (const character of characterUpdates.reset())
+      setCharacters((prev) => upsert(prev, character));
   };
 
   onSettled(() => {
@@ -155,7 +158,7 @@ export default function WorldPage() {
       controller = connectWorld(params.id, {
         onStatus: (next) => {
           setStatus(next);
-          if (next !== "open") resetTickers();
+          if (next !== "open") resetCharacterUpdates();
           setCursors([]);
           if (next === "open") {
             controller?.send({ type: "cursors.subscribe", enabled: cursorsEnabled() });
@@ -202,7 +205,7 @@ export default function WorldPage() {
               break;
             case "character":
               setCharacters((prev) =>
-                upsert(prev, tickerUpdates.reconcile(frame.character, frame.requestId)),
+                upsert(prev, characterUpdates.reconcile(frame.character, frame.requestId)),
               );
               break;
             case "presence":
@@ -210,7 +213,7 @@ export default function WorldPage() {
               setPresence([...frame.members]);
               break;
             case "error":
-              resetTickers();
+              resetCharacterUpdates();
               if (frame.message) setError(frame.message);
               break;
           }
@@ -267,10 +270,10 @@ export default function WorldPage() {
     const character = characters().find((item) => item.id === characterId);
     const template =
       templates().find((item) => item.id === character?.templateId) ?? templates()[0];
-    const definition = template?.tickers.find((item) => item.id === tickerId);
+    const definition = trackerDefinitions(template).find((item) => item.id === tickerId);
     if (!character || !definition) return;
     const requestId = crypto.randomUUID();
-    const updated = tickerUpdates.stage(character, definition, value, requestId);
+    const updated = characterUpdates.stageTracker(character, definition, value, requestId);
     setCharacters((prev) => upsert(prev, updated));
     controller.send({
       type: "ticker.set",
@@ -279,6 +282,25 @@ export default function WorldPage() {
       value: updated.tickers[tickerId],
       requestId,
     });
+  };
+
+  const setCharacterValue = (characterId: string, key: string, value: CharacterValue) => {
+    if (status() !== "open" || !controller) return;
+    const character = characters().find((item) => item.id === characterId);
+    if (!character) return;
+    const requestId = crypto.randomUUID();
+    setCharacters((prev) =>
+      upsert(prev, characterUpdates.stageValue(character, key, value, requestId)),
+    );
+    controller.send({ type: "character.value", characterId, key, value, requestId });
+  };
+
+  const setLayoutPref = (characterId: string, blockId: string, variant: string | null) => {
+    if (status() !== "open" || !controller) return;
+    const character = characters().find((item) => item.id === characterId);
+    if (!character) return;
+    setCharacters((prev) => upsert(prev, characterUpdates.stagePref(character, blockId, variant)));
+    controller.send({ type: "character.prefs", characterId, blockId, variant });
   };
 
   const saveCharacter = async (input: SaveCharacterInput) => {
