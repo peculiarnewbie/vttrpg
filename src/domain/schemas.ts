@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { BoardSnapshot } from "./board";
+import { BoardSnapshot, BoardFocusRect, BoardAssetId, SceneList } from "./board";
 
 export type Infer<S> = Schema.Schema.Type<S>;
 
@@ -139,6 +139,7 @@ export const Character = Schema.Struct({
   templateId: Schema.String,
   values: Schema.Record(Schema.String, CharacterValue),
   tickers: Schema.Record(Schema.String, Schema.Int),
+  tickerMax: Schema.optional(Schema.Record(Schema.String, Schema.Int)),
   avatarKey: Schema.optional(Schema.String),
   createdAt: Schema.String,
   updatedAt: Schema.String,
@@ -183,6 +184,7 @@ export const NoteSummary = Schema.Struct({
   title: Schema.String,
   ownerMemberId: Schema.String,
   visibility: Visibility,
+  editableByAll: Schema.optionalKey(Schema.Boolean),
   updatedAt: Schema.String,
 });
 export type NoteSummary = Infer<typeof NoteSummary>;
@@ -192,6 +194,7 @@ export const Note = Schema.Struct({
   title: Schema.String,
   ownerMemberId: Schema.String,
   visibility: Visibility,
+  editableByAll: Schema.optionalKey(Schema.Boolean),
   content: Schema.String,
   updatedAt: Schema.String,
 });
@@ -262,7 +265,20 @@ export type LiveCursor = Infer<typeof LiveCursor>;
 // Realtime frames
 // ---------------------------------------------------------------------------
 
+export const BoardFocus = Schema.Struct({
+  type: Schema.Literal("board.focus"),
+  rect: BoardFocusRect,
+  sceneId: Schema.optionalKey(BoardAssetId),
+  from: Schema.String,
+});
+export type BoardFocus = Infer<typeof BoardFocus>;
+
 export const ClientFrame = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("board.focus"),
+    sceneId: Schema.optionalKey(BoardAssetId),
+    rect: BoardFocusRect,
+  }),
   Schema.Struct({ type: Schema.Literal("cursors.subscribe"), enabled: Schema.Boolean }),
   Schema.Struct({ type: Schema.Literal("cursor"), position: Schema.NullOr(CursorPosition) }),
   Schema.Struct({ type: Schema.Literals(["ping"]) }),
@@ -294,14 +310,24 @@ export const ClientFrame = Schema.Union([
     characterId: Schema.String,
     tickerId: Schema.String,
     value: Schema.Int,
+    requestId: Schema.optional(Schema.String),
   }),
   Schema.Struct({ type: Schema.Literals(["note.saved"]), noteId: Schema.String }),
 ]);
 export type ClientFrame = Infer<typeof ClientFrame>;
 
 export const ServerFrame = Schema.Union([
+  BoardFocus,
+  Schema.Struct({ type: Schema.Literal("notes.updated") }),
   Schema.Struct({ type: Schema.Literal("cursor"), cursor: LiveCursor }),
-  Schema.Struct({ type: Schema.Literal("board"), board: BoardSnapshot }),
+  Schema.Struct({
+    type: Schema.Literal("board"),
+    board: BoardSnapshot,
+    sceneId: BoardAssetId,
+    sceneName: Schema.String,
+    activeSceneId: BoardAssetId,
+  }),
+  Schema.Struct({ type: Schema.Literal("scenes"), ...SceneList.fields }),
   Schema.Struct({
     type: Schema.Literals(["hello"]),
     worldId: Schema.String,
@@ -309,7 +335,11 @@ export const ServerFrame = Schema.Union([
     members: Schema.Array(PresenceMember),
   }),
   Schema.Struct({ type: Schema.Literals(["message"]), message: ChatMessage }),
-  Schema.Struct({ type: Schema.Literals(["character"]), character: Character }),
+  Schema.Struct({
+    type: Schema.Literals(["character"]),
+    character: Character,
+    requestId: Schema.optional(Schema.String),
+  }),
   Schema.Struct({ type: Schema.Literals(["presence"]), members: Schema.Array(PresenceMember) }),
   Schema.Struct({ type: Schema.Literals(["error"]), message: Schema.String }),
 ]);
@@ -371,6 +401,7 @@ export const SaveCharacterInput = Schema.Struct({
   templateId: Schema.String,
   memberId: Schema.optional(Schema.String),
   values: Schema.Record(Schema.String, CharacterValue),
+  tickerMax: Schema.optional(Schema.Record(Schema.String, Schema.Int)),
 });
 export type SaveCharacterInput = Infer<typeof SaveCharacterInput>;
 
@@ -378,6 +409,7 @@ export const SaveNoteInput = Schema.Struct({
   id: Schema.optional(Schema.String),
   title: Schema.String,
   visibility: Visibility,
+  editableByAll: Schema.optionalKey(Schema.Boolean),
   content: Schema.String,
 });
 export type SaveNoteInput = Infer<typeof SaveNoteInput>;

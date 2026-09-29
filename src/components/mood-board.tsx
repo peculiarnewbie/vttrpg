@@ -15,6 +15,13 @@ import {
 } from "../client/board-geometry";
 import {
   MAX_BOARD_ELEMENTS,
+  normalizeBoard,
+  orderedBoardElements,
+  orderBoardElement,
+  type SceneList,
+  boardViewport,
+  fitBoardRect,
+  type BoardFocusRect,
   isElementVisible,
   screenToBoard,
   zoomAt,
@@ -23,11 +30,13 @@ import {
   type BoardElement,
   type BoardSnapshot,
 } from "../domain/board";
-import type { CursorPosition, LiveCursor } from "../domain/schemas";
+import type { BoardFocus, CursorPosition, LiveCursor } from "../domain/schemas";
 import { createCursorPublisher, cursorColor } from "../client/live-cursors";
 import { sx } from "../theme/sx";
 import { boardStyles as b } from "./board.stylex";
 import { styles } from "./styles.stylex";
+import { BoardScenes } from "./board-scenes";
+import { BoardLayers } from "./board-layers";
 import { Button, ErrorBanner } from "./ui";
 
 type SingleGesture = {
@@ -53,12 +62,27 @@ export function MoodBoard(props: {
   worldId: string;
   isDm: boolean;
   snapshot: BoardSnapshot;
+  sceneList: SceneList;
+  onSceneList: (list: SceneList) => void;
+  focus: BoardFocus | null;
+  onFocus: (rect: BoardFocusRect, sceneId: string) => void;
   onPublished: (board: BoardSnapshot) => void;
   cursors: readonly LiveCursor[];
   cursorsEnabled: boolean;
   onCursor: (position: CursorPosition | null) => void;
 }) {
-  const [document, setDocument] = createSignal<BoardDocument>(props.snapshot.document);
+  const [document, setDocument] = createSignal<BoardDocument>(
+    normalizeBoard(props.snapshot.document),
+  );
+  const [sceneId, setSceneId] = createSignal(props.snapshot.sceneId ?? "");
+  const [published, setPublished] = createSignal(props.snapshot);
+  const [layerId, setLayerId] = createSignal("");
+  const layers = () => normalizeBoard(document()).layers;
+  const selectedLayer = () => layers().find((layer) => layer.id === layerId()) ?? layers().at(-1)!;
+  const layerFor = (item: BoardElement) =>
+    layers().find((layer) => layer.id === item.layerId) ?? layers()[0];
+  const isLiveScene = () => sceneId() === props.sceneList.activeSceneId;
+
   const [revision, setRevision] = createSignal(props.snapshot.revision);
   const [dirty, setDirty] = createSignal(false);
   const [editing, setEditing] = createSignal(false);
@@ -68,10 +92,42 @@ export function MoodBoard(props: {
   const [error, setError] = createSignal("");
   const [selected, setSelected] = createSignal<string | null>(null);
   const [camera, setCamera] = createSignal<BoardCamera>({ x: 0, y: 0, zoom: 1 });
+  const [followDm, setFollowDm] = createSignal(false);
+  const [pendingFocus, setPendingFocus] = createSignal<BoardFocus | null>(null);
+  const [highlight, setHighlight] = createSignal<BoardFocusRect | null>(null);
+  let highlightTimer: ReturnType<typeof setTimeout> | undefined;
+  let cameraRaf = 0;
+  const stopCameraAnimation = () => cancelAnimationFrame(cameraRaf);
+  const showFocus = (rect: BoardFocusRect) => {
+    clearTimeout(highlightTimer);
+    setHighlight({ ...rect });
+    highlightTimer = setTimeout(() => setHighlight(null), 2400);
+  };
+  createEffect(
+    () => props.worldId,
+    (worldId) => {
+      try {
+        setFollowDm(localStorage.getItem(`ttrpg:follow-dm:${worldId}`) === "on");
+      } catch {
+        setFollowDm(false);
+      }
+    },
+  );
+  const toggleFollowDm = () => {
+    const enabled = !followDm();
+    setFollowDm(enabled);
+    try {
+      localStorage.setItem(`ttrpg:follow-dm:${props.worldId}`, enabled ? "on" : "off");
+    } catch {
+      // Following remains usable when storage is unavailable.
+    }
+    const pending = pendingFocus();
+    if (enabled && pending) goToFocus(pending.rect);
+  };
   const [pointer, setPointer] = createSignal<Point | null>(null);
   const cursorPublisher = createCursorPublisher((position) => props.onCursor(position));
   createEffect(
-    () => ({ point: pointer(), camera: camera(), enabled: props.cursorsEnabled }),
+    () => ({ point: pointer(), camera: camera(), enabled: props.cursorsEnabled && isLiveScene() }),
     ({ point, camera, enabled }) => {
       const position = point && enabled ? screenToBoard(point, camera) : null;
       cursorPublisher.update(
@@ -109,13 +165,16 @@ export function MoodBoard(props: {
       event.preventDefault();
   });
   const canEdit = () => props.isDm && editing() && !busy();
-  const current = () => document().elements.find((item) => item.id === selected());
+  const current = () =>
+    document().elements.find((item) => item.id === selected() && !layerFor(item).locked);
   const selectionBounds = () => preview() ?? current();
   const imageUrl = (id: string) => api.boardImageUrl(props.worldId, id);
 
   const adopt = (snapshot: BoardSnapshot) => {
     textSession = undefined;
-    setDocument(snapshot.document);
+    setDocument(normalizeBoard(snapshot.document));
+    setSceneId(snapshot.sceneId ?? sceneId());
+    setPublished(snapshot);
     setRevision(snapshot.revision);
     setDirty(false);
     setPast([]);
@@ -124,15 +183,56 @@ export function MoodBoard(props: {
     setTextEdit(null);
     setError("");
   };
+  const openScene = async (load: () => Promise<BoardSnapshot>) => {
+    if (busy()) return;
+    const hasTextChange = textSession && textDraft !== textSession.initial;
+    finishText();
+    if (
+      (dirty() || hasTextChange) &&
+      !window.confirm("Discard unpublished changes and open this scene?")
+    )
+      return;
+    cancelGesture();
+    setBusy(true);
+    try {
+      const snapshot = await load();
+      if (disposed) return;
+      const incoming = props.snapshot;
+      adopt(
+        incoming.sceneId === snapshot.sceneId && incoming.revision > snapshot.revision
+          ? incoming
+          : snapshot,
+      );
+      setLayerId("");
+      setPendingFocus(null);
+      setHighlight(null);
+      fit();
+    } finally {
+      setBusy(false);
+    }
+  };
   createEffect(
     () => ({
       snapshot: props.snapshot,
       dirty: dirty(),
       interacting: interacting(),
       textEdit: textEdit(),
+      busy: busy(),
     }),
-    ({ snapshot, dirty, interacting, textEdit }) => {
-      if (!dirty && !interacting && !textEdit && snapshot.revision > revision()) adopt(snapshot);
+    ({ snapshot, dirty, interacting, textEdit, busy }) => {
+      if (snapshot.sceneId !== sceneId()) {
+        if (!props.isDm || !sceneId()) {
+          cancelGesture();
+          adopt(snapshot);
+          setPendingFocus(null);
+          setHighlight(null);
+          fit();
+        }
+        return;
+      }
+      if (snapshot.revision >= published().revision) setPublished(snapshot);
+      if (!dirty && !interacting && !textEdit && !busy && snapshot.revision > revision())
+        adopt(snapshot);
     },
   );
   const commit = (next: BoardDocument) => {
@@ -196,10 +296,11 @@ export function MoodBoard(props: {
     };
   };
   const addText = () => {
-    if (document().elements.length >= MAX_BOARD_ELEMENTS) return;
+    if (selectedLayer().locked || document().elements.length >= MAX_BOARD_ELEMENTS) return;
     const point = center();
     const element: BoardElement = {
       type: "text",
+      layerId: selectedLayer().id,
       id: crypto.randomUUID(),
       x: point.x - 120,
       y: point.y - 80,
@@ -218,7 +319,11 @@ export function MoodBoard(props: {
   const upload = async (file: File) => {
     if (!canEdit()) return;
     const kind = uploadKind;
-    if (kind === "element" && document().elements.length >= MAX_BOARD_ELEMENTS) return;
+    if (
+      kind === "element" &&
+      (selectedLayer().locked || document().elements.length >= MAX_BOARD_ELEMENTS)
+    )
+      return;
     setBusy(true);
     setError("");
     try {
@@ -234,6 +339,7 @@ export function MoodBoard(props: {
           height = Math.max(24, image.height * scale);
         const element: BoardElement = {
           type: "image",
+          layerId: selectedLayer().id,
           id: crypto.randomUUID(),
           assetId,
           label: (file.name || "Pasted image").slice(0, 200),
@@ -257,17 +363,18 @@ export function MoodBoard(props: {
     setBusy(true);
     setError("");
     try {
-      const saved = await api.publishBoard(props.worldId, {
+      const saved = await api.publishScene(props.worldId, sceneId(), {
         revision: revision(),
         document: document(),
       });
       if (disposed) return;
-      if (props.snapshot.revision > saved.revision) adopt(props.snapshot);
+      if (published().revision > saved.revision) adopt(published());
       else {
         setRevision(saved.revision);
         setDirty(false);
       }
-      props.onPublished(saved);
+      if (saved.revision >= published().revision) setPublished(saved);
+      props.onPublished(published());
     } catch (err) {
       // Keep the draft and stop automatic retries until the DM resolves the error.
       setLive(false);
@@ -278,7 +385,7 @@ export function MoodBoard(props: {
   };
   createEffect(
     () => ({
-      live: live(),
+      live: live() && isLiveScene(),
       dirty: dirty(),
       busy: busy(),
       interacting: interacting(),
@@ -301,6 +408,7 @@ export function MoodBoard(props: {
   );
   const fit = () => {
     if (gesture) return;
+    stopCameraAnimation();
     const elements = document().elements;
     if (!elements.length) {
       setCamera({ x: 0, y: 0, zoom: 1 });
@@ -310,16 +418,47 @@ export function MoodBoard(props: {
       y = Math.min(...elements.map((item) => item.y));
     const right = Math.max(...elements.map((item) => item.x + item.width)),
       bottom = Math.max(...elements.map((item) => item.y + item.height));
-    const zoom = Math.max(
-      0.1,
-      Math.min(1, (size().width - 80) / (right - x), (size().height - 160) / (bottom - y)),
-    );
-    setCamera({
-      x: (size().width - (right - x) * zoom) / 2 - x * zoom,
-      y: (size().height - (bottom - y) * zoom) / 2 - y * zoom,
-      zoom,
-    });
+    setCamera(fitBoardRect({ x, y, width: right - x, height: bottom - y }, size()));
   };
+  const goToFocus = (rect: BoardFocusRect) => {
+    cancelGesture();
+    stopCameraAnimation();
+    setPendingFocus(null);
+    showFocus(rect);
+    const initial = camera();
+    const target = fitBoardRect(rect, size());
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setCamera(target);
+      return;
+    }
+    const started = performance.now();
+    const animate = (now: number) => {
+      const progress = Math.min(1, (now - started) / 350);
+      const eased = 1 - (1 - progress) ** 3;
+      setCamera({
+        x: initial.x + (target.x - initial.x) * eased,
+        y: initial.y + (target.y - initial.y) * eased,
+        zoom: initial.zoom + (target.zoom - initial.zoom) * eased,
+      });
+      if (progress < 1) cameraRaf = requestAnimationFrame(animate);
+    };
+    cameraRaf = requestAnimationFrame(animate);
+  };
+  const sendFocus = (rect = boardViewport(camera(), size())) => {
+    if (!props.isDm || !isLiveScene() || rect.width <= 0 || rect.height <= 0) return;
+    props.onFocus(rect, sceneId());
+    showFocus(rect);
+  };
+  createEffect(
+    () => props.focus,
+    (focus) => {
+      if (!focus || !isLiveScene() || (focus.sceneId && focus.sceneId !== sceneId())) return;
+      showFocus(focus.rect);
+      if (!props.isDm && followDm()) goToFocus(focus.rect);
+      else setPendingFocus(focus);
+    },
+  );
+
   const paintGesture = () => {
     raf = 0;
     if (gesture?.type === "move" || gesture?.type === "resize") setPreview(gesture.next);
@@ -349,6 +488,7 @@ export function MoodBoard(props: {
   const start = (event: PointerEvent) => {
     if (event.button !== 0 && event.button !== 1) return;
     if (event.target instanceof HTMLTextAreaElement) return;
+    stopCameraAnimation();
     finishText();
     const point = localPoint(event);
     pointers.set(event.pointerId, point);
@@ -387,7 +527,7 @@ export function MoodBoard(props: {
         next: selectedElement,
         handle: handle.id,
       };
-    } else if (canEdit() && !navigating && element) {
+    } else if (canEdit() && !navigating && element && !layerFor(element).locked) {
       setSelected(element.id);
       gesture = { ...common, type: "move", element, next: element };
     } else {
@@ -487,12 +627,14 @@ export function MoodBoard(props: {
       viewport.releasePointerCapture(event.pointerId);
   };
   const changeZoom = (zoom: number) => {
+    stopCameraAnimation();
     if (gesture) return;
     setCamera((previous) => zoomAt(previous, { x: size().width / 2, y: size().height / 2 }, zoom));
   };
   const wheel = (event: WheelEvent) => {
     if (event.target instanceof HTMLTextAreaElement) return;
     event.preventDefault();
+    stopCameraAnimation();
     if (gesture) return;
     const rect = viewport.getBoundingClientRect();
     const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? size().height : 1;
@@ -621,6 +763,8 @@ export function MoodBoard(props: {
   });
   onCleanup(() => {
     disposed = true;
+    stopCameraAnimation();
+    clearTimeout(highlightTimer);
     cursorPublisher.clear();
     cancelAnimationFrame(raf);
   });
@@ -678,8 +822,10 @@ export function MoodBoard(props: {
           }}
         >
           <For
-            each={document().elements.filter(
-              (item) => item.id === selected() || isElementVisible(item, camera(), size()),
+            each={orderedBoardElements(document()).filter(
+              (item) =>
+                (!layerFor(item).hidden || (props.isDm && editing())) &&
+                (item.id === selected() || isElementVisible(item, camera(), size())),
             )}
           >
             {(item) => {
@@ -693,14 +839,16 @@ export function MoodBoard(props: {
                     transform: `translate3d(${bounds().x}px, ${bounds().y}px, 0)`,
                     width: `${bounds().width}px`,
                     height: `${bounds().height}px`,
+                    "pointer-events": layerFor(item).locked ? "none" : "auto",
+                    opacity: layerFor(item).hidden ? 0.4 : 1,
                     visibility: textEdit()?.id === item.id ? "hidden" : "visible",
                     cursor: canEdit() && tool() === "select" && !spaceHeld() ? "move" : "inherit",
                   }}
-                  tabindex={canEdit() ? 0 : -1}
+                  tabindex={canEdit() && !layerFor(item).locked ? 0 : -1}
                   aria-label={item.type === "image" ? item.label : item.text || "Empty text"}
                   aria-pressed={selected() === item.id ? "true" : "false"}
                   onFocus={() => {
-                    if (canEdit()) setSelected(item.id);
+                    if (canEdit() && !layerFor(item).locked) setSelected(item.id);
                   }}
                 >
                   {item.type === "image" ? (
@@ -764,7 +912,21 @@ export function MoodBoard(props: {
             }}
           </Show>
         </div>
-        <For each={props.cursorsEnabled ? props.cursors : []}>
+        <Show when={highlight()} keyed>
+          {(rect) => (
+            <div
+              aria-hidden="true"
+              {...sx(b.focusOutline)}
+              style={{
+                left: `${rect.x * camera().zoom + camera().x}px`,
+                top: `${rect.y * camera().zoom + camera().y}px`,
+                width: `${rect.width * camera().zoom}px`,
+                height: `${rect.height * camera().zoom}px`,
+              }}
+            />
+          )}
+        </Show>
+        <For each={props.cursorsEnabled && isLiveScene() ? props.cursors : []}>
           {(cursor) => (
             <Show when={cursor.position}>
               {(position) => (
@@ -908,18 +1070,46 @@ export function MoodBoard(props: {
             disabled={busy()}
             onClick={() => {
               const item = current();
-              if (item)
-                commit({
-                  ...document(),
-                  elements: [
-                    ...document().elements.filter((element) => element.id !== item.id),
-                    item,
-                  ],
-                });
+              if (item) commit(orderBoardElement(document(), item.id, "front"));
             }}
           >
             Bring to front
           </Button>
+          <Button
+            small
+            disabled={busy()}
+            onClick={() => {
+              const item = current();
+              if (item) commit(orderBoardElement(document(), item.id, "back"));
+            }}
+          >
+            Send to back
+          </Button>
+          <label>
+            Move to layer
+            <select
+              {...sx(b.control)}
+              aria-label="Move to layer"
+              disabled={busy()}
+              value={current()?.layerId ?? ""}
+              onChange={(event) => {
+                const item = current();
+                if (item) {
+                  updateElement({ ...item, layerId: event.currentTarget.value });
+                  setSelected(null);
+                }
+              }}
+            >
+              <For each={layers()}>
+                {(layer) => (
+                  <option value={layer.id}>
+                    {layer.name}
+                    {layer.hidden ? " (hidden)" : ""}
+                  </option>
+                )}
+              </For>
+            </select>
+          </label>
           <Button small variant="danger" disabled={busy()} onClick={remove}>
             Delete
           </Button>
@@ -962,7 +1152,91 @@ export function MoodBoard(props: {
       <p id="board-help" {...sx(b.help)}>
         Pinch or Ctrl/⌘ + scroll to zoom · Drag empty space to pan · Double-click text to edit
       </p>
+      <Show when={pendingFocus()}>
+        {(focus) => (
+          <div {...sx(b.focusPrompt)} role="status">
+            <span>{focus().from} is pointing here</span>
+            <Button small onClick={() => goToFocus(focus().rect)}>
+              Go
+            </Button>
+            <Button small variant="ghost" onClick={() => setPendingFocus(null)}>
+              Dismiss
+            </Button>
+          </div>
+        )}
+      </Show>
       <div {...sx(b.toolbar)} role="group" aria-label="Board tools">
+        <Show when={props.isDm}>
+          <Show
+            when={
+              props.sceneList.scenes.length > 0 &&
+              !props.sceneList.scenes.some((scene) => scene.id === sceneId())
+            }
+          >
+            <p {...sx(b.status)} role="alert">
+              This scene was deleted in another tab. Open another scene to continue.
+            </p>
+          </Show>
+          <BoardScenes
+            editing={editing()}
+            worldId={props.worldId}
+            scenes={props.sceneList.scenes}
+            activeId={props.sceneList.activeSceneId}
+            selectedId={sceneId()}
+            busy={busy() || interacting()}
+            onOpen={openScene}
+            onList={props.onSceneList}
+          />
+          <Show when={editing()}>
+            <BoardLayers
+              document={document()}
+              selectedId={selectedLayer().id}
+              busy={busy() || interacting()}
+              onSelect={setLayerId}
+              onChange={(next) => {
+                finishText();
+                commit(next);
+                setSelected(null);
+              }}
+            />
+          </Show>
+        </Show>
+
+        <Show
+          when={props.isDm}
+          fallback={
+            <button
+              type="button"
+              {...sx(b.control, followDm() && b.activeControl)}
+              aria-pressed={followDm() ? "true" : "false"}
+              onClick={toggleFollowDm}
+            >
+              Follow DM
+            </button>
+          }
+        >
+          <Button small disabled={!isLiveScene()} onClick={() => sendFocus()}>
+            Look here
+          </Button>
+          <Show when={selectionBounds()}>
+            {(rect) => (
+              <Button
+                small
+                disabled={!isLiveScene() || !!(current() && layerFor(current()!).hidden)}
+                onClick={() =>
+                  sendFocus({
+                    x: rect().x - 40,
+                    y: rect().y - 40,
+                    width: rect().width + 80,
+                    height: rect().height + 80,
+                  })
+                }
+              >
+                Look at selection
+              </Button>
+            )}
+          </Show>
+        </Show>
         <Show when={props.isDm}>
           <Button
             small
@@ -1021,14 +1295,18 @@ export function MoodBoard(props: {
             </Show>
             <Button
               small
-              disabled={busy() || document().elements.length >= MAX_BOARD_ELEMENTS}
+              disabled={
+                busy() || selectedLayer().locked || document().elements.length >= MAX_BOARD_ELEMENTS
+              }
               onClick={() => chooseImage("element")}
             >
               Add image
             </Button>
             <Button
               small
-              disabled={busy() || document().elements.length >= MAX_BOARD_ELEMENTS}
+              disabled={
+                busy() || selectedLayer().locked || document().elements.length >= MAX_BOARD_ELEMENTS
+              }
               onClick={addText}
             >
               Add text
@@ -1041,6 +1319,11 @@ export function MoodBoard(props: {
             </Button>
           </Show>
         </Show>
+        <Show when={props.isDm && !isLiveScene()}>
+          <span {...sx(b.status, b.prepBanner)} role="status">
+            PRIVATE PREP — players see another scene
+          </span>
+        </Show>
       </div>
       <Show when={props.isDm}>
         <div {...sx(b.sharing)}>
@@ -1049,10 +1332,10 @@ export function MoodBoard(props: {
               <input
                 type="checkbox"
                 checked={live()}
-                disabled={busy()}
+                disabled={busy() || !isLiveScene()}
                 onChange={(event) => setLive(event.currentTarget.checked)}
               />
-              Live sharing
+              Live sharing{!isLiveScene() ? " (paused in prep)" : ""}
             </label>
             <Button
               small
@@ -1063,16 +1346,17 @@ export function MoodBoard(props: {
                 queueMicrotask(() => void publish());
               }}
             >
-              Publish
+              {isLiveScene() ? "Publish" : "Save privately"}
             </Button>
             <Show when={dirty()}>
               <Button
                 small
                 disabled={busy()}
-                onClick={() => {
-                  if (window.confirm("Discard your draft and load the published board?"))
-                    adopt(props.snapshot);
-                }}
+                onClick={() =>
+                  void openScene(() => api.getScene(props.worldId, sceneId())).catch((cause) =>
+                    setError(cause instanceof Error ? cause.message : "Could not load scene"),
+                  )
+                }
               >
                 Discard draft
               </Button>
@@ -1082,14 +1366,24 @@ export function MoodBoard(props: {
             {busy()
               ? "Saving…"
               : dirty()
-                ? live()
+                ? live() && isLiveScene()
                   ? "Sharing…"
                   : "Unpublished changes"
-                : live()
-                  ? "Live sharing"
-                  : "Shared board"}
+                : !isLiveScene()
+                  ? "Private scene"
+                  : live()
+                    ? "Live sharing"
+                    : "Shared board"}
           </span>
-          <Show when={dirty() && props.snapshot.revision > revision()}>
+          <Show
+            when={
+              dirty() &&
+              Math.max(
+                published().revision,
+                props.sceneList.scenes.find((scene) => scene.id === sceneId())?.revision ?? 0,
+              ) > revision()
+            }
+          >
             <span {...sx(b.status)}>
               A newer board was published. Discard this draft to load it.
             </span>

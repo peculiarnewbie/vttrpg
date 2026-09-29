@@ -1,3 +1,4 @@
+import { createTickerUpdates } from "../client/ticker-updates";
 import { useNavigate, useParams } from "@solidjs/router";
 import { For, Show, createSignal, onCleanup, onSettled } from "solid-js";
 import { api, ApiError, type WorldBootstrap } from "../client/api";
@@ -11,12 +12,13 @@ import { MembersPanel } from "../components/members";
 import { NotesPanel } from "../components/notes";
 import { MoodBoard } from "../components/mood-board";
 import { boardStyles as b } from "../components/board.stylex";
-import { emptyBoard, type BoardSnapshot } from "../domain/board";
+import { emptyBoard, type BoardSnapshot, type SceneList } from "../domain/board";
 import { loadWorldPanels, saveWorldPanels } from "../client/world-panels";
 import { loadLiveCursors, saveLiveCursors } from "../client/live-cursors";
 import { styles } from "../components/styles.stylex";
 import { Badge, Button, ErrorBanner, Spinner, TopBar } from "../components/ui";
 import type {
+  BoardFocus,
   Character,
   ChatMessage,
   LiveCursor,
@@ -44,6 +46,8 @@ export default function WorldPage() {
   const session = useSession();
   const navigate = useNavigate();
 
+  const [boardFocus, setBoardFocus] = createSignal<BoardFocus | null>(null);
+  const [sceneList, setSceneList] = createSignal<SceneList>({ scenes: [], activeSceneId: "" });
   const [board, setBoard] = createSignal<BoardSnapshot>(emptyBoard());
   const [panels, setPanels] = createSignal(loadWorldPanels(params.id));
   const [unreadChat, setUnreadChat] = createSignal(0);
@@ -63,8 +67,7 @@ export default function WorldPage() {
     if (next.chat) setUnreadChat(0);
     saveWorldPanels(params.id, next);
   };
-  const acceptBoard = (next: BoardSnapshot) =>
-    setBoard((previous) => (next.revision >= previous.revision ? next : previous));
+  const acceptBoard = (next: BoardSnapshot) => setBoard(next);
   const [boot, setBoot] = createSignal<WorldBootstrap | null>(null);
   const [messages, setMessages] = createSignal<ChatMessage[]>([]);
   const [hasMore, setHasMore] = createSignal(false);
@@ -72,6 +75,16 @@ export default function WorldPage() {
   const [characters, setCharacters] = createSignal<Character[]>([]);
   const [templates, setTemplates] = createSignal<SheetTemplate[]>([]);
   const [notes, setNotes] = createSignal<NoteSummary[]>([]);
+  let notesRefresh = 0;
+  const refreshNotes = async () => {
+    const revision = ++notesRefresh;
+    try {
+      const next = await api.listNotes(params.id);
+      if (revision === notesRefresh) setNotes(next);
+    } catch {
+      setError("Could not refresh notes");
+    }
+  };
   const [members, setMembers] = createSignal<WorldMember[]>([]);
   const [presence, setPresence] = createSignal<PresenceMember[]>([]);
   const [activeRolls, setActiveRolls] = createSignal<ChatMessage[]>([]);
@@ -80,6 +93,10 @@ export default function WorldPage() {
   const [status, setStatus] = createSignal<RealtimeStatus>("connecting");
 
   let controller: RealtimeController | undefined;
+  const tickerUpdates = createTickerUpdates();
+  const resetTickers = () => {
+    for (const character of tickerUpdates.reset()) setCharacters((prev) => upsert(prev, character));
+  };
 
   onSettled(() => {
     const narrow = window.matchMedia("(max-width: 700px)");
@@ -108,6 +125,10 @@ export default function WorldPage() {
         const bootstrap = await api.bootstrapWorld(params.id);
         setBoot(bootstrap);
         acceptBoard(bootstrap.board);
+        setSceneList({
+          scenes: bootstrap.scenes ?? [],
+          activeSceneId: bootstrap.activeSceneId ?? bootstrap.board.sceneId ?? "",
+        });
         setMessages(bootstrap.messages);
         setHasMore(bootstrap.hasMoreMessages);
         setCharacters(bootstrap.characters);
@@ -121,12 +142,18 @@ export default function WorldPage() {
       controller = connectWorld(params.id, {
         onStatus: (next) => {
           setStatus(next);
+          if (next !== "open") resetTickers();
           setCursors([]);
-          if (next === "open")
+          if (next === "open") {
             controller?.send({ type: "cursors.subscribe", enabled: cursorsEnabled() });
+            void refreshNotes();
+          }
         },
         onFrame: (frame) => {
           switch (frame.type) {
+            case "notes.updated":
+              void refreshNotes();
+              break;
             case "cursor":
               if (cursorsEnabled()) {
                 setCursors((previous) =>
@@ -136,7 +163,14 @@ export default function WorldPage() {
                 );
               }
               break;
+            case "board.focus":
+              setBoardFocus(frame);
+              break;
+            case "scenes":
+              setSceneList({ scenes: frame.scenes, activeSceneId: frame.activeSceneId });
+              break;
             case "board":
+              setSceneList((previous) => ({ ...previous, activeSceneId: frame.activeSceneId }));
               acceptBoard(frame.board);
               break;
             case "message":
@@ -154,13 +188,16 @@ export default function WorldPage() {
               }
               break;
             case "character":
-              setCharacters((prev) => upsert(prev, frame.character));
+              setCharacters((prev) =>
+                upsert(prev, tickerUpdates.reconcile(frame.character, frame.requestId)),
+              );
               break;
             case "presence":
             case "hello":
               setPresence([...frame.members]);
               break;
             case "error":
+              resetTickers();
               if (frame.message) setError(frame.message);
               break;
           }
@@ -199,10 +236,12 @@ export default function WorldPage() {
     visibility: Visibility;
     recipientMemberIds: string[];
   }) => {
+    if (status() !== "open") return;
     controller?.send({ type: "chat", ...input });
   };
 
   const rollDice = (notation: string, visibility: Visibility) => {
+    if (status() !== "open") return;
     controller?.send({ type: "roll.dice", notation, visibility });
   };
 
@@ -211,7 +250,22 @@ export default function WorldPage() {
   };
 
   const ticker = (characterId: string, tickerId: string, value: number) => {
-    controller?.send({ type: "ticker.set", characterId, tickerId, value });
+    if (status() !== "open" || !controller) return;
+    const character = characters().find((item) => item.id === characterId);
+    const template =
+      templates().find((item) => item.id === character?.templateId) ?? templates()[0];
+    const definition = template?.tickers.find((item) => item.id === tickerId);
+    if (!character || !definition) return;
+    const requestId = crypto.randomUUID();
+    const updated = tickerUpdates.stage(character, definition, value, requestId);
+    setCharacters((prev) => upsert(prev, updated));
+    controller.send({
+      type: "ticker.set",
+      characterId,
+      tickerId,
+      value: updated.tickers[tickerId],
+      requestId,
+    });
   };
 
   const saveCharacter = async (input: SaveCharacterInput) => {
@@ -313,6 +367,12 @@ export default function WorldPage() {
                   worldId={params.id}
                   isDm={isDm()}
                   snapshot={board()}
+                  sceneList={sceneList()}
+                  onSceneList={setSceneList}
+                  focus={boardFocus()}
+                  onFocus={(rect, sceneId) =>
+                    controller?.send({ type: "board.focus", sceneId, rect })
+                  }
                   onPublished={acceptBoard}
                   cursors={cursors()}
                   cursorsEnabled={cursorsEnabled() && status() === "open"}
@@ -368,6 +428,7 @@ export default function WorldPage() {
                     </button>
                   </div>
                   <Chat
+                    connected={status() === "open"}
                     worldId={params.id}
                     overlay
                     messages={messages()}
@@ -435,7 +496,7 @@ export default function WorldPage() {
                             onUploadAvatar={uploadAvatar}
                           />
                         </Show>
-                        <Show when={tab() === "notes"}>
+                        <div hidden={tab() !== "notes"}>
                           <NotesPanel
                             worldId={params.id}
                             me={world().member}
@@ -443,7 +504,7 @@ export default function WorldPage() {
                             notes={notes()}
                             onNotes={setNotes}
                           />
-                        </Show>
+                        </div>
                         <Show when={tab() === "members" && isDm()}>
                           <MembersPanel
                             worldId={params.id}

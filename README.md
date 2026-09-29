@@ -16,7 +16,7 @@ Built with **Cloudflare Workers + Effect + Solid.js + StyleX**.
   tickers (HP/mana), and click-to-roll buttons
 - **Dice engine** — dice sets + stacking modifiers (static, stat refs, field refs)
 - **Notes** — per-world markdown files (metadata in the DO, content in R2)
-- **Mood board** — live or DM-published backgrounds, movable images and text, with independently collapsible chat and tools
+- **Mood board** — DM-prepared scenes, layered images and text, and live reveals, with independently collapsible chat and tools
 
 ## Develop
 
@@ -98,6 +98,12 @@ Use **Hide chat** and **Hide tools** to reveal the board. Each panel’s visibil
 is remembered per world on this browser; hiding it preserves its form state.
 On narrow screens, opening one panel closes the other.
 
+The DM’s collapsible **Scenes** panel holds up to 50 scenes, with groups, renaming,
+duplication, reordering, and deletion. **LIVE** marks the only scene players receive.
+Open any other scene for private prep; **Show to players** makes its saved version
+live. Deleting the live scene activates a neighbor; the last scene cannot be deleted.
+Players fit their camera to a newly active scene. Existing boards become **Scene 1**.
+
 DMs choose **Edit board**, upload a **Background**, and use **Add image** or
 **Add text** for movable elements. Drag an element to move it; drag its corner or
 edge handles to resize it. Text corners and top/bottom handles scale the lettering
@@ -107,7 +113,18 @@ Touch handles keep large hit targets at every zoom level. Selection never opens 
 Double-click or double-tap a text card, press Enter, or choose **Edit text** to type
 on the card itself. Click outside or press Ctrl/Cmd+Enter to finish; Escape cancels.
 
-Use **Bring to front**, **Delete**, **Undo**, and **Redo** for selected elements.
+The background is an ambient backdrop per scene; add maps as image elements.
+The **Layers** panel supports up to 12 layers, ordered bottom to top; new scenes
+start with Map and Tokens. Select a layer for new elements. Rename, reorder, lock,
+or hide layers, and use **Move to layer** for selected elements. Locked elements
+cannot be selected, moved, or resized, so dragging over a locked map pans the view.
+Hidden layers appear dimmed in DM edit mode and are stripped from player snapshots
+on the server. Unhide a layer or move an element to a visible layer, then publish
+to reveal it. Deleting a layer moves its elements to the layer below (or the next
+layer when deleting the bottom layer), after confirmation.
+
+Use **Bring to front** or **Send to back** within the selected element’s layer,
+plus **Delete**, **Undo**, and **Redo**. Layer changes also participate in undo/redo.
 Each completed move, resize, or text edit is one undo step. Arrow keys nudge
 selected elements (Shift moves ten units); focused resize handles also respond to
 arrow keys. Ctrl/Cmd+Z undoes and Ctrl/Cmd+Shift+Z redoes.
@@ -125,24 +142,31 @@ See [the implementation reference notes](docs/board-interactions.md) for source
 links and a command to clone it alongside this repository.
 
 **Publish** persists the draft in the world’s SQLite Durable Object and sends a
-snapshot to connected members. Players view the published scene and control their
-own camera. Every connection receives the latest saved snapshot, including after
-reconnect. By default, edits stay private until **Publish**. Enable **Live sharing**
-to automatically save and share completed edits after a 600 ms pause. Dragging
+snapshot to connected members when editing the live scene. **Save privately** on
+a prep scene updates only DM tabs. Players receive only the active scene and its
+visible layers, including on reconnect, and control their own camera. By default, edits stay private until **Publish**. Enable **Live sharing**
+to automatically save and share completed edits on the live scene after a 600 ms
+pause. Live sharing pauses while viewing a private scene; save prep manually. Dragging
 stays local until release, and camera movements always stay local. Switching Live
 sharing off cancels pending automatic saves and restores manual publishing.
 Undo/redo remains available after either kind of save. The sharing mode defaults
 to manual when the editor is reopened in a new page session.
 
-A stale DM tab cannot overwrite a newer publication; discard its draft to load
+Each scene has its own revision. A stale DM tab cannot overwrite a newer publication; discard its draft to load
 the latest. A failed save turns Live sharing off and preserves the draft for
 recovery, rather than repeatedly retrying it.
 Drafts and undo history stay in memory; leaving with unpublished changes prompts
-before discarding them. This first version has no collaborative editing or cursors.
+before discarding them. Switching scenes also prompts before discarding a draft.
+Live cursors are suppressed while the DM views private prep.
+
+On the live scene, DMs can use **Look here** to share their current view or **Look at selection** to point
+to a selected element. Players can choose **Go** on the cue or enable **Follow DM**
+(remembered per world). Manual navigation keeps following enabled for the next cue.
+Cues briefly outline the region and are not saved.
 
 Boards are limited to 100 elements. Image uploads accept PNG, JPEG, and WebP;
-the client resizes them to at most 2560 pixels on the longest side and encodes WebP.
-The server limits each upload to 5 MB and serves images only to world members.
+the client resizes them to at most 4096 pixels on the longest side and encodes WebP.
+The server limits each upload to 10 MB and serves images only to world members.
 Images live in R2 at `world/<worldId>/board/<assetId>`; snapshots contain asset IDs,
 not image bytes. Offscreen elements are culled. Moves and resizes preview once per animation frame
 and commit to the document only when the pointer is released. Removed and abandoned

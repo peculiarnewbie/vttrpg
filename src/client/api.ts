@@ -1,5 +1,12 @@
 import * as Schema from "effect/Schema";
-import { BoardAssetId, BoardSnapshot } from "../domain/board";
+import {
+  BoardAssetId,
+  BoardSnapshot,
+  SceneList,
+  type CreateSceneInput,
+  type UpdateSceneInput,
+  type SceneMetadata,
+} from "../domain/board";
 import type {
   ChatMessage,
   CreateMemberInput,
@@ -38,6 +45,8 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
 
 export type WorldBootstrap = {
   board: BoardSnapshot;
+  scenes?: SceneMetadata[];
+  activeSceneId?: string;
   world: WorldSummary;
   member: WorldMember;
   members: WorldMember[];
@@ -49,6 +58,45 @@ export type WorldBootstrap = {
 };
 
 export const api = {
+  listScenes: async (worldId: string) =>
+    Schema.decodeUnknownSync(SceneList)(await request(`/api/worlds/${worldId}/scenes`)),
+  createScene: async (worldId: string, input: typeof CreateSceneInput.Type) =>
+    Schema.decodeUnknownSync(BoardSnapshot)(
+      await request(`/api/worlds/${worldId}/scenes`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    ),
+  getScene: async (worldId: string, sceneId: string) =>
+    Schema.decodeUnknownSync(BoardSnapshot)(
+      await request(`/api/worlds/${worldId}/scenes/${encodeURIComponent(sceneId)}`),
+    ),
+  publishScene: async (worldId: string, sceneId: string, input: BoardSnapshot) =>
+    Schema.decodeUnknownSync(BoardSnapshot)(
+      await request(`/api/worlds/${worldId}/scenes/${encodeURIComponent(sceneId)}`, {
+        method: "PUT",
+        body: JSON.stringify(input),
+      }),
+    ),
+  updateScene: async (worldId: string, sceneId: string, input: typeof UpdateSceneInput.Type) =>
+    Schema.decodeUnknownSync(BoardSnapshot)(
+      await request(`/api/worlds/${worldId}/scenes/${encodeURIComponent(sceneId)}`, {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      }),
+    ),
+  deleteScene: async (worldId: string, sceneId: string) =>
+    Schema.decodeUnknownSync(SceneList)(
+      await request(`/api/worlds/${worldId}/scenes/${encodeURIComponent(sceneId)}`, {
+        method: "DELETE",
+      }),
+    ),
+  activateScene: async (worldId: string, sceneId: string) =>
+    Schema.decodeUnknownSync(BoardSnapshot)(
+      await request(`/api/worlds/${worldId}/scenes/${encodeURIComponent(sceneId)}/active`, {
+        method: "POST",
+      }),
+    ),
   getBoard: async (worldId: string) =>
     Schema.decodeUnknownSync(BoardSnapshot)(await request(`/api/worlds/${worldId}/board`)),
   publishBoard: async (worldId: string, input: BoardSnapshot) =>

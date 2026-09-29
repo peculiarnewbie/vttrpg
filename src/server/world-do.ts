@@ -1,3 +1,4 @@
+import { canSeeNote, canSaveNote } from "../domain/note-permissions";
 import { DurableObject } from "cloudflare:workers";
 import * as Schema from "effect/Schema";
 import {
@@ -22,13 +23,23 @@ import {
   type CursorPosition,
   type MemberRole,
   type PresenceMember,
-  type SaveCharacterInput,
+  SaveCharacterInput,
   type SaveNoteInput,
   type SaveTemplateInput,
   type ServerFrame,
   type Visibility,
 } from "../domain/schemas";
-import { BoardSnapshot, PublishBoardInput, emptyBoard } from "../domain/board";
+import {
+  BoardSnapshot,
+  PublishBoardInput,
+  emptyBoard,
+  normalizeBoard,
+  stripHiddenLayers,
+  CreateSceneInput,
+  UpdateSceneInput,
+  MAX_BOARD_SCENES,
+  type SceneMetadata,
+} from "../domain/board";
 import { newId, nowIso } from "./crypto";
 
 export type WorldDoEnv = {
@@ -62,6 +73,7 @@ type CharacterRow = {
   template_id: string;
   data: string;
   tickers: string;
+  ticker_max: string | null;
   avatar_key: string | null;
   created_at: string;
   updated_at: string;
@@ -82,6 +94,7 @@ type MessageRow = {
 };
 
 type NoteRow = {
+  editable_by_all: number;
   id: string;
   title: string;
   owner_member_id: string;
@@ -171,11 +184,187 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     });
   }
 
-  private getBoard(): BoardSnapshot {
+  private activeSceneId(): string {
+    return this.ctx.storage.sql
+      .exec<{ value: string }>("SELECT value FROM settings WHERE key = 'active_scene_id'")
+      .one().value;
+  }
+
+  private getBoard(sceneId = this.activeSceneId()): BoardSnapshot {
     const row = this.ctx.storage.sql
-      .exec<{ snapshot: string }>("SELECT snapshot FROM board WHERE id = 1")
-      .toArray()[0];
-    return row ? Schema.decodeUnknownSync(BoardSnapshot)(JSON.parse(row.snapshot)) : emptyBoard();
+      .exec<{ snapshot: string; name: string }>(
+        "SELECT snapshot, name FROM scenes WHERE id = ?",
+        sceneId,
+      )
+      .one();
+    const snapshot = Schema.decodeUnknownSync(BoardSnapshot)(JSON.parse(row.snapshot));
+    return {
+      ...snapshot,
+      sceneId,
+      sceneName: row.name,
+      document: normalizeBoard(snapshot.document),
+    };
+  }
+
+  private listScenes(): SceneMetadata[] {
+    return this.ctx.storage.sql
+      .exec<{
+        id: string;
+        name: string;
+        sort: number;
+        group_name: string | null;
+        snapshot: string;
+        updated_at: string;
+      }>("SELECT * FROM scenes ORDER BY sort, id")
+      .toArray()
+      .map((row) => {
+        const snapshot = Schema.decodeUnknownSync(BoardSnapshot)(JSON.parse(row.snapshot));
+        return {
+          id: row.id,
+          name: row.name,
+          sort: row.sort,
+          group: row.group_name,
+          updatedAt: row.updated_at,
+          revision: snapshot.revision,
+          elementCount: snapshot.document.elements.length,
+        };
+      });
+  }
+
+  private boardFrame(sceneId: string, role: string): Extract<ServerFrame, { type: "board" }> {
+    const board = this.getBoard(sceneId);
+    return {
+      type: "board",
+      sceneId,
+      sceneName: board.sceneName ?? "Scene",
+      activeSceneId: this.activeSceneId(),
+      board: role === "dm" ? board : stripHiddenLayers(board),
+    };
+  }
+
+  private broadcastBoard(sceneId: string) {
+    this.broadcast(this.boardFrame(sceneId, "dm"), (session) => session.role === "dm");
+    if (sceneId === this.activeSceneId())
+      this.broadcast(this.boardFrame(sceneId, "player"), (session) => session.role !== "dm");
+    this.broadcastScenes();
+  }
+
+  private broadcastScenes() {
+    this.broadcast(
+      { type: "scenes", scenes: this.listScenes(), activeSceneId: this.activeSceneId() },
+      (session) => session.role === "dm",
+    );
+  }
+
+  private publishScene(sceneId: string, body: unknown): Response {
+    const decoded = Schema.decodeUnknownResult(PublishBoardInput)(body);
+    if (decoded._tag === "Failure") return json({ error: "Invalid board" }, 400);
+    if (decoded.success.sceneId !== undefined && decoded.success.sceneId !== sceneId)
+      return json({ error: "The active scene changed. Load it before publishing again." }, 400);
+    const current = this.getBoard(sceneId);
+    if (decoded.success.revision !== current.revision)
+      return json(
+        { error: "The shared board changed. Load the published board before publishing again." },
+        400,
+      );
+    const board: BoardSnapshot = {
+      sceneId,
+      sceneName: current.sceneName,
+      revision: current.revision + 1,
+      document: normalizeBoard(decoded.success.document),
+    };
+    this.ctx.storage.sql.exec(
+      "UPDATE scenes SET snapshot = ?, updated_at = ? WHERE id = ?",
+      JSON.stringify(board),
+      nowIso(),
+      sceneId,
+    );
+    this.broadcastBoard(sceneId);
+    return json(board);
+  }
+
+  private handleScenes(method: string, path: string, body: unknown): Response {
+    const [, sceneId, action] = path.split("/");
+    const scenes = this.listScenes();
+    const sql = this.ctx.storage.sql;
+    if (!sceneId) {
+      if (method === "GET") return json({ scenes, activeSceneId: this.activeSceneId() });
+      if (method !== "POST") return json({ error: "Not found" }, 404);
+      const input = Schema.decodeUnknownResult(CreateSceneInput)(body);
+      if (input._tag === "Failure") return json({ error: "Invalid scene" }, 400);
+      if (scenes.length >= MAX_BOARD_SCENES)
+        return json({ error: "A world can have at most 50 scenes" }, 400);
+      if (
+        input.success.duplicateFrom &&
+        !scenes.some((scene) => scene.id === input.success.duplicateFrom)
+      )
+        return json({ error: "Scene not found" }, 404);
+      const document = input.success.duplicateFrom
+        ? this.getBoard(input.success.duplicateFrom).document
+        : emptyBoard().document;
+      const id = crypto.randomUUID();
+      sql.exec(
+        "INSERT INTO scenes (id, name, sort, group_name, snapshot, updated_at) VALUES (?, ?, ?, NULL, ?, ?)",
+        id,
+        input.success.name,
+        scenes.length,
+        JSON.stringify({ revision: 0, document }),
+        nowIso(),
+      );
+      this.broadcastScenes();
+      return json(this.getBoard(id), 201);
+    }
+    if (!scenes.some((scene) => scene.id === sceneId))
+      return json({ error: "Scene not found" }, 404);
+    if (action === "active" && method === "POST") {
+      sql.exec("UPDATE settings SET value = ? WHERE key = 'active_scene_id'", sceneId);
+      this.broadcastBoard(sceneId);
+      return json(this.getBoard(sceneId));
+    }
+    if (action) return json({ error: "Not found" }, 404);
+    if (method === "GET") return json(this.getBoard(sceneId));
+    if (method === "PUT") return this.publishScene(sceneId, body);
+    if (method === "PATCH") {
+      const input = Schema.decodeUnknownResult(UpdateSceneInput)(body);
+      if (input._tag === "Failure") return json({ error: "Invalid scene" }, 400);
+      const update = input.success;
+      if (update.name !== undefined)
+        sql.exec("UPDATE scenes SET name = ? WHERE id = ?", update.name, sceneId);
+      if (update.group !== undefined)
+        sql.exec("UPDATE scenes SET group_name = ? WHERE id = ?", update.group, sceneId);
+      if (update.sort !== undefined) {
+        const order = scenes.map((scene) => scene.id).filter((id) => id !== sceneId);
+        order.splice(Math.min(update.sort, order.length), 0, sceneId);
+        order.forEach((id, index) =>
+          sql.exec("UPDATE scenes SET sort = ? WHERE id = ?", index, id),
+        );
+      }
+      sql.exec("UPDATE scenes SET updated_at = ? WHERE id = ?", nowIso(), sceneId);
+      this.broadcastBoard(sceneId);
+      return json(this.getBoard(sceneId));
+    }
+    if (method === "DELETE") {
+      if (scenes.length === 1) return json({ error: "Cannot delete the last scene" }, 400);
+      const active = this.activeSceneId() === sceneId;
+      const remaining = scenes.filter((scene) => scene.id !== sceneId);
+      sql.exec("DELETE FROM scenes WHERE id = ?", sceneId);
+      remaining.forEach((scene, index) =>
+        sql.exec("UPDATE scenes SET sort = ? WHERE id = ?", index, scene.id),
+      );
+      if (active) {
+        const neighbor =
+          remaining[
+            Math.min(
+              scenes.findIndex((scene) => scene.id === sceneId),
+              remaining.length - 1,
+            )
+          ];
+        sql.exec("UPDATE settings SET value = ? WHERE key = 'active_scene_id'", neighbor.id);
+        this.broadcastBoard(neighbor.id);
+      } else this.broadcastScenes();
+      return json({ scenes: this.listScenes(), activeSceneId: this.activeSceneId() });
+    }
+    return json({ error: "Not found" }, 404);
   }
 
   private get worldId() {
@@ -187,6 +376,26 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     sql.exec(
       "CREATE TABLE IF NOT EXISTS board (id INTEGER PRIMARY KEY CHECK (id = 1), snapshot TEXT NOT NULL)",
     );
+    sql.exec(
+      "CREATE TABLE IF NOT EXISTS scenes (id TEXT PRIMARY KEY, name TEXT NOT NULL, sort INTEGER NOT NULL, group_name TEXT, snapshot TEXT NOT NULL, updated_at TEXT NOT NULL)",
+    );
+    sql.exec("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    if (!sql.exec("SELECT id FROM scenes LIMIT 1").toArray().length) {
+      const legacy = sql
+        .exec<{ snapshot: string }>("SELECT snapshot FROM board WHERE id = 1")
+        .toArray()[0];
+      const id = crypto.randomUUID();
+      sql.exec(
+        "INSERT INTO scenes (id, name, sort, snapshot, updated_at) VALUES (?, 'Scene 1', 0, ?, ?)",
+        id,
+        legacy?.snapshot ?? JSON.stringify(emptyBoard()),
+        nowIso(),
+      );
+      sql.exec(
+        "INSERT INTO settings (key, value) VALUES ('active_scene_id', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        id,
+      );
+    }
     sql.exec(`CREATE TABLE IF NOT EXISTS templates (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -230,7 +439,9 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       updated_at TEXT NOT NULL
     )`);
     // Additive columns for instances created before the feature existed.
+    this.ensureColumn("notes", "editable_by_all", "editable_by_all INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("characters", "avatar_key", "avatar_key TEXT");
+    this.ensureColumn("characters", "ticker_max", "ticker_max TEXT");
     this.ensureColumn("messages", "author_avatar_key", "author_avatar_key TEXT");
     this.ensureColumn("messages", "character_id", "character_id TEXT");
     const existing = sql.exec("SELECT COUNT(*) AS n FROM templates").one() as { n: number };
@@ -273,6 +484,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       templateId: row.template_id,
       values: parse(row.data, {}),
       tickers: parse(row.tickers, {}),
+      tickerMax: parse(row.ticker_max, {}),
       avatarKey: row.avatar_key ?? undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -301,6 +513,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       id: row.id,
       title: row.title,
       ownerMemberId: row.owner_member_id,
+      editableByAll: row.editable_by_all === 1,
       visibility: row.visibility as Visibility,
       updatedAt: row.updated_at,
     };
@@ -437,15 +650,35 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     return template;
   }
 
+  private canSaveCharacter(input: SaveCharacterInput, memberId: string, role: string): boolean {
+    if (role === "dm") return true;
+    const existing = input.id === undefined ? undefined : this.getCharacter(input.id);
+    return (
+      Boolean(memberId) &&
+      (!existing || existing.memberId === memberId) &&
+      (input.memberId === undefined || input.memberId === memberId)
+    );
+  }
+
+  private canEditCharacter(id: string, memberId: string, role: string): boolean {
+    return role === "dm" || (Boolean(memberId) && this.getCharacter(id)?.memberId === memberId);
+  }
+
   private saveCharacter(input: SaveCharacterInput): Character {
     const now = nowIso();
     const id = input.id ?? newId("chr");
     const existing = this.getCharacter(id);
     const template = this.getTemplate(input.templateId) ?? this.getTemplate();
     const tickers: Record<string, number> = existing ? { ...existing.tickers } : {};
+    const tickerMax = { ...(input.tickerMax ?? existing?.tickerMax) };
     if (template) {
       for (const ticker of template.tickers) {
-        if (tickers[ticker.id] === undefined) tickers[ticker.id] = ticker.defaultValue;
+        if (tickerMax[ticker.id] !== undefined)
+          tickerMax[ticker.id] = Math.max(ticker.min, tickerMax[ticker.id]);
+        tickers[ticker.id] = Math.max(
+          ticker.min,
+          Math.min(tickerMax[ticker.id] ?? ticker.max, tickers[ticker.id] ?? ticker.defaultValue),
+        );
       }
     }
     const character: Character = {
@@ -456,29 +689,33 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       templateId: input.templateId,
       values: input.values,
       tickers,
+      tickerMax,
       avatarKey: existing?.avatarKey,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
     if (existing) {
       this.ctx.storage.sql.exec(
-        "UPDATE characters SET member_id = ?, name = ?, template_id = ?, data = ?, updated_at = ? WHERE id = ?",
+        "UPDATE characters SET member_id = ?, name = ?, template_id = ?, data = ?, tickers = ?, ticker_max = ?, updated_at = ? WHERE id = ?",
         character.memberId,
         character.name,
         character.templateId,
         JSON.stringify(character.values),
+        JSON.stringify(character.tickers),
+        JSON.stringify(character.tickerMax),
         now,
         id,
       );
     } else {
       this.ctx.storage.sql.exec(
-        "INSERT INTO characters (id, member_id, name, template_id, data, tickers, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO characters (id, member_id, name, template_id, data, tickers, ticker_max, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         id,
         character.memberId,
         character.name,
         character.templateId,
         JSON.stringify(character.values),
         JSON.stringify(character.tickers),
+        JSON.stringify(character.tickerMax),
         now,
         now,
       );
@@ -495,7 +732,11 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     if (!character) return undefined;
     const template = this.getTemplate(character.templateId) ?? this.getTemplate();
     const definition = template?.tickers.find((ticker) => ticker.id === tickerId);
-    const clamped = definition ? Math.max(definition.min, Math.min(definition.max, value)) : value;
+    if (!definition) return undefined;
+    const clamped = Math.max(
+      definition.min,
+      Math.min(character.tickerMax?.[tickerId] ?? definition.max, value),
+    );
     const updated: Character = {
       ...character,
       tickers: { ...character.tickers, [tickerId]: clamped },
@@ -620,17 +861,40 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     return { character, definition, result: evaluateRoll(definition, resolver) };
   }
 
-  private async saveNote(
+  private noteWrites: Promise<void> = Promise.resolve();
+
+  private writeNote<T>(write: () => Promise<T>): Promise<T> {
+    // R2 awaits allow other requests to run; keep permission checks and writes ordered.
+    const result = this.noteWrites.then(write);
+    this.noteWrites = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
+  }
+
+  private saveNote(
     input: SaveNoteInput & { id?: string; ownerMemberId: string },
+    role: MemberRole,
+  ) {
+    return this.writeNote(() => this.persistNote(input, role));
+  }
+
+  private async persistNote(
+    input: SaveNoteInput & { id?: string; ownerMemberId: string },
+    role: MemberRole,
   ): Promise<{ note: Note } | { forbidden: true }> {
     const id = input.id ?? newId("note");
     const existing = this.ctx.storage.sql
       .exec<NoteRow>("SELECT * FROM notes WHERE id = ? LIMIT 1", id)
       .toArray()[0];
-    // Notes are author-owned: once created, only the original writer may edit.
-    if (existing && existing.owner_member_id !== input.ownerMemberId) {
+    if (
+      existing &&
+      !canSaveNote(this.toNoteSummary(existing), input, { id: input.ownerMemberId, role })
+    ) {
       return { forbidden: true };
     }
+    const editableByAll = input.editableByAll ?? existing?.editable_by_all === 1;
     const prefix = `world/${this.worldId}`;
     const key = existing?.r2_key ?? `${prefix}/notes/${id}.md`;
     await this.env.BUCKET.put(key, input.content, {
@@ -639,36 +903,51 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     const updatedAt = nowIso();
     if (existing) {
       this.ctx.storage.sql.exec(
-        "UPDATE notes SET title = ?, visibility = ?, updated_at = ? WHERE id = ?",
+        "UPDATE notes SET title = ?, visibility = ?, editable_by_all = ?, updated_at = ? WHERE id = ?",
         input.title,
         input.visibility,
+        editableByAll ? 1 : 0,
         updatedAt,
         id,
       );
     } else {
       this.ctx.storage.sql.exec(
-        "INSERT INTO notes (id, title, owner_member_id, visibility, r2_key, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO notes (id, title, owner_member_id, visibility, r2_key, updated_at, editable_by_all) VALUES (?, ?, ?, ?, ?, ?, ?)",
         id,
         input.title,
         input.ownerMemberId,
         input.visibility,
         key,
         updatedAt,
+        editableByAll ? 1 : 0,
       );
     }
+    this.broadcastNotes(existing ? this.toNoteSummary(existing) : undefined, {
+      id,
+      title: input.title,
+      ownerMemberId: existing?.owner_member_id ?? input.ownerMemberId,
+      visibility: input.visibility,
+      editableByAll,
+      updatedAt,
+    });
     return {
       note: {
         id,
         title: input.title,
         ownerMemberId: existing?.owner_member_id ?? input.ownerMemberId,
         visibility: input.visibility,
+        editableByAll,
         content: input.content,
         updatedAt,
       },
     };
   }
 
-  private async deleteNote(
+  private deleteNote(id: string, ownerMemberId: string) {
+    return this.writeNote(() => this.removeNote(id, ownerMemberId));
+  }
+
+  private async removeNote(
     id: string,
     ownerMemberId: string,
   ): Promise<{ ok: true } | { forbidden: true }> {
@@ -678,6 +957,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     if (row && row.owner_member_id !== ownerMemberId) return { forbidden: true };
     if (row) await this.env.BUCKET.delete(row.r2_key);
     this.ctx.storage.sql.exec("DELETE FROM notes WHERE id = ?", id);
+    if (row) this.broadcastNotes(this.toNoteSummary(row));
     return { ok: true };
   }
 
@@ -720,18 +1000,31 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     }
   }
 
-  private broadcast(frame: ServerFrame, filter?: (session: SocketAttachment) => boolean) {
+  private broadcast(
+    frame: ServerFrame,
+    filter?: (session: SocketAttachment, socket: WebSocket) => boolean,
+  ) {
     const payload = JSON.stringify(frame);
     for (const socket of this.ctx.getWebSockets()) {
       const attachment = socket.deserializeAttachment() as SocketAttachment | null;
       if (!attachment) continue;
-      if (filter && !filter(attachment)) continue;
+      if (filter && !filter(attachment, socket)) continue;
       try {
         socket.send(payload);
       } catch {
         // socket is closing; ignore
       }
     }
+  }
+
+  private broadcastNotes(previous?: NoteSummary, current?: NoteSummary) {
+    this.broadcast({ type: "notes.updated" }, (session) => {
+      const viewer = { id: session.memberId, role: session.role };
+      return !!(
+        (previous && canSeeNote(previous, viewer)) ||
+        (current && canSeeNote(current, viewer))
+      );
+    });
   }
 
   private broadcastMessage(message: ChatMessage) {
@@ -801,7 +1094,15 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         members: this.presence(),
       } satisfies ServerFrame),
     );
-    server.send(JSON.stringify({ type: "board", board: this.getBoard() } satisfies ServerFrame));
+    server.send(JSON.stringify(this.boardFrame(this.activeSceneId(), role)));
+    if (role === "dm")
+      server.send(
+        JSON.stringify({
+          type: "scenes",
+          scenes: this.listScenes(),
+          activeSceneId: this.activeSceneId(),
+        } satisfies ServerFrame),
+      );
     this.broadcast({ type: "presence", members: this.presence() });
 
     return new Response(null, { status: 101, webSocket: client });
@@ -812,43 +1113,29 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       ? ((await request.json().catch(() => ({}))) as Record<string, unknown>)
       : {};
     const memberId = request.headers.get("x-ttrpg-member-id") ?? "";
+    const role = request.headers.get("x-ttrpg-role") ?? "";
     const memberName = request.headers.get("x-ttrpg-member-name") ?? "Unknown";
     const path = url.pathname.replace(/^\/internal\//, "");
 
     try {
+      if (path === "scenes" || path.startsWith("scenes/")) {
+        if (role !== "dm") return json({ error: "Only the DM can manage scenes" }, 403);
+        return this.handleScenes(request.method, path, body);
+      }
       switch (`${request.method} ${path}`) {
         case "GET board":
-          return json(this.getBoard());
+          return json(role === "dm" ? this.getBoard() : stripHiddenLayers(this.getBoard()));
         case "PUT board": {
-          if (request.headers.get("x-ttrpg-role") !== "dm")
-            return json({ error: "Only the DM can publish the board" }, 403);
-          const decoded = Schema.decodeUnknownResult(PublishBoardInput)(body);
-          if (decoded._tag === "Failure") return json({ error: "Invalid board" }, 400);
-          const current = this.getBoard();
-          if (decoded.success.revision !== current.revision) {
-            return json(
-              {
-                error:
-                  "The shared board changed. Load the published board before publishing again.",
-              },
-              400,
-            );
-          }
-          const board: BoardSnapshot = {
-            revision: current.revision + 1,
-            document: decoded.success.document,
-          };
-          this.ctx.storage.sql.exec(
-            "INSERT INTO board (id, snapshot) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET snapshot = excluded.snapshot",
-            JSON.stringify(board),
-          );
-          this.broadcast({ type: "board", board });
-          return json(board);
+          if (role !== "dm") return json({ error: "Only the DM can publish the board" }, 403);
+          return this.publishScene(this.activeSceneId(), body);
         }
         case "GET state": {
           const page = this.listMessages({ limit: 50 });
           return json({
-            board: this.getBoard(),
+            board: role === "dm" ? this.getBoard() : stripHiddenLayers(this.getBoard()),
+            ...(role === "dm"
+              ? { scenes: this.listScenes(), activeSceneId: this.activeSceneId() }
+              : {}),
             templates: this.listTemplates(),
             characters: this.listCharacters(),
             messages: page.messages,
@@ -900,12 +1187,13 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         }
 
         case "POST character": {
+          const decoded = Schema.decodeUnknownResult(SaveCharacterInput)(body);
+          if (decoded._tag === "Failure") return json({ error: "Invalid character" }, 400);
+          if (!this.canSaveCharacter(decoded.success, memberId, role))
+            return json({ error: "You cannot edit this character" }, 403);
           const character = this.saveCharacter({
-            id: body.id as string | undefined,
-            name: String(body.name ?? "Unnamed"),
-            templateId: String(body.templateId ?? ""),
-            memberId: (body.memberId as string | undefined) ?? memberId,
-            values: (body.values as Record<string, string | number>) ?? {},
+            ...decoded.success,
+            memberId: decoded.success.memberId ?? memberId,
           });
           this.broadcast({ type: "character", character });
           return json(character);
@@ -922,6 +1210,10 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         }
 
         case "POST ticker": {
+          if (!this.canEditCharacter(String(body.characterId), memberId, role))
+            return json({ error: "You cannot edit this character" }, 403);
+          if (!Number.isSafeInteger(body.value))
+            return json({ error: "Invalid tracker value" }, 400);
           const character = this.setTicker(
             String(body.characterId),
             String(body.tickerId),
@@ -946,15 +1238,20 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         }
 
         case "POST note": {
-          const result = await this.saveNote({
-            id: body.id as string | undefined,
-            title: String(body.title ?? "Untitled"),
-            visibility: (body.visibility as Visibility) ?? "private",
-            content: String(body.content ?? ""),
-            ownerMemberId: (body.ownerMemberId as string | undefined) ?? memberId,
-          });
+          const result = await this.saveNote(
+            {
+              id: body.id as string | undefined,
+              title: String(body.title ?? "Untitled"),
+              visibility: (body.visibility as Visibility) ?? "private",
+              content: String(body.content ?? ""),
+              editableByAll:
+                typeof body.editableByAll === "boolean" ? body.editableByAll : undefined,
+              ownerMemberId: memberId,
+            },
+            request.headers.get("x-ttrpg-role") === "dm" ? "dm" : "player",
+          );
           if ("forbidden" in result) {
-            return json({ error: "Only the author can edit this note" }, 403);
+            return json({ error: "You cannot make these changes to this note" }, 403);
           }
           return json(result.note);
         }
@@ -985,6 +1282,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         return character ? json(character) : json({ error: "Not found" }, 404);
       }
       if (characterMatch && request.method === "DELETE") {
+        if (role !== "dm") return json({ error: "Only the DM can delete characters" }, 403);
         this.deleteCharacter(characterMatch[1]);
         return json({ ok: true });
       }
@@ -1018,6 +1316,29 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     const attachment = socket.deserializeAttachment() as SocketAttachment | null;
     if (!attachment) return;
     const frame = decoded.success;
+
+    if (frame.type === "board.focus") {
+      if (attachment.role !== "dm") {
+        socket.send(
+          JSON.stringify({
+            type: "error",
+            message: "Only the DM can focus the board",
+          } satisfies ServerFrame),
+        );
+        return;
+      }
+      if (frame.sceneId !== undefined && frame.sceneId !== this.activeSceneId()) return;
+      this.broadcast(
+        {
+          type: "board.focus",
+          sceneId: this.activeSceneId(),
+          rect: frame.rect,
+          from: attachment.name,
+        },
+        (_session, connection) => connection !== socket,
+      );
+      return;
+    }
 
     if (frame.type === "cursors.subscribe") {
       attachment.cursorId ??= newId("cursor");
@@ -1085,20 +1406,43 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     }
 
     if (frame.type === "character.save") {
+      if (!this.canSaveCharacter(frame.character, attachment.memberId, attachment.role)) {
+        socket.send(
+          JSON.stringify({
+            type: "error",
+            message: "You cannot edit this character",
+          } satisfies ServerFrame),
+        );
+        return;
+      }
       const character = this.saveCharacter({
         id: frame.character.id,
         name: frame.character.name,
         templateId: frame.character.templateId,
         memberId: frame.character.memberId || attachment.memberId,
         values: frame.character.values,
+        tickerMax: frame.character.tickerMax,
       });
       this.broadcast({ type: "character", character });
       return;
     }
 
     if (frame.type === "ticker.set") {
+      if (!this.canEditCharacter(frame.characterId, attachment.memberId, attachment.role)) {
+        socket.send(
+          JSON.stringify({
+            type: "error",
+            message: "You cannot edit this character",
+          } satisfies ServerFrame),
+        );
+        return;
+      }
       const character = this.setTicker(frame.characterId, frame.tickerId, frame.value);
-      if (character) this.broadcast({ type: "character", character });
+      if (character) this.broadcast({ type: "character", character, requestId: frame.requestId });
+      else
+        socket.send(
+          JSON.stringify({ type: "error", message: "Tracker not found" } satisfies ServerFrame),
+        );
       return;
     }
 
@@ -1106,6 +1450,15 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       socket.send(
         JSON.stringify({ type: "presence", members: this.presence() } satisfies ServerFrame),
       );
+      const row = this.ctx.storage.sql
+        .exec<NoteRow>("SELECT * FROM notes WHERE id = ?", frame.noteId)
+        .toArray()[0];
+      if (
+        row &&
+        canSeeNote(this.toNoteSummary(row), { id: attachment.memberId, role: attachment.role })
+      ) {
+        this.broadcastNotes(undefined, this.toNoteSummary(row));
+      }
     }
   }
 

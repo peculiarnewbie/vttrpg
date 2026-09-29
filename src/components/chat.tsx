@@ -1,5 +1,6 @@
 import { createVirtualizer } from "../client/virtual";
 import { For, Show, createEffect, createSignal } from "solid-js";
+import { showDiceTotals, setShowDiceTotals } from "../client/dice-display";
 import { api } from "../client/api";
 import { parseRollCommand } from "../domain/dice";
 import type { ChatMessage, Visibility, WorldMember } from "../domain/schemas";
@@ -16,14 +17,23 @@ export function DiceView(props: { message: ChatMessage }) {
     <Show when={props.message.roll}>
       {(roll) => (
         <div {...sx(styles.rollResult)}>
-          <span {...sx(styles.rollTotal)}>{roll().total}</span>
           <div {...sx(styles.rowWrap)}>
             <For each={roll().dice}>
               {(die) => (
-                <For each={die.results}>{(value) => <span {...sx(styles.die)}>{value}</span>}</For>
+                <For each={die.results}>
+                  {(value) => (
+                    <span {...sx(styles.die)}>
+                      <span>{value}</span>
+                      <span {...sx(styles.dieLabel)}>d{die.sides}</span>
+                    </span>
+                  )}
+                </For>
               )}
             </For>
           </div>
+          <Show when={showDiceTotals()}>
+            <span {...sx(styles.rollTotal)}>Total {roll().total}</span>
+          </Show>
           <span {...sx(styles.mono)}>
             {roll().notation}
             {roll().modifiers.length > 0
@@ -89,6 +99,7 @@ function MessageCard(props: { message: ChatMessage; me: WorldMember; worldId: st
 
 export function Chat(props: {
   overlay?: boolean;
+  connected: boolean;
   worldId: string;
   messages: ChatMessage[];
   hasMore: boolean;
@@ -113,6 +124,7 @@ export function Chat(props: {
   const [visibility, setVisibility] = createSignal<Visibility>("public");
   const [whisperTo, setWhisperTo] = createSignal("");
   const [showDice, setShowDice] = createSignal(false);
+  const [lastTrayNotation, setLastTrayNotation] = createSignal("");
   const [pending, setPending] = createSignal<Record<number, number>>({});
 
   const virtualizer = createVirtualizer({
@@ -180,7 +192,7 @@ export function Chat(props: {
   const submit = (event: Event) => {
     event.preventDefault();
     const raw = text().trim();
-    if (!raw) return;
+    if (!props.connected || !raw) return;
     const command = parseRollCommand(raw);
     if (command) {
       props.onRollDice(command, visibility());
@@ -211,10 +223,16 @@ export function Chat(props: {
 
   const rollPending = () => {
     const notation = pendingNotation();
-    if (!notation) return;
+    if (!props.connected || !notation) return;
     props.onRollDice(notation, visibility());
     setPending({});
-    setShowDice(false);
+    setLastTrayNotation(notation);
+  };
+
+  const restricted = () => visibility() !== "public" || whisperTo() !== "";
+  const resetAudience = () => {
+    setVisibility("public");
+    setWhisperTo("");
   };
 
   return (
@@ -268,6 +286,11 @@ export function Chat(props: {
       </Show>
 
       <form {...sx(styles.composer)} onSubmit={submit}>
+        <Show when={!props.connected}>
+          <span {...sx(styles.faint)} role="status">
+            Connecting…
+          </span>
+        </Show>
         <Show when={showDice()}>
           <div {...sx(styles.dicePicker)}>
             <div {...sx(styles.rowWrap)}>
@@ -290,14 +313,48 @@ export function Chat(props: {
               <Button small onClick={() => setPending({})} disabled={pendingCount() === 0}>
                 Clear
               </Button>
-              <Button small variant="primary" onClick={rollPending} disabled={pendingCount() === 0}>
+              <Button
+                small
+                variant="primary"
+                onClick={rollPending}
+                disabled={!props.connected || pendingCount() === 0}
+              >
                 Roll
+              </Button>
+              <Button
+                small
+                disabled={!props.connected || !lastTrayNotation()}
+                onClick={() => {
+                  if (!props.connected || !lastTrayNotation()) return;
+                  props.onRollDice(lastTrayNotation(), visibility());
+                  setPending({});
+                }}
+              >
+                Reroll last{lastTrayNotation() ? ` (${lastTrayNotation()})` : ""}
               </Button>
             </div>
           </div>
         </Show>
+        <Show when={restricted()}>
+          <div {...sx(styles.chatAudience)} role="status">
+            <Show when={visibility() !== "public"}>
+              <span>{visibility() === "dm" ? "DM only" : "Private (only me)"}</span>
+            </Show>
+            <Show when={whisperTo()}>
+              <span>
+                Whispering to{" "}
+                {props.members.find((member) => member.id === whisperTo())?.displayName ??
+                  "selected player"}
+              </span>
+            </Show>
+            <div {...sx(styles.spacer)} />
+            <Button small onClick={resetAudience}>
+              × Reset to public
+            </Button>
+          </div>
+        </Show>
         <textarea
-          {...sx(styles.input, styles.composerInput)}
+          {...sx(styles.input, styles.composerInput, restricted() && styles.chatAudienceInput)}
           value={text()}
           placeholder="Speak, describe, or /roll 2d6 …"
           onInput={(event) => setText(event.currentTarget.value)}
@@ -316,6 +373,14 @@ export function Chat(props: {
           >
             🎲 Dice
           </Button>
+          <label {...sx(styles.chatPreference)}>
+            <input
+              type="checkbox"
+              checked={showDiceTotals()}
+              onChange={(event) => setShowDiceTotals(event.currentTarget.checked)}
+            />
+            Show totals
+          </label>
           <select
             {...sx(styles.select)}
             value={kind()}
@@ -344,7 +409,7 @@ export function Chat(props: {
             </For>
           </select>
           <div {...sx(styles.spacer)} />
-          <Button type="submit" variant="primary" disabled={!text().trim()}>
+          <Button type="submit" variant="primary" disabled={!props.connected || !text().trim()}>
             Send
           </Button>
         </div>
