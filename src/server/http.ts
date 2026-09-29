@@ -14,6 +14,7 @@ import {
   SaveTemplateInput,
   UpdateMemberInput,
   type ChatMessage,
+  type Character,
   type MemberRole,
   type Note,
   type NoteSummary,
@@ -716,11 +717,13 @@ const ListCharacters = HttpRouter.route(
   route(
     Effect.gen(function* () {
       const { member, stub } = yield* loadWorld();
-      return json(
-        yield* doJson(stub, "state", { method: "GET" }, member).pipe(
-          Effect.map((s: any) => s.characters),
-        ),
+      const state = yield* doJson<{ characters: Character[] }>(
+        stub,
+        "state",
+        { method: "GET" },
+        member,
       );
+      return json(state.characters);
     }),
   ),
 );
@@ -732,7 +735,7 @@ const SaveCharacter = HttpRouter.route(
     Effect.gen(function* () {
       const { member, stub } = yield* loadWorld();
       const input = yield* readBody(SaveCharacterInput);
-      const character = yield* doJson(
+      const character = yield* doJson<Character>(
         stub,
         "character",
         {
