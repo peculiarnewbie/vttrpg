@@ -4,7 +4,7 @@ import { showDiceTotals } from "../client/dice-display";
 import { api } from "../client/api";
 import { parseRollCommand } from "../domain/dice";
 import type { ChatMessage, Visibility, WorldMember } from "../domain/schemas";
-import { Avatar, Badge, Button } from "./ui";
+import { Avatar, Button } from "./ui";
 import { styles } from "./styles.stylex";
 import { boardStyles } from "./board.stylex";
 import { sx } from "../theme/sx";
@@ -24,7 +24,7 @@ export function DiceView(props: { message: ChatMessage }) {
                   {(value) => (
                     <span {...sx(styles.die)}>
                       <span>{value}</span>
-                      <span {...sx(styles.dieLabel)}>d{die.sides}</span>
+                      <sub {...sx(styles.dieLabel)}>d{die.sides}</sub>
                     </span>
                   )}
                 </For>
@@ -65,31 +65,35 @@ function MessageCard(props: { message: ChatMessage; me: WorldMember; worldId: st
         message.kind === "system" && styles.messageSystem,
       )}
     >
-      <div {...sx(styles.row)}>
-        <Show when={avatarSrc()} fallback={<Avatar name={message.authorName} />}>
-          <img src={avatarSrc()} alt="" {...sx(styles.avatarImage)} />
+      <div {...sx(styles.messageRow)}>
+        <Show when={message.kind !== "system"}>
+          <Show when={avatarSrc()} fallback={<Avatar name={message.authorName} small />}>
+            <img src={avatarSrc()} alt="" {...sx(styles.avatarImage, styles.chatAvatar)} />
+          </Show>
         </Show>
         <div {...sx(styles.grow)}>
-          <div {...sx(styles.messageMeta)}>
+          <div {...sx(styles.messageMeta, message.kind === "system" && styles.messageMetaCentered)}>
             <span {...sx(styles.messageAuthor)}>{message.authorName}</span>
             <span>{new Date(message.createdAt).toLocaleTimeString()}</span>
             <Show when={message.kind === "roll"}>
-              <Badge tone="accent">roll</Badge>
+              <span {...sx(styles.messageMark)}>roll</span>
             </Show>
             <Show when={message.kind === "ooc"}>
-              <Badge tone="plain">OOC</Badge>
+              <span {...sx(styles.messageMark)}>OOC</span>
             </Show>
             <Show when={message.visibility === "private"}>
-              <Badge tone="private">private</Badge>
+              <span {...sx(styles.messageMark)}>private</span>
             </Show>
             <Show when={message.visibility === "dm"}>
-              <Badge tone="dm">DM only</Badge>
+              <span {...sx(styles.messageMark)}>DM only</span>
             </Show>
             <Show when={message.recipientMemberIds.length > 0}>
-              <Badge tone="plain">whisper</Badge>
+              <span {...sx(styles.messageMark)}>whisper</span>
             </Show>
           </div>
-          <div {...sx(styles.messageBody)}>{message.content}</div>
+          <div {...sx(styles.messageBody, message.kind === "ooc" && styles.messageQuiet)}>
+            {message.content}
+          </div>
           <DiceView message={message} />
         </div>
       </div>
@@ -134,7 +138,7 @@ export function Chat(props: {
   const virtualizer = createVirtualizer({
     count: () => props.messages.length,
     getScrollElement: () => scrollRef,
-    estimateSize: () => 104,
+    estimateSize: () => 76,
     overscan: 8,
   });
 
@@ -273,7 +277,7 @@ export function Chat(props: {
                   left: 0,
                   width: "100%",
                   transform: `translateY(${item.start}px)`,
-                  "padding-bottom": "12px",
+                  "padding-bottom": "2px",
                 }}
               >
                 <MessageCard
@@ -315,7 +319,7 @@ export function Chat(props: {
                 )}
               </For>
               <div {...sx(styles.spacer)} />
-              <span {...sx(styles.mono)}>
+              <span {...sx(styles.numeric)}>
                 {pendingNotation() || "pick dice"} · {pendingCount()}/{MAX_DICE}
               </span>
               <Button small onClick={() => setPending({})} disabled={pendingCount() === 0}>

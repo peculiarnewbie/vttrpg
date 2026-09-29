@@ -22,7 +22,7 @@ import {
   MenuItem,
   MenuToggle,
   Spinner,
-  ThemeToggle,
+  ThemeMenuItems,
 } from "../components/ui";
 import type {
   BoardFocus,
@@ -363,8 +363,9 @@ export default function WorldPage() {
                     )}
                   </For>
                 </ul>
-                <ThemeToggle />
                 <Menu label="Table settings" trigger={<span aria-hidden="true">⚙</span>}>
+                  <ThemeMenuItems />
+                  <div {...sx(styles.menuDivider)} />
                   <MenuToggle checked={showDiceTotals()} onChange={setShowDiceTotals}>
                     Show dice totals
                   </MenuToggle>

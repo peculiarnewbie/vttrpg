@@ -1,8 +1,9 @@
 import type { JSX } from "@solidjs/web";
-import { Show, createSignal, createUniqueId, onCleanup, onSettled, type Component } from "solid-js";
+import { Show, createSignal, createUniqueId, onSettled, type Component } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { sx } from "../theme/sx";
 import { useTheme } from "../theme/theme-context";
+import { skins, themeNames } from "../theme/themes";
 import { styles } from "./styles.stylex";
 
 type ButtonVariant = "default" | "primary" | "accent" | "ghost" | "danger";
@@ -172,23 +173,46 @@ export function Link(props: { href: string; children: JSX.Element; class?: strin
   );
 }
 
-export function Avatar(props: { name: string }) {
-  return <span {...sx(styles.avatar)}>{props.name.slice(0, 2).toUpperCase()}</span>;
+export function Avatar(props: { name: string; small?: boolean }) {
+  return (
+    <span {...sx(styles.avatar, props.small && styles.chatAvatar)}>
+      {props.name.slice(0, 2).toUpperCase()}
+    </span>
+  );
 }
 
 export function ThemeToggle() {
-  const { toggleTheme, skin } = useTheme();
-  const label = () => `Theme: ${skin().label} (click for the next)`;
+  const { skin } = useTheme();
   return (
-    <button
-      type="button"
-      {...sx(styles.iconButton)}
-      aria-label={label()}
-      title={label()}
-      onClick={toggleTheme}
-    >
-      <span aria-hidden="true">{skin().dark ? "☀" : "☾"}</span>
-    </button>
+    <Menu label={`Theme: ${skin().label}`} trigger={<span aria-hidden="true">◐</span>}>
+      <ThemeMenuItems />
+    </Menu>
+  );
+}
+
+export function ThemeMenuItems() {
+  const { theme, setTheme } = useTheme();
+  const labelId = createUniqueId();
+  return (
+    <div role="group" aria-labelledby={labelId}>
+      <div id={labelId} {...sx(styles.menuGroupLabel)}>
+        Theme
+      </div>
+      {themeNames.map((name) => (
+        <MenuRadio checked={theme() === name} onSelect={() => setTheme(name)}>
+          <span
+            aria-hidden="true"
+            {...sx(
+              styles.themeSwatch,
+              name === "rulebook" && styles.swatchRulebook,
+              name === "zine" && styles.swatchZine,
+              name === "fantasy" && styles.swatchFantasy,
+            )}
+          />
+          {skins[name].label}
+        </MenuRadio>
+      ))}
+    </div>
   );
 }
 
@@ -197,36 +221,87 @@ export function Menu(props: { label: string; trigger: JSX.Element; children: JSX
   const [open, setOpen] = createSignal(false);
   const id = createUniqueId();
   let root: HTMLDivElement | undefined;
+  let trigger: HTMLButtonElement | undefined;
+  let panel: HTMLDivElement | undefined;
+  const items = () =>
+    Array.from(panel?.querySelectorAll<HTMLButtonElement>("button[role^='menuitem']") ?? []);
+  const close = () => {
+    setOpen(false);
+    trigger?.focus();
+  };
+  const openAt = (last = false) => {
+    setOpen(true);
+    queueMicrotask(() => {
+      const choices = items();
+      (last ? choices.at(-1) : choices[0])?.focus();
+    });
+  };
   onSettled(() => {
     const outside = (event: PointerEvent) => {
       if (open() && root && !root.contains(event.target as Node)) setOpen(false);
     };
     const escape = (event: KeyboardEvent) => {
-      if (open() && event.key === "Escape") setOpen(false);
+      if (open() && event.key === "Escape") {
+        event.preventDefault();
+        close();
+      }
     };
     document.addEventListener("pointerdown", outside);
     document.addEventListener("keydown", escape);
-    onCleanup(() => {
+    return () => {
       document.removeEventListener("pointerdown", outside);
       document.removeEventListener("keydown", escape);
-    });
+    };
   });
   return (
     <div {...sx(styles.menu)} ref={(element) => (root = element)}>
       <button
         type="button"
         {...sx(styles.iconButton)}
+        ref={(element) => (trigger = element)}
         aria-label={props.label}
         title={props.label}
-        aria-haspopup="true"
+        aria-haspopup="menu"
         aria-expanded={open() ? "true" : "false"}
         aria-controls={id}
-        onClick={() => setOpen(!open())}
+        onClick={() => (open() ? close() : openAt())}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            openAt(event.key === "ArrowUp");
+          }
+        }}
       >
         {props.trigger}
       </button>
       <Show when={open()}>
-        <div id={id} {...sx(styles.menuPanel)} role="menu" onClick={() => setOpen(false)}>
+        <div
+          id={id}
+          {...sx(styles.menuPanel)}
+          role="menu"
+          aria-label={props.label}
+          ref={(element) => (panel = element)}
+          onClick={close}
+          onKeyDown={(event) => {
+            const choices = items();
+            const index = choices.indexOf(document.activeElement as HTMLButtonElement);
+            const next =
+              event.key === "Home"
+                ? 0
+                : event.key === "End"
+                  ? choices.length - 1
+                  : event.key === "ArrowDown"
+                    ? (index + 1) % choices.length
+                    : event.key === "ArrowUp"
+                      ? (index - 1 + choices.length) % choices.length
+                      : undefined;
+            if (next !== undefined) {
+              event.preventDefault();
+              choices[next]?.focus();
+            }
+            if (event.key === "Tab") setOpen(false);
+          }}
+        >
           {props.children}
         </div>
       </Show>
@@ -237,6 +312,27 @@ export function Menu(props: { label: string; trigger: JSX.Element; children: JSX
 export function MenuItem(props: { onClick: () => void; children: JSX.Element }) {
   return (
     <button type="button" role="menuitem" {...sx(styles.menuItem)} onClick={props.onClick}>
+      {props.children}
+    </button>
+  );
+}
+
+export function MenuRadio(props: {
+  checked: boolean;
+  onSelect: () => void;
+  children: JSX.Element;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitemradio"
+      aria-checked={props.checked ? "true" : "false"}
+      {...sx(styles.menuItem)}
+      onClick={props.onSelect}
+    >
+      <span {...sx(styles.menuCheck)} aria-hidden="true">
+        {props.checked ? "✓" : ""}
+      </span>
       {props.children}
     </button>
   );
