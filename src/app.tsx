@@ -1,10 +1,14 @@
 import { createRouter } from "@solidjs/router";
+import { lazy } from "solid-js";
 import { Title } from "@solidjs/meta";
 import { SessionProvider } from "./client/session";
 import Dashboard from "./routes/dashboard";
 import SignIn from "./routes/signin";
 import WorldPage from "./routes/world";
 import WorldSettings from "./routes/world-settings";
+
+// Design lab for comparing art directions; lazy so its fonts stay out of the app bundle.
+const SheetLab = lazy(() => import("./routes/sheet-lab"));
 import { ThemeProvider, useTheme } from "./theme/theme-context";
 
 const Router = createRouter({
@@ -13,6 +17,7 @@ const Router = createRouter({
     { path: "/dashboard", component: Dashboard },
     { path: "/worlds/:id", component: WorldPage },
     { path: "/worlds/:id/settings", component: WorldSettings },
+    { path: "/lab/sheets", component: SheetLab },
   ],
 });
 
