@@ -26,6 +26,14 @@ describe("board boundary", () => {
     expect(decode(emptyBoard())._tag).toBe("Success");
     expect(decode(valid)._tag).toBe("Success");
   });
+  it("accepts legacy text without a font size and preserves explicit font sizes", () => {
+    expect(decode(valid)._tag).toBe("Success");
+    const sized = {
+      ...valid,
+      document: { ...valid.document, elements: [{ ...element, fontSize: 42.5 }] },
+    };
+    expect(Schema.decodeUnknownSync(BoardSnapshot)(sized)).toEqual(sized);
+  });
   it.each([
     { ...element, x: Infinity },
     { ...element, y: NaN },
@@ -34,6 +42,11 @@ describe("board boundary", () => {
     { ...element, type: "script" },
     { ...element, text: "x".repeat(2001) },
     { ...element, id: "../other-world" },
+    { ...element, fontSize: 0 },
+    { ...element, fontSize: 513 },
+    { ...element, fontSize: Infinity },
+    { ...element, fontSize: "large" },
+    { ...element, fontSize: null },
   ])("rejects malformed geometry, content, and IDs: %j", (invalid) => {
     expect(decode({ ...valid, document: { ...valid.document, elements: [invalid] } })._tag).toBe(
       "Failure",

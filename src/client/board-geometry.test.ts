@@ -1,9 +1,118 @@
 import { describe, expect, it } from "vitest";
 import * as Schema from "effect/Schema";
-import { BoardElement, screenToBoard } from "../domain/board";
-import { pinchCamera, resizeBounds, resizeHandles, touchPair } from "./board-geometry";
+import {
+  BoardElement,
+  MIN_BOARD_FONT_SIZE,
+  MAX_BOARD_FONT_SIZE,
+  screenToBoard,
+} from "../domain/board";
+import {
+  boardFontSize,
+  pinchCamera,
+  resizeBounds,
+  resizeElement,
+  resizeHandles,
+  touchPair,
+  wheelZoomFactor,
+} from "./board-geometry";
 
 const initial = { x: 100, y: 200, width: 200, height: 100 };
+const text: BoardElement = { ...initial, id: "text", type: "text", text: "Into the woods" };
+
+describe("precise wheel zoom", () => {
+  it("limits large wheel ticks to gentle changes and reverses direction symmetrically", () => {
+    expect(wheelZoomFactor(120, 0, 800)).toBeCloseTo(0.905, 3);
+    expect(wheelZoomFactor(1200, 0, 800)).toBe(wheelZoomFactor(120, 0, 800));
+    expect(wheelZoomFactor(120, 0, 800) * wheelZoomFactor(-120, 0, 800)).toBeCloseTo(1);
+  });
+  it("preserves fine trackpad deltas and normalizes line and page units", () => {
+    expect(wheelZoomFactor(1, 0, 800)).toBeCloseTo(0.999, 5);
+    expect(wheelZoomFactor(3, 1, 800)).toBe(wheelZoomFactor(48, 0, 800));
+    expect(wheelZoomFactor(1, 2, 800)).toBe(wheelZoomFactor(800, 0, 800));
+    expect(wheelZoomFactor(0, 0, 800)).toBe(1);
+  });
+});
+
+describe("text scaling", () => {
+  it.each(["nw", "ne", "sw", "se"] as const)(
+    "scales legacy text from the %s corner around its opposite corner",
+    (handle) => {
+      const result = resizeElement({
+        element: text,
+        handle,
+        delta: { x: handle.includes("w") ? -200 : 200, y: handle.includes("n") ? -100 : 100 },
+      });
+      expect(result.width).toBe(400);
+      expect(result.height).toBe(200);
+      expect(boardFontSize(result)).toBe(40);
+      expect(result.x + (handle.includes("w") ? result.width : 0)).toBe(
+        text.x + (handle.includes("w") ? text.width : 0),
+      );
+      expect(result.y + (handle.includes("n") ? result.height : 0)).toBe(
+        text.y + (handle.includes("n") ? text.height : 0),
+      );
+      expect(boardFontSize(text)).toBe(20);
+    },
+  );
+
+  it.each(["n", "s"] as const)(
+    "scales from the %s edge while preserving the horizontal center",
+    (handle) => {
+      const result = resizeElement({
+        element: text,
+        handle,
+        delta: { x: 800, y: handle === "n" ? -50 : 50 },
+      });
+      expect(boardFontSize(result)).toBe(30);
+      expect(result.width).toBe(300);
+      expect(result.height).toBe(150);
+      expect(result.x + result.width / 2).toBe(text.x + text.width / 2);
+    },
+  );
+
+  it.each(["w", "e"] as const)(
+    "changes wrapping width from %s without scaling the letters",
+    (handle) => {
+      const element = { ...text, fontSize: 36 };
+      const result = resizeElement({ element, handle, delta: { x: 80, y: 40 } });
+      expect(boardFontSize(result)).toBe(36);
+      expect(result.height).toBe(element.height);
+      expect(result.width).toBe(handle === "w" ? 120 : 280);
+    },
+  );
+
+  it("scales repeatedly from the saved font size and halts the whole card at font limits", () => {
+    const larger = resizeElement({ element: text, handle: "se", delta: { x: 100, y: 50 } });
+    const smaller = resizeElement({ element: larger, handle: "se", delta: { x: -100, y: -50 } });
+    expect(boardFontSize(smaller)).toBe(20);
+    expect(smaller.width).toBe(text.width);
+    for (const [delta, fontSize] of [
+      [-100000, MIN_BOARD_FONT_SIZE],
+      [100000, MAX_BOARD_FONT_SIZE],
+    ] as const) {
+      const result = resizeElement({ element: text, handle: "se", delta: { x: delta, y: delta } });
+      expect(boardFontSize(result)).toBe(fontSize);
+      expect(result.width / text.width).toBeCloseTo(fontSize / 20);
+      expect(result.height / text.height).toBeCloseTo(fontSize / 20);
+    }
+  });
+
+  it("keeps every text handle publishable at coordinate, dimension, and font limits", () => {
+    const decode = Schema.decodeUnknownResult(BoardElement);
+    for (const x of [-100000, 0, 100000])
+      for (const width of [24, 217.3, 8000])
+        for (const fontSize of [8, 23.7, 512])
+          for (const handle of resizeHandles)
+            for (const delta of [-500000, 500000]) {
+              const result = resizeElement({
+                element: { ...text, x, y: x, width, fontSize },
+                handle: handle.id,
+                delta: { x: delta, y: delta },
+              });
+              expect(decode(result)._tag).toBe("Success");
+            }
+  });
+});
 
 describe("direct board resizing", () => {
   it.each([

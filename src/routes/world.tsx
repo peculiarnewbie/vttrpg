@@ -13,11 +13,13 @@ import { MoodBoard } from "../components/mood-board";
 import { boardStyles as b } from "../components/board.stylex";
 import { emptyBoard, type BoardSnapshot } from "../domain/board";
 import { loadWorldPanels, saveWorldPanels } from "../client/world-panels";
+import { loadLiveCursors, saveLiveCursors } from "../client/live-cursors";
 import { styles } from "../components/styles.stylex";
 import { Badge, Button, ErrorBanner, Spinner, TopBar } from "../components/ui";
 import type {
   Character,
   ChatMessage,
+  LiveCursor,
   NoteSummary,
   PresenceMember,
   SaveCharacterInput,
@@ -44,10 +46,21 @@ export default function WorldPage() {
 
   const [board, setBoard] = createSignal<BoardSnapshot>(emptyBoard());
   const [panels, setPanels] = createSignal(loadWorldPanels(params.id));
+  const [unreadChat, setUnreadChat] = createSignal(0);
+  const [cursorsEnabled, setCursorsEnabled] = createSignal(loadLiveCursors());
+  const [cursors, setCursors] = createSignal<LiveCursor[]>([]);
+  const toggleCursors = () => {
+    const enabled = !cursorsEnabled();
+    setCursorsEnabled(enabled);
+    saveLiveCursors(enabled);
+    setCursors([]);
+    controller?.send({ type: "cursors.subscribe", enabled });
+  };
   const togglePanel = (panel: "chat" | "tools") => {
     const next = { ...panels(), [panel]: !panels()[panel] };
     if (window.innerWidth <= 700 && next[panel]) next[panel === "chat" ? "tools" : "chat"] = false;
     setPanels(next);
+    if (next.chat) setUnreadChat(0);
     saveWorldPanels(params.id, next);
   };
   const acceptBoard = (next: BoardSnapshot) =>
@@ -67,6 +80,19 @@ export default function WorldPage() {
   const [status, setStatus] = createSignal<RealtimeStatus>("connecting");
 
   let controller: RealtimeController | undefined;
+
+  onSettled(() => {
+    const narrow = window.matchMedia("(max-width: 700px)");
+    const resizePanels = () => {
+      if (narrow.matches && panels().chat && panels().tools) {
+        const next = { ...panels(), tools: false };
+        setPanels(next);
+        saveWorldPanels(params.id, next);
+      }
+    };
+    narrow.addEventListener("change", resizePanels);
+    onCleanup(() => narrow.removeEventListener("change", resizePanels));
+  });
 
   onSettled(() => {
     void (async () => {
@@ -93,13 +119,34 @@ export default function WorldPage() {
         return;
       }
       controller = connectWorld(params.id, {
-        onStatus: setStatus,
+        onStatus: (next) => {
+          setStatus(next);
+          setCursors([]);
+          if (next === "open")
+            controller?.send({ type: "cursors.subscribe", enabled: cursorsEnabled() });
+        },
         onFrame: (frame) => {
           switch (frame.type) {
+            case "cursor":
+              if (cursorsEnabled()) {
+                setCursors((previous) =>
+                  frame.cursor.position
+                    ? upsert(previous, frame.cursor)
+                    : previous.filter((cursor) => cursor.id !== frame.cursor.id),
+                );
+              }
+              break;
             case "board":
               acceptBoard(frame.board);
               break;
             case "message":
+              if (
+                messages().some((message) => message.id === frame.message.id) ||
+                activeRolls().some((message) => message.id === frame.message.id)
+              )
+                break;
+              if (!panels().chat && frame.message.authorMemberId !== boot()?.member.id)
+                setUnreadChat((count) => count + 1);
               if (frame.message.kind === "roll" && frame.message.roll) {
                 setActiveRolls((prev) => [...prev, frame.message]);
               } else {
@@ -241,20 +288,11 @@ export default function WorldPage() {
                 <button
                   type="button"
                   {...sx(styles.button, styles.buttonSmall)}
-                  aria-expanded={panels().chat ? "true" : "false"}
-                  aria-controls="world-chat"
-                  onClick={() => togglePanel("chat")}
+                  aria-pressed={cursorsEnabled() ? "true" : "false"}
+                  title="Share your pointer and see other players’ pointers"
+                  onClick={toggleCursors}
                 >
-                  {panels().chat ? "Hide chat" : "Show chat"}
-                </button>
-                <button
-                  type="button"
-                  {...sx(styles.button, styles.buttonSmall)}
-                  aria-expanded={panels().tools ? "true" : "false"}
-                  aria-controls="world-tools"
-                  onClick={() => togglePanel("tools")}
-                >
-                  {panels().tools ? "Hide tools" : "Show tools"}
+                  Live cursors: {cursorsEnabled() ? "On" : "Off"}
                 </button>
                 <div {...sx(styles.rowWrap)}>
                   <For each={presence()}>
@@ -276,12 +314,59 @@ export default function WorldPage() {
                   isDm={isDm()}
                   snapshot={board()}
                   onPublished={acceptBoard}
+                  cursors={cursors()}
+                  cursorsEnabled={cursorsEnabled() && status() === "open"}
+                  onCursor={(position) => controller?.send({ type: "cursor", position })}
                 />
+                <Show when={!panels().chat}>
+                  <button
+                    type="button"
+                    {...sx(b.panelTab, b.leftTab)}
+                    aria-label={`Open chat${unreadChat() ? `, ${unreadChat()} unread messages` : ""}`}
+                    aria-expanded="false"
+                    aria-controls="world-chat"
+                    onClick={() => togglePanel("chat")}
+                  >
+                    Chat
+                    <Show when={unreadChat() > 0}>
+                      <span {...sx(b.unread)} aria-live="polite">
+                        {unreadChat()}
+                      </span>
+                    </Show>
+                    <span aria-hidden="true">›</span>
+                  </button>
+                </Show>
+                <Show when={!panels().tools}>
+                  <button
+                    type="button"
+                    {...sx(b.panelTab, b.rightTab)}
+                    aria-label="Open tools"
+                    aria-expanded="false"
+                    aria-controls="world-tools"
+                    onClick={() => togglePanel("tools")}
+                  >
+                    <span aria-hidden="true">‹</span> Tools
+                  </button>
+                </Show>
                 <section
                   id="world-chat"
                   aria-label="World chat"
                   {...sx(b.panel, b.left, !panels().chat && b.hidden)}
                 >
+                  <div {...sx(b.panelHeader)}>
+                    <span>Chat</span>
+                    <button
+                      type="button"
+                      {...sx(b.control)}
+                      aria-label="Collapse chat"
+                      title="Collapse chat"
+                      aria-expanded="true"
+                      aria-controls="world-chat"
+                      onClick={() => togglePanel("chat")}
+                    >
+                      <span aria-hidden="true">‹</span>
+                    </button>
+                  </div>
                   <Chat
                     worldId={params.id}
                     overlay
@@ -300,6 +385,20 @@ export default function WorldPage() {
                   aria-label="World tools"
                   {...sx(b.panel, b.right, !panels().tools && b.hidden)}
                 >
+                  <div {...sx(b.panelHeader)}>
+                    <span>Tools</span>
+                    <button
+                      type="button"
+                      {...sx(b.control)}
+                      aria-label="Collapse tools"
+                      title="Collapse tools"
+                      aria-expanded="true"
+                      aria-controls="world-tools"
+                      onClick={() => togglePanel("tools")}
+                    >
+                      <span aria-hidden="true">›</span>
+                    </button>
+                  </div>
                   <div {...sx(styles.menuColumn, b.tools)}>
                     <div {...sx(styles.tabBar)}>
                       <For each={tabs()}>

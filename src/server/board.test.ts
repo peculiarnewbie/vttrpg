@@ -5,6 +5,7 @@ import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
 import { BoardSnapshot, emptyBoard } from "../domain/board";
+import { ServerFrame, type ClientFrame } from "../domain/schemas";
 
 let mf: Miniflare;
 let cookie = "";
@@ -89,6 +90,90 @@ afterAll(async () => {
 });
 
 describe("published board through real Worker, D1, R2, and SQLite DO", () => {
+  it("relays authenticated cursors, respects toggles, validates coordinates, and clears disconnected tabs", async () => {
+    const connect = async (authCookie: string) => {
+      const response = await mf.dispatchFetch(`https://tabletop.test/api/worlds/${worldId}/ws`, {
+        headers: { cookie: authCookie, Upgrade: "websocket" },
+      });
+      expect(response.status).toBe(101);
+      const socket = response.webSocket;
+      if (!socket) throw new Error("Missing websocket");
+      const frames: ServerFrame[] = [];
+      socket.addEventListener("message", (event) =>
+        frames.push(Schema.decodeUnknownSync(ServerFrame)(JSON.parse(String(event.data)))),
+      );
+      socket.accept();
+      await expect.poll(() => frames.some((frame) => frame.type === "board")).toBe(true);
+      const send = (frame: ClientFrame) => socket.send(JSON.stringify(frame));
+      // A reply on the same ordered socket is a barrier for preceding messages.
+      const sync = async () => {
+        const count = frames.filter((frame) => frame.type === "presence").length;
+        send({ type: "note.saved", noteId: "cursor-test-barrier" });
+        await expect
+          .poll(() => frames.filter((frame) => frame.type === "presence").length)
+          .toBeGreaterThan(count);
+      };
+      return { socket, frames, send, sync };
+    };
+    const dm = await connect(cookie);
+    const player = await connect(playerCookie);
+    const secondTab = await connect(playerCookie);
+    try {
+      for (const client of [dm, player, secondTab]) {
+        client.send({ type: "cursors.subscribe", enabled: true });
+        await client.sync();
+      }
+      player.socket.send(
+        JSON.stringify({
+          type: "cursor",
+          memberId: "spoofed",
+          displayName: "Imposter",
+          position: { x: 20, y: 40 },
+        }),
+      );
+      await expect.poll(() => dm.frames.filter((frame) => frame.type === "cursor").length).toBe(1);
+      const first = dm.frames.find((frame) => frame.type === "cursor");
+      if (first?.type !== "cursor") throw new Error("Missing cursor");
+      expect(first.cursor).toMatchObject({ displayName: "Player", position: { x: 20, y: 40 } });
+      expect(first.cursor.memberId).not.toBe("spoofed");
+      expect(player.frames.some((frame) => frame.type === "cursor")).toBe(false);
+
+      secondTab.send({ type: "cursor", position: { x: 70, y: 80 } });
+      await expect.poll(() => dm.frames.filter((frame) => frame.type === "cursor").length).toBe(2);
+      const second = dm.frames.filter((frame) => frame.type === "cursor").at(-1);
+      expect(second?.cursor.id).not.toBe(first.cursor.id);
+
+      player.send({ type: "cursors.subscribe", enabled: false });
+      await expect
+        .poll(() => dm.frames.filter((frame) => frame.type === "cursor").at(-1)?.cursor)
+        .toEqual({ ...first.cursor, position: null });
+      const count = dm.frames.filter((frame) => frame.type === "cursor").length;
+      player.send({ type: "cursor", position: { x: 99, y: 99 } });
+      await player.sync();
+      expect(dm.frames.filter((frame) => frame.type === "cursor")).toHaveLength(count);
+
+      secondTab.socket.send(JSON.stringify({ type: "cursor", position: { x: 100001, y: 0 } }));
+      await expect.poll(() => secondTab.frames.some((frame) => frame.type === "error")).toBe(true);
+      expect(dm.frames.filter((frame) => frame.type === "cursor")).toHaveLength(count);
+
+      secondTab.socket.close();
+      await expect
+        .poll(() => dm.frames.filter((frame) => frame.type === "cursor").at(-1)?.cursor)
+        .toEqual({ ...second?.cursor, position: null });
+
+      dm.send({ type: "cursors.subscribe", enabled: false });
+      await dm.sync();
+      const disabledCount = dm.frames.filter((frame) => frame.type === "cursor").length;
+      player.send({ type: "cursors.subscribe", enabled: true });
+      player.send({ type: "cursor", position: { x: 50, y: 60 } });
+      await player.sync();
+      expect(dm.frames.filter((frame) => frame.type === "cursor")).toHaveLength(disabledCount);
+    } finally {
+      for (const client of [dm, player, secondTab]) {
+        if (client.socket.readyState === 1) client.socket.close();
+      }
+    }
+  });
   it("starts empty and denies anonymous access and player writes", async () => {
     expect(await (await call(`/worlds/${worldId}/board`)).json()).toEqual(emptyBoard());
     expect((await call(`/worlds/${worldId}/board`, { cookie: "" })).status).toBe(401);
@@ -138,6 +223,33 @@ describe("published board through real Worker, D1, R2, and SQLite DO", () => {
     ).toBe(400);
     expect(await (await call(`/worlds/${worldId}/board`)).json()).toEqual({
       ...board,
+      revision: 1,
+    });
+  });
+  it("persists scaled text and sends the saved font size to players", async () => {
+    const scaled = {
+      ...board,
+      document: {
+        ...board.document,
+        elements: [{ ...board.document.elements[0], width: 480, height: 320, fontSize: 40 }],
+      },
+    };
+    expect((await call(`/worlds/${worldId}/board`, { method: "PUT", body: scaled })).status).toBe(
+      200,
+    );
+    expect(await (await call(`/worlds/${worldId}/board`, { cookie: playerCookie })).json()).toEqual(
+      { ...scaled, revision: 1 },
+    );
+    const invalid = {
+      ...scaled,
+      revision: 1,
+      document: { ...scaled.document, elements: [{ ...scaled.document.elements[0], fontSize: 0 }] },
+    };
+    expect((await call(`/worlds/${worldId}/board`, { method: "PUT", body: invalid })).status).toBe(
+      400,
+    );
+    expect(await (await call(`/worlds/${worldId}/board`)).json()).toEqual({
+      ...scaled,
       revision: 1,
     });
   });

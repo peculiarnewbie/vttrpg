@@ -19,6 +19,7 @@ import {
   NoteSummary,
   RollResult,
   SheetTemplate,
+  type CursorPosition,
   type MemberRole,
   type PresenceMember,
   type SaveCharacterInput,
@@ -38,6 +39,9 @@ type SocketAttachment = {
   memberId: string;
   name: string;
   role: MemberRole;
+  cursorId?: string;
+  cursorsEnabled?: boolean;
+  lastCursorAt?: number;
 };
 
 type TemplateRow = {
@@ -734,6 +738,22 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     this.broadcast({ type: "message", message }, (session) => this.visibleTo(message, session));
   }
 
+  private broadcastCursor(attachment: SocketAttachment, position: CursorPosition | null) {
+    if (!attachment.cursorId) return;
+    this.broadcast(
+      {
+        type: "cursor",
+        cursor: {
+          id: attachment.cursorId,
+          memberId: attachment.memberId,
+          displayName: attachment.name,
+          position,
+        },
+      },
+      (session) => !!session.cursorsEnabled && session.memberId !== attachment.memberId,
+    );
+  }
+
   // -------------------------------------------------------------------------
   // Fetch: websockets + internal JSON API
   // -------------------------------------------------------------------------
@@ -999,6 +1019,24 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     if (!attachment) return;
     const frame = decoded.success;
 
+    if (frame.type === "cursors.subscribe") {
+      attachment.cursorId ??= newId("cursor");
+      attachment.cursorsEnabled = frame.enabled;
+      socket.serializeAttachment(attachment);
+      if (!frame.enabled) this.broadcastCursor(attachment, null);
+      return;
+    }
+
+    if (frame.type === "cursor") {
+      if (!attachment.cursorsEnabled) return;
+      const now = Date.now();
+      if (frame.position && now - (attachment.lastCursorAt ?? 0) < 30) return;
+      attachment.lastCursorAt = frame.position ? now : 0;
+      socket.serializeAttachment(attachment);
+      this.broadcastCursor(attachment, frame.position);
+      return;
+    }
+
     if (frame.type === "ping") {
       return;
     }
@@ -1072,12 +1110,17 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
   }
 
   async webSocketClose(socket: WebSocket, code: number, reason: string): Promise<void> {
+    const attachment = socket.deserializeAttachment() as SocketAttachment | null;
+    socket.serializeAttachment(null);
+    if (attachment) this.broadcastCursor(attachment, null);
     socket.close(code, reason);
     this.broadcast({ type: "presence", members: this.presence() });
   }
 
   async webSocketError(socket: WebSocket): Promise<void> {
+    const attachment = socket.deserializeAttachment() as SocketAttachment | null;
     socket.serializeAttachment(null);
+    if (attachment) this.broadcastCursor(attachment, null);
     this.broadcast({ type: "presence", members: this.presence() });
   }
 }

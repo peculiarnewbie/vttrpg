@@ -30,13 +30,17 @@ pnpm test
 ## Deploy
 
 ```bash
-pnpm deploy          # build and deploy production
+pnpm run deploy      # build and deploy production
 pnpm deploy:preview  # deploy the already-built shared preview environment
 ```
 
 Production uses the existing `ttrpg` Worker, D1 database, and R2 bucket. Preview
 deploys as the isolated `ttrpg-preview` Worker with its own D1 database, R2
 bucket, and Durable Object namespace.
+
+Production is served at <https://ttrpg.peculiarnewbie.com>. Its custom domain is
+declared in `wrangler.jsonc`; Cloudflare manages the DNS record and HTTPS
+certificate when deploying. The preview environment has no custom-domain route.
 
 For Cloudflare Workers Builds, connect this repository to both Workers. This is
 Cloudflare's supported pattern for Wrangler environments and prevents a preview
@@ -96,9 +100,10 @@ On narrow screens, opening one panel closes the other.
 
 DMs choose **Edit board**, upload a **Background**, and use **Add image** or
 **Add text** for movable elements. Drag an element to move it; drag its corner or
-edge handles to resize it. Image corners preserve their aspect ratio (hold Shift
-to resize freely); Shift preserves the ratio for text cards. Touch handles keep
-large hit targets at every zoom level. Selection never opens an input panel.
+edge handles to resize it. Text corners and top/bottom handles scale the lettering
+and card together; left/right handles change its wrapping width at the same font
+size. Image corners preserve their aspect ratio (hold Shift to resize freely).
+Touch handles keep large hit targets at every zoom level. Selection never opens an input panel.
 Double-click or double-tap a text card, press Enter, or choose **Edit text** to type
 on the card itself. Click outside or press Ctrl/Cmd+Enter to finish; Escape cancels.
 

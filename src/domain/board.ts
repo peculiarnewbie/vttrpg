@@ -2,6 +2,9 @@ import * as Schema from "effect/Schema";
 
 export const MAX_BOARD_ELEMENTS = 100;
 export const MAX_BOARD_IMAGE_BYTES = 5 * 1024 * 1024;
+export const DEFAULT_BOARD_FONT_SIZE = 20;
+export const MIN_BOARD_FONT_SIZE = 8;
+export const MAX_BOARD_FONT_SIZE = 512;
 export const BoardAssetId = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]{1,80}$/));
 const Coordinate = Schema.Finite.check(Schema.isBetween({ minimum: -100000, maximum: 100000 }));
 const Dimension = Schema.Finite.check(Schema.isBetween({ minimum: 24, maximum: 8000 }));
@@ -23,6 +26,12 @@ export const BoardElement = Schema.Union([
     ...geometry,
     type: Schema.Literal("text"),
     text: Schema.String.check(Schema.isMaxLength(2000)),
+    // Older snapshots omit this field and render at DEFAULT_BOARD_FONT_SIZE.
+    fontSize: Schema.optionalKey(
+      Schema.Finite.check(
+        Schema.isBetween({ minimum: MIN_BOARD_FONT_SIZE, maximum: MAX_BOARD_FONT_SIZE }),
+      ),
+    ),
   }),
 ]);
 export type BoardElement = typeof BoardElement.Type;
