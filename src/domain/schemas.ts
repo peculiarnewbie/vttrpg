@@ -245,11 +245,26 @@ export const PresenceMember = Schema.Struct({
 });
 export type PresenceMember = Infer<typeof PresenceMember>;
 
+export const CursorPosition = Schema.Struct({
+  x: Schema.Finite.check(Schema.isBetween({ minimum: -100000, maximum: 100000 })),
+  y: Schema.Finite.check(Schema.isBetween({ minimum: -100000, maximum: 100000 })),
+});
+export type CursorPosition = Infer<typeof CursorPosition>;
+export const LiveCursor = Schema.Struct({
+  id: Schema.String,
+  memberId: Schema.String,
+  displayName: Schema.String,
+  position: Schema.NullOr(CursorPosition),
+});
+export type LiveCursor = Infer<typeof LiveCursor>;
+
 // ---------------------------------------------------------------------------
 // Realtime frames
 // ---------------------------------------------------------------------------
 
 export const ClientFrame = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("cursors.subscribe"), enabled: Schema.Boolean }),
+  Schema.Struct({ type: Schema.Literal("cursor"), position: Schema.NullOr(CursorPosition) }),
   Schema.Struct({ type: Schema.Literals(["ping"]) }),
   Schema.Struct({
     type: Schema.Literals(["chat"]),
@@ -285,6 +300,7 @@ export const ClientFrame = Schema.Union([
 export type ClientFrame = Infer<typeof ClientFrame>;
 
 export const ServerFrame = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("cursor"), cursor: LiveCursor }),
   Schema.Struct({ type: Schema.Literal("board"), board: BoardSnapshot }),
   Schema.Struct({
     type: Schema.Literals(["hello"]),

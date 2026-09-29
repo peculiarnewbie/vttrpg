@@ -6,6 +6,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "preview_urls": false,
+  "routes": [{ "pattern": "ttrpg.peculiarnewbie.com", "custom_domain": true }],
   "assets": {
     "directory": "./dist/client",
     "binding": "ASSETS",
@@ -34,6 +35,7 @@
   "env": {
     "preview": {
       "name": "ttrpg-preview",
+      "routes": [],
       "d1_databases": [
         {
           "binding": "DB",

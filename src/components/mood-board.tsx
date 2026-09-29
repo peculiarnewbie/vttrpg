@@ -4,11 +4,12 @@ import { api } from "../client/api";
 import { prepareBoardImage } from "../client/board-image";
 import {
   clampCoordinate,
+  boardFontSize,
   pinchCamera,
-  resizeBounds,
+  resizeElement,
   resizeHandles,
   touchPair,
-  type BoardBounds,
+  wheelZoomFactor,
   type Point,
   type ResizeHandle,
 } from "../client/board-geometry";
@@ -22,6 +23,8 @@ import {
   type BoardElement,
   type BoardSnapshot,
 } from "../domain/board";
+import type { CursorPosition, LiveCursor } from "../domain/schemas";
+import { createCursorPublisher, cursorColor } from "../client/live-cursors";
 import { sx } from "../theme/sx";
 import { boardStyles as b } from "./board.stylex";
 import { styles } from "./styles.stylex";
@@ -35,8 +38,8 @@ type SingleGesture = {
   threshold: number;
 } & (
   | { type: "pan" }
-  | { type: "move"; element: BoardElement; bounds: BoardBounds }
-  | { type: "resize"; element: BoardElement; bounds: BoardBounds; handle: ResizeHandle }
+  | { type: "move"; element: BoardElement; next: BoardElement }
+  | { type: "resize"; element: BoardElement; next: BoardElement; handle: ResizeHandle }
 );
 type Gesture =
   | SingleGesture
@@ -51,6 +54,9 @@ export function MoodBoard(props: {
   isDm: boolean;
   snapshot: BoardSnapshot;
   onPublished: (board: BoardSnapshot) => void;
+  cursors: readonly LiveCursor[];
+  cursorsEnabled: boolean;
+  onCursor: (position: CursorPosition | null) => void;
 }) {
   const [document, setDocument] = createSignal<BoardDocument>(props.snapshot.document);
   const [revision, setRevision] = createSignal(props.snapshot.revision);
@@ -62,12 +68,26 @@ export function MoodBoard(props: {
   const [error, setError] = createSignal("");
   const [selected, setSelected] = createSignal<string | null>(null);
   const [camera, setCamera] = createSignal<BoardCamera>({ x: 0, y: 0, zoom: 1 });
+  const [pointer, setPointer] = createSignal<Point | null>(null);
+  const cursorPublisher = createCursorPublisher((position) => props.onCursor(position));
+  createEffect(
+    () => ({ point: pointer(), camera: camera(), enabled: props.cursorsEnabled }),
+    ({ point, camera, enabled }) => {
+      const position = point && enabled ? screenToBoard(point, camera) : null;
+      cursorPublisher.update(
+        position && {
+          x: clampCoordinate(position.x),
+          y: clampCoordinate(position.y),
+        },
+      );
+    },
+  );
   const [size, setSize] = createSignal({ width: 1000, height: 700 });
   const [past, setPast] = createSignal<BoardDocument[]>([]);
   const [future, setFuture] = createSignal<BoardDocument[]>([]);
   const [tool, setTool] = createSignal<"select" | "hand">("select");
   const [spaceHeld, setSpaceHeld] = createSignal(false);
-  const [preview, setPreview] = createSignal<BoardBounds | null>(null);
+  const [preview, setPreview] = createSignal<BoardElement | null>(null);
   const [textEdit, setTextEdit] = createSignal<{ id: string; initial: string } | null>(null);
   const pointers = new Map<number, Point>();
   let textSession: { id: string; initial: string } | undefined;
@@ -302,7 +322,7 @@ export function MoodBoard(props: {
   };
   const paintGesture = () => {
     raf = 0;
-    if (gesture?.type === "move" || gesture?.type === "resize") setPreview(gesture.bounds);
+    if (gesture?.type === "move" || gesture?.type === "resize") setPreview(gesture.next);
   };
   const localPoint = (event: PointerEvent): Point => {
     const rect = viewport.getBoundingClientRect();
@@ -364,12 +384,12 @@ export function MoodBoard(props: {
         ...common,
         type: "resize",
         element: selectedElement,
-        bounds: selectedElement,
+        next: selectedElement,
         handle: handle.id,
       };
     } else if (canEdit() && !navigating && element) {
       setSelected(element.id);
-      gesture = { ...common, type: "move", element, bounds: element };
+      gesture = { ...common, type: "move", element, next: element };
     } else {
       if (!navigating) setSelected(null);
       gesture = { ...common, type: "pan" };
@@ -398,13 +418,13 @@ export function MoodBoard(props: {
       return;
     }
     const delta = { x: dx / gesture.camera.zoom, y: dy / gesture.camera.zoom };
-    gesture.bounds =
+    gesture.next =
       gesture.type === "resize"
-        ? resizeBounds({
-            initial: gesture.element,
+        ? resizeElement({
+            element: gesture.element,
             handle: gesture.handle,
             delta,
-            keepRatio: gesture.element.type === "image" ? !event.shiftKey : event.shiftKey,
+            unlockImageRatio: event.shiftKey,
           })
         : {
             ...gesture.element,
@@ -442,14 +462,14 @@ export function MoodBoard(props: {
       }
     } else if (ended.type === "move" || ended.type === "resize") {
       if (ended.moved) {
-        const next = ended.bounds;
+        const next = ended.next;
         if (
           next.x !== ended.element.x ||
           next.y !== ended.element.y ||
           next.width !== ended.element.width ||
           next.height !== ended.element.height
         )
-          updateElement({ ...ended.element, ...next });
+          updateElement(next);
       } else if (ended.type === "move") {
         const point = localPoint(event);
         if (
@@ -483,7 +503,7 @@ export function MoodBoard(props: {
         zoomAt(
           prev,
           { x: event.clientX - rect.left, y: event.clientY - rect.top },
-          prev.zoom * Math.exp(-dy * 0.01),
+          prev.zoom * wheelZoomFactor(event.deltaY, event.deltaMode, size().height),
         ),
       );
     } else {
@@ -583,6 +603,8 @@ export function MoodBoard(props: {
       if (event.code === "Space") setSpaceHeld(false);
     };
     const blur = () => {
+      setPointer(null);
+      cursorPublisher.clear();
       setSpaceHeld(false);
       cancelGesture();
     };
@@ -599,6 +621,7 @@ export function MoodBoard(props: {
   });
   onCleanup(() => {
     disposed = true;
+    cursorPublisher.clear();
     cancelAnimationFrame(raf);
   });
 
@@ -632,9 +655,19 @@ export function MoodBoard(props: {
               : "default",
         }}
         onPointerDown={start}
-        onPointerMove={move}
-        onPointerUp={(event) => finish(event)}
-        onPointerCancel={(event) => finish(event, true)}
+        onPointerMove={(event) => {
+          if (event.isPrimary) setPointer(localPoint(event));
+          move(event);
+        }}
+        onPointerLeave={() => setPointer(null)}
+        onPointerUp={(event) => {
+          finish(event);
+          if (event.pointerType === "touch") setPointer(null);
+        }}
+        onPointerCancel={(event) => {
+          setPointer(null);
+          finish(event, true);
+        }}
         onLostPointerCapture={(event) => finish(event, true)}
         onKeyDown={keyDown}
       >
@@ -679,7 +712,9 @@ export function MoodBoard(props: {
                       decoding="async"
                     />
                   ) : (
-                    <div {...sx(b.text)}>{item.text}</div>
+                    <div {...sx(b.text)} style={{ "font-size": `${boardFontSize(bounds())}px` }}>
+                      {item.text}
+                    </div>
                   )}
                 </div>
               );
@@ -706,6 +741,7 @@ export function MoodBoard(props: {
                     transform: `translate3d(${item().x}px, ${item().y}px, 0)`,
                     width: `${item().width}px`,
                     height: `${item().height}px`,
+                    "font-size": `${boardFontSize(item())}px`,
                   }}
                   onInput={(event) => {
                     textDraft = event.currentTarget.value;
@@ -728,6 +764,41 @@ export function MoodBoard(props: {
             }}
           </Show>
         </div>
+        <For each={props.cursorsEnabled ? props.cursors : []}>
+          {(cursor) => (
+            <Show when={cursor.position}>
+              {(position) => (
+                <div
+                  {...sx(b.remoteCursor)}
+                  aria-hidden="true"
+                  style={{
+                    transform: `translate3d(${position().x * camera().zoom + camera().x}px, ${position().y * camera().zoom + camera().y}px, 0)`,
+                  }}
+                >
+                  <svg
+                    width="22"
+                    height="27"
+                    viewBox="0 0 22 27"
+                    fill={cursorColor(cursor.memberId)}
+                  >
+                    <path
+                      d="M2 2 L19 16 L11 17 L7 24 Z"
+                      stroke="white"
+                      stroke-width="2"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                  <span
+                    {...sx(b.cursorName)}
+                    style={{ "border-left-color": cursorColor(cursor.memberId) }}
+                  >
+                    {cursor.displayName}
+                  </span>
+                </div>
+              )}
+            </Show>
+          )}
+        </For>
         <Show when={canEdit() && !textEdit() && selectionBounds()}>
           {(bounds) => (
             <div
@@ -767,10 +838,9 @@ export function MoodBoard(props: {
                         event.preventDefault();
                         event.stopPropagation();
                         const step = event.shiftKey ? 10 : 1;
-                        updateElement({
-                          ...item,
-                          ...resizeBounds({
-                            initial: item,
+                        updateElement(
+                          resizeElement({
+                            element: item,
                             handle: handle.id,
                             delta: {
                               x:
@@ -786,9 +856,8 @@ export function MoodBoard(props: {
                                     ? step
                                     : 0,
                             },
-                            keepRatio: item.type === "image",
                           }),
-                        });
+                        );
                       }}
                     >
                       <span {...sx(b.handleDot)} />
