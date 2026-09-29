@@ -1,3 +1,4 @@
+import { canSeeNote } from "../domain/note-permissions";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
@@ -133,13 +134,6 @@ const canSeeMessage = (message: ChatMessage, member: WorldMember) => {
   }
   if (message.visibility === "public") return true;
   if (message.visibility === "dm") return member.role === "dm";
-  return false;
-};
-
-const canSeeNote = (note: NoteSummary, member: WorldMember) => {
-  if (note.ownerMemberId === member.id) return true;
-  if (note.visibility === "public") return true;
-  if (note.visibility === "dm") return member.role === "dm";
   return false;
 };
 
