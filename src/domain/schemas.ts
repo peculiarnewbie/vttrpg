@@ -139,6 +139,7 @@ export const Character = Schema.Struct({
   templateId: Schema.String,
   values: Schema.Record(Schema.String, CharacterValue),
   tickers: Schema.Record(Schema.String, Schema.Int),
+  tickerMax: Schema.optional(Schema.Record(Schema.String, Schema.Int)),
   avatarKey: Schema.optional(Schema.String),
   createdAt: Schema.String,
   updatedAt: Schema.String,
@@ -294,6 +295,7 @@ export const ClientFrame = Schema.Union([
     characterId: Schema.String,
     tickerId: Schema.String,
     value: Schema.Int,
+    requestId: Schema.optional(Schema.String),
   }),
   Schema.Struct({ type: Schema.Literals(["note.saved"]), noteId: Schema.String }),
 ]);
@@ -309,7 +311,11 @@ export const ServerFrame = Schema.Union([
     members: Schema.Array(PresenceMember),
   }),
   Schema.Struct({ type: Schema.Literals(["message"]), message: ChatMessage }),
-  Schema.Struct({ type: Schema.Literals(["character"]), character: Character }),
+  Schema.Struct({
+    type: Schema.Literals(["character"]),
+    character: Character,
+    requestId: Schema.optional(Schema.String),
+  }),
   Schema.Struct({ type: Schema.Literals(["presence"]), members: Schema.Array(PresenceMember) }),
   Schema.Struct({ type: Schema.Literals(["error"]), message: Schema.String }),
 ]);
@@ -371,6 +377,7 @@ export const SaveCharacterInput = Schema.Struct({
   templateId: Schema.String,
   memberId: Schema.optional(Schema.String),
   values: Schema.Record(Schema.String, CharacterValue),
+  tickerMax: Schema.optional(Schema.Record(Schema.String, Schema.Int)),
 });
 export type SaveCharacterInput = Infer<typeof SaveCharacterInput>;
 

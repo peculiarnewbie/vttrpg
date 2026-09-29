@@ -1,3 +1,4 @@
+import { createTickerUpdates } from "../client/ticker-updates";
 import { useNavigate, useParams } from "@solidjs/router";
 import { For, Show, createSignal, onCleanup, onSettled } from "solid-js";
 import { api, ApiError, type WorldBootstrap } from "../client/api";
@@ -80,6 +81,10 @@ export default function WorldPage() {
   const [status, setStatus] = createSignal<RealtimeStatus>("connecting");
 
   let controller: RealtimeController | undefined;
+  const tickerUpdates = createTickerUpdates();
+  const resetTickers = () => {
+    for (const character of tickerUpdates.reset()) setCharacters((prev) => upsert(prev, character));
+  };
 
   onSettled(() => {
     const narrow = window.matchMedia("(max-width: 700px)");
@@ -121,6 +126,7 @@ export default function WorldPage() {
       controller = connectWorld(params.id, {
         onStatus: (next) => {
           setStatus(next);
+          if (next !== "open") resetTickers();
           setCursors([]);
           if (next === "open")
             controller?.send({ type: "cursors.subscribe", enabled: cursorsEnabled() });
@@ -154,13 +160,16 @@ export default function WorldPage() {
               }
               break;
             case "character":
-              setCharacters((prev) => upsert(prev, frame.character));
+              setCharacters((prev) =>
+                upsert(prev, tickerUpdates.reconcile(frame.character, frame.requestId)),
+              );
               break;
             case "presence":
             case "hello":
               setPresence([...frame.members]);
               break;
             case "error":
+              resetTickers();
               if (frame.message) setError(frame.message);
               break;
           }
@@ -211,7 +220,22 @@ export default function WorldPage() {
   };
 
   const ticker = (characterId: string, tickerId: string, value: number) => {
-    controller?.send({ type: "ticker.set", characterId, tickerId, value });
+    if (status() !== "open" || !controller) return;
+    const character = characters().find((item) => item.id === characterId);
+    const template =
+      templates().find((item) => item.id === character?.templateId) ?? templates()[0];
+    const definition = template?.tickers.find((item) => item.id === tickerId);
+    if (!character || !definition) return;
+    const requestId = crypto.randomUUID();
+    const updated = tickerUpdates.stage(character, definition, value, requestId);
+    setCharacters((prev) => upsert(prev, updated));
+    controller.send({
+      type: "ticker.set",
+      characterId,
+      tickerId,
+      value: updated.tickers[tickerId],
+      requestId,
+    });
   };
 
   const saveCharacter = async (input: SaveCharacterInput) => {

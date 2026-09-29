@@ -607,7 +607,7 @@ const SaveCharacter = HttpRouter.route(
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             ...input,
-            memberId: member.role === "dm" ? (input.memberId ?? member.id) : member.id,
+            memberId: input.memberId ?? member.id,
           }),
         },
         member,
@@ -622,7 +622,7 @@ const DeleteCharacter = HttpRouter.route(
   "/api/worlds/:id/characters/:characterId",
   route(
     Effect.gen(function* () {
-      const { member, stub } = yield* loadWorld();
+      const { member, stub } = yield* loadWorld(["dm"]);
       const params = yield* HttpRouter.params;
       const characterId = params.characterId;
       if (!characterId) return yield* Effect.fail(new NotFound({ message: "Character not found" }));

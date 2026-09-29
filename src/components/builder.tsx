@@ -447,8 +447,24 @@ export function BuilderPanel(props: {
                 <Input
                   type="number"
                   value={ticker.max}
-                  onInput={(value) => updateTicker(index(), { ...ticker, max: Number(value) })}
+                  onInput={(value) =>
+                    updateTicker(index(), {
+                      ...ticker,
+                      max: Number(value),
+                      defaultValue:
+                        ticker.defaultValue === ticker.max ? Number(value) : ticker.defaultValue,
+                    })
+                  }
                 />
+                <Field label="Start">
+                  <Input
+                    type="number"
+                    value={ticker.defaultValue}
+                    onInput={(value) =>
+                      updateTicker(index(), { ...ticker, defaultValue: Number(value) })
+                    }
+                  />
+                </Field>
                 <Button
                   small
                   variant="danger"

@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createSignal, onSettled } from "solid-js";
+import * as stylex from "@stylexjs/stylex";
 import { api } from "../client/api";
 import { computeStats } from "../domain/dice";
 import type {
@@ -11,6 +12,11 @@ import type {
 import { Badge, Button, EmptyState, Field, Input, Modal } from "./ui";
 import { styles } from "./styles.stylex";
 import { sx } from "../theme/sx";
+
+const sheetStyles = stylex.create({
+  longtext: { whiteSpace: "pre-wrap" },
+  tickerInput: { width: "7ch" },
+});
 
 const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
 
@@ -38,6 +44,10 @@ export function CharacterSheets(props: Props) {
     typeof localStorage !== "undefined" ? localStorage.getItem(selectionKey(props.worldId)) : null;
   const [selectedId, setSelectedId] = createSignal<string | null>(stored);
   const [view, setView] = createSignal<"sheet" | "list">(stored ? "sheet" : "list");
+  const [deleting, setDeleting] = createSignal<Character | null>(null);
+  const [deleteError, setDeleteError] = createSignal("");
+  const [deletingBusy, setDeletingBusy] = createSignal(false);
+  const [draftMax, setDraftMax] = createSignal<Record<string, number>>({});
   const [creating, setCreating] = createSignal(false);
   const [newName, setNewName] = createSignal("");
   const [newTemplateId, setNewTemplateId] = createSignal(props.templates[0]?.id ?? "");
@@ -79,6 +89,7 @@ export function CharacterSheets(props: Props) {
   const startEdit = (character: Character) => {
     setDraftName(character.name);
     setDraftValues({ ...character.values });
+    setDraftMax({ ...character.tickerMax });
     setEditing(true);
   };
 
@@ -89,6 +100,7 @@ export function CharacterSheets(props: Props) {
       templateId: character.templateId,
       memberId: character.memberId,
       values: draftValues(),
+      tickerMax: draftMax(),
     });
     setEditing(false);
   };
@@ -172,21 +184,47 @@ export function CharacterSheets(props: Props) {
                       <span {...sx(styles.label)}>{field.label}</span>
                       <Show
                         when={editing()}
-                        fallback={<div {...sx(styles.fieldValue)}>{String(value() || "—")}</div>}
+                        fallback={
+                          <div
+                            {...sx(
+                              styles.fieldValue,
+                              field.kind === "longtext" && sheetStyles.longtext,
+                            )}
+                          >
+                            {String(value() === "" ? "—" : value())}
+                          </div>
+                        }
                       >
-                        <input
-                          {...sx(styles.input)}
-                          type={field.kind === "number" ? "number" : "text"}
-                          value={value()}
-                          disabled={readOnly}
-                          onInput={(event) => {
-                            const raw = event.currentTarget.value;
-                            setDraftValues((prev) => ({
-                              ...prev,
-                              [field.id]: field.kind === "number" ? Number(raw) : raw,
-                            }));
-                          }}
-                        />
+                        <Show
+                          when={field.kind === "longtext"}
+                          fallback={
+                            <input
+                              {...sx(styles.input)}
+                              type={field.kind === "number" ? "number" : "text"}
+                              value={value()}
+                              disabled={readOnly}
+                              onInput={(event) => {
+                                const raw = event.currentTarget.value;
+                                setDraftValues((prev) => ({
+                                  ...prev,
+                                  [field.id]: field.kind === "number" ? Number(raw) : raw,
+                                }));
+                              }}
+                            />
+                          }
+                        >
+                          <textarea
+                            {...sx(styles.textarea)}
+                            value={String(value())}
+                            disabled={readOnly}
+                            onInput={(event) =>
+                              setDraftValues((prev) => ({
+                                ...prev,
+                                [field.id]: event.currentTarget.value,
+                              }))
+                            }
+                          />
+                        </Show>
                       </Show>
                     </div>
                   );
@@ -268,8 +306,8 @@ export function CharacterSheets(props: Props) {
                           small
                           variant="danger"
                           onClick={() => {
-                            void props.onDelete(character().id);
-                            select(null);
+                            setDeleteError("");
+                            setDeleting(character());
                           }}
                         >
                           Delete
@@ -378,16 +416,68 @@ export function CharacterSheets(props: Props) {
                               {(ticker) => {
                                 const current = () =>
                                   character().tickers[ticker.id] ?? ticker.defaultValue;
+                                const maximum = () =>
+                                  character().tickerMax?.[ticker.id] ?? ticker.max;
+                                const [entering, setEntering] = createSignal(false);
+                                const [valueDraft, setValueDraft] = createSignal("");
+                                const commitValue = () => {
+                                  if (!entering()) return;
+                                  setEntering(false);
+                                  const value = Number(valueDraft());
+                                  if (valueDraft().trim() && Number.isSafeInteger(value))
+                                    props.onTicker(character().id, ticker.id, value);
+                                };
                                 const pct = () =>
-                                  `${Math.round(((current() - ticker.min) / Math.max(1, ticker.max - ticker.min)) * 100)}%`;
+                                  `${Math.round(((current() - ticker.min) / Math.max(1, maximum() - ticker.min)) * 100)}%`;
                                 return (
                                   <div {...sx(styles.ticker)}>
                                     <div {...sx(styles.row)}>
                                       <span {...sx(styles.label)}>{ticker.label}</span>
                                       <div {...sx(styles.spacer)} />
-                                      <span {...sx(styles.mono)}>
-                                        {current()}/{ticker.max}
-                                      </span>
+                                      <Show
+                                        when={entering()}
+                                        fallback={
+                                          <Button
+                                            small
+                                            disabled={!canEdit(character()) || editing()}
+                                            onClick={() => {
+                                              setValueDraft(String(current()));
+                                              setEntering(true);
+                                            }}
+                                          >
+                                            {current()}
+                                          </Button>
+                                        }
+                                      >
+                                        <input
+                                          {...sx(styles.input, sheetStyles.tickerInput)}
+                                          type="number"
+                                          step="1"
+                                          aria-label={`${ticker.label} value`}
+                                          value={valueDraft()}
+                                          ref={(element) =>
+                                            queueMicrotask(() => {
+                                              element.focus();
+                                              element.select();
+                                            })
+                                          }
+                                          onInput={(event) =>
+                                            setValueDraft(event.currentTarget.value)
+                                          }
+                                          onBlur={commitValue}
+                                          onKeyDown={(event) => {
+                                            if (event.key === "Enter") {
+                                              event.preventDefault();
+                                              commitValue();
+                                            }
+                                            if (event.key === "Escape") {
+                                              event.preventDefault();
+                                              setEntering(false);
+                                            }
+                                          }}
+                                        />
+                                      </Show>
+                                      <span {...sx(styles.mono)}>/{maximum()}</span>
                                     </div>
                                     <div {...sx(styles.tickerBar)}>
                                       <div
@@ -395,10 +485,32 @@ export function CharacterSheets(props: Props) {
                                         style={{ width: pct(), "background-color": ticker.color }}
                                       />
                                     </div>
+                                    <Show when={editing()}>
+                                      <Field label="Maximum (blank uses template)">
+                                        <input
+                                          {...sx(styles.input)}
+                                          type="number"
+                                          step="1"
+                                          min={ticker.min}
+                                          placeholder={String(ticker.max)}
+                                          value={draftMax()[ticker.id] ?? ""}
+                                          onInput={(event) => {
+                                            const raw = event.currentTarget.value;
+                                            setDraftMax((previous) => {
+                                              const next = { ...previous };
+                                              if (!raw.trim()) delete next[ticker.id];
+                                              else if (Number.isSafeInteger(Number(raw)))
+                                                next[ticker.id] = Math.max(ticker.min, Number(raw));
+                                              return next;
+                                            });
+                                          }}
+                                        />
+                                      </Field>
+                                    </Show>
                                     <div {...sx(styles.tickerControls)}>
                                       <Button
                                         small
-                                        disabled={!canEdit(character())}
+                                        disabled={!canEdit(character()) || editing()}
                                         onClick={() =>
                                           props.onTicker(character().id, ticker.id, current() - 1)
                                         }
@@ -407,7 +519,7 @@ export function CharacterSheets(props: Props) {
                                       </Button>
                                       <Button
                                         small
-                                        disabled={!canEdit(character())}
+                                        disabled={!canEdit(character()) || editing()}
                                         onClick={() =>
                                           props.onTicker(character().id, ticker.id, current() + 1)
                                         }
@@ -432,6 +544,47 @@ export function CharacterSheets(props: Props) {
           }}
         </Show>
       </Show>
+
+      <Modal
+        when={Boolean(deleting())}
+        title="Delete character"
+        onClose={() => {
+          if (!deletingBusy()) setDeleting(null);
+        }}
+      >
+        <div {...sx(styles.col)}>
+          <p>Delete {deleting()?.name}? This cannot be undone.</p>
+          <Show when={deleteError()}>
+            <p>{deleteError()}</p>
+          </Show>
+          <Button disabled={deletingBusy()} onClick={() => setDeleting(null)}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            disabled={deletingBusy()}
+            onClick={() => {
+              const character = deleting();
+              if (!character) return;
+              setDeletingBusy(true);
+              void props
+                .onDelete(character.id)
+                .then(() => {
+                  setDeleting(null);
+                  if (selectedId() === character.id) select(null);
+                })
+                .catch((error: unknown) => {
+                  setDeleteError(
+                    error instanceof Error ? error.message : "Could not delete character",
+                  );
+                })
+                .finally(() => setDeletingBusy(false));
+            }}
+          >
+            Delete character
+          </Button>
+        </div>
+      </Modal>
 
       <Modal when={creating()} title="New character" onClose={() => setCreating(false)}>
         <form {...sx(styles.col)} onSubmit={create}>

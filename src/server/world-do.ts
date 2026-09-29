@@ -22,7 +22,7 @@ import {
   type CursorPosition,
   type MemberRole,
   type PresenceMember,
-  type SaveCharacterInput,
+  SaveCharacterInput,
   type SaveNoteInput,
   type SaveTemplateInput,
   type ServerFrame,
@@ -62,6 +62,7 @@ type CharacterRow = {
   template_id: string;
   data: string;
   tickers: string;
+  ticker_max: string | null;
   avatar_key: string | null;
   created_at: string;
   updated_at: string;
@@ -231,6 +232,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     )`);
     // Additive columns for instances created before the feature existed.
     this.ensureColumn("characters", "avatar_key", "avatar_key TEXT");
+    this.ensureColumn("characters", "ticker_max", "ticker_max TEXT");
     this.ensureColumn("messages", "author_avatar_key", "author_avatar_key TEXT");
     this.ensureColumn("messages", "character_id", "character_id TEXT");
     const existing = sql.exec("SELECT COUNT(*) AS n FROM templates").one() as { n: number };
@@ -273,6 +275,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       templateId: row.template_id,
       values: parse(row.data, {}),
       tickers: parse(row.tickers, {}),
+      tickerMax: parse(row.ticker_max, {}),
       avatarKey: row.avatar_key ?? undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -437,15 +440,35 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     return template;
   }
 
+  private canSaveCharacter(input: SaveCharacterInput, memberId: string, role: string): boolean {
+    if (role === "dm") return true;
+    const existing = input.id === undefined ? undefined : this.getCharacter(input.id);
+    return (
+      Boolean(memberId) &&
+      (!existing || existing.memberId === memberId) &&
+      (input.memberId === undefined || input.memberId === memberId)
+    );
+  }
+
+  private canEditCharacter(id: string, memberId: string, role: string): boolean {
+    return role === "dm" || (Boolean(memberId) && this.getCharacter(id)?.memberId === memberId);
+  }
+
   private saveCharacter(input: SaveCharacterInput): Character {
     const now = nowIso();
     const id = input.id ?? newId("chr");
     const existing = this.getCharacter(id);
     const template = this.getTemplate(input.templateId) ?? this.getTemplate();
     const tickers: Record<string, number> = existing ? { ...existing.tickers } : {};
+    const tickerMax = { ...(input.tickerMax ?? existing?.tickerMax) };
     if (template) {
       for (const ticker of template.tickers) {
-        if (tickers[ticker.id] === undefined) tickers[ticker.id] = ticker.defaultValue;
+        if (tickerMax[ticker.id] !== undefined)
+          tickerMax[ticker.id] = Math.max(ticker.min, tickerMax[ticker.id]);
+        tickers[ticker.id] = Math.max(
+          ticker.min,
+          Math.min(tickerMax[ticker.id] ?? ticker.max, tickers[ticker.id] ?? ticker.defaultValue),
+        );
       }
     }
     const character: Character = {
@@ -456,29 +479,33 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       templateId: input.templateId,
       values: input.values,
       tickers,
+      tickerMax,
       avatarKey: existing?.avatarKey,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
     if (existing) {
       this.ctx.storage.sql.exec(
-        "UPDATE characters SET member_id = ?, name = ?, template_id = ?, data = ?, updated_at = ? WHERE id = ?",
+        "UPDATE characters SET member_id = ?, name = ?, template_id = ?, data = ?, tickers = ?, ticker_max = ?, updated_at = ? WHERE id = ?",
         character.memberId,
         character.name,
         character.templateId,
         JSON.stringify(character.values),
+        JSON.stringify(character.tickers),
+        JSON.stringify(character.tickerMax),
         now,
         id,
       );
     } else {
       this.ctx.storage.sql.exec(
-        "INSERT INTO characters (id, member_id, name, template_id, data, tickers, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO characters (id, member_id, name, template_id, data, tickers, ticker_max, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         id,
         character.memberId,
         character.name,
         character.templateId,
         JSON.stringify(character.values),
         JSON.stringify(character.tickers),
+        JSON.stringify(character.tickerMax),
         now,
         now,
       );
@@ -495,7 +522,11 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     if (!character) return undefined;
     const template = this.getTemplate(character.templateId) ?? this.getTemplate();
     const definition = template?.tickers.find((ticker) => ticker.id === tickerId);
-    const clamped = definition ? Math.max(definition.min, Math.min(definition.max, value)) : value;
+    if (!definition) return undefined;
+    const clamped = Math.max(
+      definition.min,
+      Math.min(character.tickerMax?.[tickerId] ?? definition.max, value),
+    );
     const updated: Character = {
       ...character,
       tickers: { ...character.tickers, [tickerId]: clamped },
@@ -812,6 +843,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       ? ((await request.json().catch(() => ({}))) as Record<string, unknown>)
       : {};
     const memberId = request.headers.get("x-ttrpg-member-id") ?? "";
+    const role = request.headers.get("x-ttrpg-role") ?? "";
     const memberName = request.headers.get("x-ttrpg-member-name") ?? "Unknown";
     const path = url.pathname.replace(/^\/internal\//, "");
 
@@ -900,12 +932,13 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         }
 
         case "POST character": {
+          const decoded = Schema.decodeUnknownResult(SaveCharacterInput)(body);
+          if (decoded._tag === "Failure") return json({ error: "Invalid character" }, 400);
+          if (!this.canSaveCharacter(decoded.success, memberId, role))
+            return json({ error: "You cannot edit this character" }, 403);
           const character = this.saveCharacter({
-            id: body.id as string | undefined,
-            name: String(body.name ?? "Unnamed"),
-            templateId: String(body.templateId ?? ""),
-            memberId: (body.memberId as string | undefined) ?? memberId,
-            values: (body.values as Record<string, string | number>) ?? {},
+            ...decoded.success,
+            memberId: decoded.success.memberId ?? memberId,
           });
           this.broadcast({ type: "character", character });
           return json(character);
@@ -922,6 +955,10 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         }
 
         case "POST ticker": {
+          if (!this.canEditCharacter(String(body.characterId), memberId, role))
+            return json({ error: "You cannot edit this character" }, 403);
+          if (!Number.isSafeInteger(body.value))
+            return json({ error: "Invalid tracker value" }, 400);
           const character = this.setTicker(
             String(body.characterId),
             String(body.tickerId),
@@ -985,6 +1022,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         return character ? json(character) : json({ error: "Not found" }, 404);
       }
       if (characterMatch && request.method === "DELETE") {
+        if (role !== "dm") return json({ error: "Only the DM can delete characters" }, 403);
         this.deleteCharacter(characterMatch[1]);
         return json({ ok: true });
       }
@@ -1085,20 +1123,43 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     }
 
     if (frame.type === "character.save") {
+      if (!this.canSaveCharacter(frame.character, attachment.memberId, attachment.role)) {
+        socket.send(
+          JSON.stringify({
+            type: "error",
+            message: "You cannot edit this character",
+          } satisfies ServerFrame),
+        );
+        return;
+      }
       const character = this.saveCharacter({
         id: frame.character.id,
         name: frame.character.name,
         templateId: frame.character.templateId,
         memberId: frame.character.memberId || attachment.memberId,
         values: frame.character.values,
+        tickerMax: frame.character.tickerMax,
       });
       this.broadcast({ type: "character", character });
       return;
     }
 
     if (frame.type === "ticker.set") {
+      if (!this.canEditCharacter(frame.characterId, attachment.memberId, attachment.role)) {
+        socket.send(
+          JSON.stringify({
+            type: "error",
+            message: "You cannot edit this character",
+          } satisfies ServerFrame),
+        );
+        return;
+      }
       const character = this.setTicker(frame.characterId, frame.tickerId, frame.value);
-      if (character) this.broadcast({ type: "character", character });
+      if (character) this.broadcast({ type: "character", character, requestId: frame.requestId });
+      else
+        socket.send(
+          JSON.stringify({ type: "error", message: "Tracker not found" } satisfies ServerFrame),
+        );
       return;
     }
 
