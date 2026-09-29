@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { SheetLayout } from "./sheet-layout";
 import { BoardSnapshot, BoardFocusRect, BoardAssetId, SceneList } from "./board";
 
 export type Infer<S> = Schema.Schema.Type<S>;
@@ -125,11 +126,35 @@ export const SheetTemplate = Schema.Struct({
   stats: Schema.Array(StatDefinition),
   tickers: Schema.Array(TickerDefinition),
   rolls: Schema.Array(RollDefinition),
+  /**
+   * Data-defined sheet (see sheet-layout.ts). When present it is what the sheet
+   * renders; the legacy arrays above remain for older templates, which get an
+   * equivalent layout derived from them.
+   */
+  layout: Schema.optional(SheetLayout),
   updatedAt: Schema.String,
 });
 export type SheetTemplate = Infer<typeof SheetTemplate>;
 
-export const CharacterValue = Schema.Union([Schema.String, Schema.Number]);
+/** One row of a list block (Property, Harm, Skills…), keyed by column key. */
+export const ListRowValue = Schema.Record(
+  Schema.String,
+  Schema.Union([Schema.String, Schema.Number, Schema.Boolean, Schema.Array(Schema.String)]),
+);
+export type ListRowValue = Infer<typeof ListRowValue>;
+
+/**
+ * A character value addressed by a field, stat, or block key: text and numbers
+ * (fields, stats), booleans, string arrays (checkbox rows), and list rows.
+ * Tracker values live separately in `Character.tickers`.
+ */
+export const CharacterValue = Schema.Union([
+  Schema.String,
+  Schema.Number,
+  Schema.Boolean,
+  Schema.Array(Schema.String),
+  Schema.Array(ListRowValue),
+]);
 export type CharacterValue = Infer<typeof CharacterValue>;
 
 export const Character = Schema.Struct({
@@ -141,6 +166,8 @@ export const Character = Schema.Struct({
   values: Schema.Record(Schema.String, CharacterValue),
   tickers: Schema.Record(Schema.String, Schema.Int),
   tickerMax: Schema.optional(Schema.Record(Schema.String, Schema.Int)),
+  /** The owner's chosen variant per layout block id (e.g. stats as bars). */
+  layoutPrefs: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   avatarKey: Schema.optional(Schema.String),
   createdAt: Schema.String,
   updatedAt: Schema.String,
@@ -314,6 +341,21 @@ export const ClientFrame = Schema.Union([
     value: Schema.Int,
     requestId: Schema.optional(Schema.String),
   }),
+  /** Set one value (a list, a checkbox row, a field) without a full sheet save. Owner or DM. */
+  Schema.Struct({
+    type: Schema.Literal("character.value"),
+    characterId: Schema.String,
+    key: Schema.String,
+    value: CharacterValue,
+    requestId: Schema.optional(Schema.String),
+  }),
+  /** Choose a block's variant for this character; `null` restores the layout's. Owner or DM. */
+  Schema.Struct({
+    type: Schema.Literal("character.prefs"),
+    characterId: Schema.String,
+    blockId: Schema.String,
+    variant: Schema.NullOr(Schema.String),
+  }),
   Schema.Struct({ type: Schema.Literals(["note.saved"]), noteId: Schema.String }),
 ]);
 export type ClientFrame = Infer<typeof ClientFrame>;
@@ -394,6 +436,7 @@ export const SaveTemplateInput = Schema.Struct({
   stats: Schema.Array(StatDefinition),
   tickers: Schema.Array(TickerDefinition),
   rolls: Schema.Array(RollDefinition),
+  layout: Schema.optional(SheetLayout),
 });
 export type SaveTemplateInput = Infer<typeof SaveTemplateInput>;
 

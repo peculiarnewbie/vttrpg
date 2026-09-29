@@ -5,6 +5,7 @@ import { computeStats } from "../domain/dice";
 import { trackerDisplay, trackerPips, trackerPipValue } from "../domain/trackers";
 import type {
   Character,
+  CharacterValue,
   SaveCharacterInput,
   SheetTemplate,
   Visibility,
@@ -412,6 +413,10 @@ const sheetStyles = stylex.create({
   },
 });
 
+/** Legacy fields hold text or numbers; anything richer (lists) isn't edited here. */
+const scalar = (value: CharacterValue) =>
+  typeof value === "string" || typeof value === "number" ? value : "";
+
 const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
 
 type Props = {
@@ -450,7 +455,7 @@ export function CharacterSheets(props: Props) {
   const [newMemberId, setNewMemberId] = createSignal(props.me.id);
   const [editing, setEditing] = createSignal(false);
   const [draftName, setDraftName] = createSignal("");
-  const [draftValues, setDraftValues] = createSignal<Record<string, string | number>>({});
+  const [draftValues, setDraftValues] = createSignal<Record<string, CharacterValue>>({});
   const [avatarError, setAvatarError] = createSignal("");
 
   const selected = () =>
@@ -575,7 +580,7 @@ export function CharacterSheets(props: Props) {
                             <input
                               {...sx(sheetStyles.input)}
                               type={field.kind === "number" ? "number" : "text"}
-                              value={value()}
+                              value={scalar(value())}
                               disabled={readOnly}
                               onInput={(event) => {
                                 const raw = event.currentTarget.value;

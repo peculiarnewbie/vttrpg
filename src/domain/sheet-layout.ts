@@ -53,6 +53,8 @@ export const TrackerItem = Schema.Struct({
   short: Schema.optional(Schema.String),
   min: Schema.Int,
   max: Schema.Int,
+  /** Value for new characters; defaults to `max`. */
+  start: Schema.optional(Schema.Int),
   display: Schema.optional(TrackerDisplay),
 });
 export type TrackerItem = typeof TrackerItem.Type;
@@ -207,3 +209,12 @@ export const resolveSpan = (block: { span?: number; wide?: number }, mode: GridM
     : mode === "wide"
       ? (block.wide ?? block.span ?? GRID_COLUMNS)
       : (block.span ?? GRID_COLUMNS);
+
+/** Every tracker item in a layout, groups included, in sheet order. */
+export const layoutTrackers = (layout: SheetLayout): TrackerItem[] =>
+  layout.pages.flatMap((page) =>
+    page.blocks.flatMap((block) => {
+      const blocks = block.type === "group" ? block.blocks : [block];
+      return blocks.flatMap((inner) => (inner.type === "trackers" ? inner.items : []));
+    }),
+  );
