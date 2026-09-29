@@ -62,8 +62,9 @@ describe("legacy template conversion", () => {
         { key: "level", label: "Level" },
       ],
     });
+    // A text block named like its group drops the label; the heading already names it.
     expect(blocks.filter((block) => block.type === "text")).toMatchObject([
-      { key: "story", label: "Story" },
+      { key: "story", label: undefined },
       { key: "notes", label: "Notes" },
     ]);
     expect(blocks.filter((block) => block.type === "fields")).toHaveLength(2);

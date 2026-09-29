@@ -268,20 +268,20 @@ const s = stylex.create({
   bar: {
     position: "relative",
     flex: 1,
-    height: "18px",
+    height: "12px",
     ...hair,
     backgroundColor: skin.meterTrack,
     overflow: "hidden",
   },
   barFill: { position: "absolute", insetBlock: 0, left: 0, backgroundImage: skin.meterFill },
-  barText: {
-    position: "relative",
-    display: "block",
-    textAlign: "center",
+  // Numbers sit beside bars, not on them: ink on a solid fill isn't legible in every theme.
+  barValue: {
+    flexShrink: 0,
+    minWidth: "34px",
+    textAlign: "right",
     fontFamily: fonts.numeric,
-    fontSize: "12px",
-    lineHeight: "16px",
-    textShadow: `0 0 2px ${colors.surface}, 0 0 3px ${colors.surface}`,
+    fontSize: "13px",
+    fontWeight: 700,
   },
   clock: { cursor: "pointer", display: "block", color: colors.accent },
   // stats and fields
@@ -302,6 +302,54 @@ const s = stylex.create({
     ":last-child": { borderRightWidth: 0 },
   },
   statValue: { fontFamily: fonts.numeric, fontSize: "17px", fontWeight: 700, lineHeight: 1.1 },
+  input: {
+    width: "100%",
+    minWidth: 0,
+    height: "24px",
+    paddingInline: "5px",
+    ...hair,
+    borderRadius: radii.sm,
+    backgroundColor: colors.surface,
+    color: colors.text,
+    fontFamily: fonts.body,
+    fontSize: "12px",
+    boxSizing: "border-box",
+    ":focus": { borderColor: colors.accent, outline: "none" },
+  },
+  textarea: { height: "auto", minHeight: "64px", paddingBlock: "4px", resize: "vertical" },
+  maxEdit: {
+    gridColumn: "1 / -1",
+    display: "flex",
+    alignItems: "center",
+    gap: "4px",
+    fontSize: "11px",
+    color: colors.textMuted,
+  },
+  maxInput: { width: "64px" },
+  editRow: { display: "flex", alignItems: "center", gap: "3px" },
+  rowButton: {
+    flexShrink: 0,
+    width: "20px",
+    height: "20px",
+    padding: 0,
+    ...hair,
+    borderRadius: radii.sm,
+    backgroundColor: { default: "transparent", ":hover": colors.surfaceHover },
+    color: colors.textMuted,
+    cursor: "pointer",
+  },
+  addRow: {
+    alignSelf: "flex-start",
+    paddingInline: "6px",
+    paddingBlock: "1px",
+    ...hair,
+    borderStyle: "dashed",
+    borderRadius: radii.sm,
+    backgroundColor: "transparent",
+    color: colors.textMuted,
+    fontSize: "11px",
+    cursor: "pointer",
+  },
   statBar: {
     gridColumn: "1 / -1",
     display: "grid",
@@ -479,7 +527,23 @@ type Props = {
   onRoll: (label: string, dice: string) => void;
   /** Overrides the active theme's header style (the lab renders several themes at once). */
   header?: "centered" | "band";
+  /** Hide the name header (the character sheet draws its own, with the portrait). */
+  showName?: boolean;
+  /** Fields, text, plain stats, and list rows become inputs; trackers show a max input. */
+  editing?: boolean;
+  /** Tracker values when they live outside `values` (Character.tickers). */
+  trackerValue?: (item: TrackerItem) => number;
+  /** Effective maximum (a per-character override, or the item's). */
+  trackerMax?: (item: TrackerItem) => number;
+  onTracker?: (key: string, value: number) => void;
+  /** Per-character maximum while editing; `null` restores the layout's. */
+  onTrackerMax?: (key: string, max: number | null) => void;
+  /** Stats derived from other values (legacy formulas); these are never edited directly. */
+  computed?: (key: string) => number | undefined;
 };
+
+const scalar = (value: SheetValues[string]) =>
+  typeof value === "string" || typeof value === "number" ? value : "";
 
 const num = (value: SheetValues[string], fallback = 0) =>
   typeof value === "number" ? value : Number(value ?? fallback) || fallback;
@@ -559,6 +623,8 @@ function Tracker(props: {
   boxed: boolean;
   value: number;
   set: (n: number) => void;
+  /** Editing: the layout's own maximum as a placeholder, and a setter for this character's. */
+  maxEdit?: { layoutMax: number; set: (max: number | null) => void };
 }) {
   const display = () => resolveTrackerDisplay(props.item);
   const body = () => (
@@ -589,14 +655,39 @@ function Tracker(props: {
                 width: `${((props.value - props.item.min) / Math.max(1, props.item.max - props.item.min)) * 100}%`,
               }}
             />
-            <span {...sx(s.barText)}>
-              {props.value}/{props.item.max}
-            </span>
+          </span>
+          <span {...sx(s.barValue)}>
+            {props.value}
+            <span {...sx(s.ofMax)}>/{props.item.max}</span>
           </span>
           <Stepper label={props.item.label} glyph="+" onClick={() => props.set(props.value + 1)} />
         </span>
       </Match>
     </Switch>
+  );
+  const maxInput = () => (
+    <Show when={props.maxEdit}>
+      {(edit) => (
+        <label {...sx(s.maxEdit)}>
+          max
+          <input
+            {...sx(s.input, s.maxInput)}
+            type="number"
+            step="1"
+            min={props.item.min}
+            aria-label={`${props.item.label} maximum`}
+            title="Blank uses the layout's maximum"
+            placeholder={String(edit().layoutMax)}
+            value={props.item.max === edit().layoutMax ? "" : props.item.max}
+            onChange={(event) => {
+              const raw = event.currentTarget.value.trim();
+              const n = Number(raw);
+              edit().set(raw && Number.isSafeInteger(n) ? Math.max(props.item.min, n) : null);
+            }}
+          />
+        </label>
+      )}
+    </Show>
   );
   return (
     <Show
@@ -605,6 +696,7 @@ function Tracker(props: {
         <div {...sx(s.trackerLine)}>
           <span {...sx(s.label)}>{props.item.label}</span>
           {body()}
+          {maxInput()}
         </div>
       }
     >
@@ -614,7 +706,47 @@ function Tracker(props: {
         <Show when={props.item.short}>
           <span {...sx(s.ofMax)}>{props.item.label}</span>
         </Show>
+        {maxInput()}
       </div>
+    </Show>
+  );
+}
+
+/** Text input that reports its value when you leave it (or press Enter), not per keystroke. */
+function CommitInput(props: {
+  value: string | number;
+  label: string;
+  numeric?: boolean;
+  multiline?: boolean;
+  onCommit: (value: string | number) => void;
+}) {
+  const commit = (raw: string) => {
+    const next =
+      props.numeric && raw.trim() !== "" && Number.isFinite(Number(raw)) ? Number(raw) : raw;
+    if (next !== props.value) props.onCommit(next);
+  };
+  return (
+    <Show
+      when={props.multiline}
+      fallback={
+        <input
+          {...sx(s.input)}
+          aria-label={props.label}
+          type={props.numeric ? "number" : "text"}
+          value={props.value}
+          onChange={(event) => commit(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+          }}
+        />
+      }
+    >
+      <textarea
+        {...sx(s.input, s.textarea)}
+        aria-label={props.label}
+        value={String(props.value)}
+        onChange={(event) => commit(event.currentTarget.value)}
+      />
     </Show>
   );
 }
@@ -657,7 +789,9 @@ function Cell(props: {
   );
 }
 
-type Ctx = Omit<Props, "layout" | "name" | "subtitle" | "header"> & { mode: GridMode };
+type Ctx = Omit<Props, "layout" | "name" | "subtitle" | "header" | "showName"> & {
+  mode: GridMode;
+};
 
 const Heading = (props: { text: string }) => (
   <div {...sx(s.head)}>
@@ -751,7 +885,7 @@ function EditBar(props: { block: LayoutBlock; ctx: Ctx; nested?: boolean }) {
       <Show when={variants().length > 1}>
         <VariantPicker block={props.block} ctx={props.ctx} />
       </Show>
-      <Show when={!props.nested && props.ctx.mode !== "narrow"}>
+      <Show when={!props.nested && props.ctx.onSpan && props.ctx.mode !== "narrow"}>
         <select
           {...sx(s.editSelect)}
           aria-label={`${props.block.id} width`}
@@ -770,73 +904,219 @@ function EditBar(props: { block: LayoutBlock; ctx: Ctx; nested?: boolean }) {
   );
 }
 
-function Stats(props: { items: readonly StatItem[]; variant: string; values: SheetValues }) {
-  const value = (item: StatItem) => props.values[item.key];
-  const shown = (item: StatItem) => String(value(item) ?? "—");
+function Stats(props: { items: readonly StatItem[]; variant: string; ctx: Ctx }) {
+  const value = (item: StatItem) => props.ctx.computed?.(item.key) ?? props.ctx.values[item.key];
+  const plain = (item: StatItem) => {
+    const v = value(item);
+    return typeof v === "string" || typeof v === "number" ? v : "";
+  };
+  const shown = (item: StatItem) => (plain(item) === "" ? "—" : String(plain(item)));
+  // While editing, stats that aren't derived from other values become inputs.
+  const editor = () => (
+    <div {...sx(s.fields3)}>
+      <For each={props.items}>
+        {(item) => (
+          <label {...sx(s.field)}>
+            <span {...sx(s.label)}>{item.label}</span>
+            <Show
+              when={props.ctx.computed?.(item.key) === undefined}
+              fallback={<span {...sx(s.statLineValue)}>{shown(item)}</span>}
+            >
+              <CommitInput
+                label={item.label}
+                value={plain(item)}
+                numeric={typeof value(item) !== "string"}
+                onCommit={(next) => props.ctx.onChange(item.key, next)}
+              />
+            </Show>
+          </label>
+        )}
+      </For>
+    </div>
+  );
   return (
-    <Switch>
-      <Match when={props.variant === "bars"}>
-        <div {...sx(s.labelled)}>
-          <For each={props.items}>
-            {(item) => (
-              <div {...sx(s.statBar)}>
-                <span {...sx(s.label)}>{item.label}</span>
-                <Show
-                  when={item.max && typeof value(item) === "number"}
-                  fallback={<span {...sx(s.statLineValue)}>{shown(item)}</span>}
+    <Show when={!props.ctx.editing} fallback={editor()}>
+      <Switch>
+        <Match when={props.variant === "bars"}>
+          <div {...sx(s.labelled)}>
+            <For each={props.items}>
+              {(item) => (
+                <div {...sx(s.statBar)}>
+                  <span {...sx(s.label)}>{item.label}</span>
+                  <Show
+                    when={item.max && typeof value(item) === "number"}
+                    fallback={<span {...sx(s.statLineValue)}>{shown(item)}</span>}
+                  >
+                    <span {...sx(s.numberLine)}>
+                      <span {...sx(s.bar)}>
+                        <span
+                          {...sx(s.barFill)}
+                          style={{
+                            width: `${Math.min(100, ((value(item) as number) / item.max!) * 100)}%`,
+                          }}
+                        />
+                      </span>
+                      <span {...sx(s.barValue)}>{shown(item)}</span>
+                    </span>
+                  </Show>
+                </div>
+              )}
+            </For>
+          </div>
+        </Match>
+        <Match when={props.variant === "boxes"}>
+          <div {...sx(s.statBoxes)}>
+            <For each={props.items}>
+              {(item) => (
+                <div {...sx(s.statBox)}>
+                  <span {...sx(s.label)}>{item.label}</span>
+                  <span {...sx(s.statBoxValue)}>{shown(item)}</span>
+                </div>
+              )}
+            </For>
+          </div>
+        </Match>
+        <Match when={props.variant === "list"}>
+          <div {...sx(s.statList)}>
+            <For each={props.items}>
+              {(item) => (
+                <div {...sx(s.statLine)}>
+                  <span {...sx(s.label)}>{item.label}</span>
+                  <span {...sx(s.statLineValue)}>{shown(item)}</span>
+                </div>
+              )}
+            </For>
+          </div>
+        </Match>
+        <Match when={true}>
+          <div {...sx(s.stats)}>
+            <For each={props.items}>
+              {(item) => (
+                <div {...sx(s.stat)}>
+                  <span {...sx(s.label)}>{item.label}</span>
+                  <span {...sx(s.statValue)}>{shown(item)}</span>
+                </div>
+              )}
+            </For>
+          </div>
+        </Match>
+      </Switch>
+    </Show>
+  );
+}
+
+const emptyCell = (column: ListColumn): ListRow[string] =>
+  column.kind === "number"
+    ? ""
+    : column.kind === "tags"
+      ? []
+      : column.kind === "check"
+        ? false
+        : "";
+
+/**
+ * Edits a list block's rows in place: every cell is an input that commits on
+ * blur; rows can be added and removed. Always a table, whatever the variant.
+ */
+function ListEditor(props: {
+  block: Extract<LeafBlock, { type: "list" }>;
+  rows: readonly ListRow[];
+  ctx: Ctx;
+}) {
+  const save = (rows: readonly ListRow[]) => props.ctx.onChange(props.block.key, rows);
+  const setCell = (index: number, key: string, value: ListRow[string]) =>
+    save(props.rows.map((row, i) => (i === index ? { ...row, [key]: value } : row)));
+  const blank = (): ListRow =>
+    Object.fromEntries(props.block.columns.map((column) => [column.key, emptyCell(column)]));
+  const template = () =>
+    [
+      ...props.block.columns.map((column) =>
+        column.kind === "check"
+          ? "auto"
+          : column.kind === "text"
+            ? "minmax(0, 2fr)"
+            : "minmax(0, 1fr)",
+      ),
+      "20px",
+    ].join(" ");
+  const label = (column: ListColumn, index: number) =>
+    `${props.block.title ?? props.block.key} row ${index + 1} ${column.label || column.key}`;
+  return (
+    <>
+      <div {...sx(s.table)} style={{ "grid-template-columns": template() }}>
+        <For each={props.block.columns}>
+          {(column) => <span {...sx(s.label, s.th)}>{column.label}</span>}
+        </For>
+        <span {...sx(s.th)} />
+        <For each={props.rows.map((_, i) => i)}>
+          {(index) => (
+            <>
+              <For each={props.block.columns}>
+                {(column) => {
+                  const value = () => props.rows[index]?.[column.key];
+                  return (
+                    <span {...sx(s.td)}>
+                      <Switch
+                        fallback={
+                          <CommitInput
+                            label={label(column, index)}
+                            value={
+                              typeof value() === "string" || typeof value() === "number"
+                                ? (value() as string | number)
+                                : ""
+                            }
+                            numeric={column.kind === "number"}
+                            onCommit={(next) => setCell(index, column.key, next)}
+                          />
+                        }
+                      >
+                        <Match when={column.kind === "check"}>
+                          <button
+                            {...sx(s.box, value() === true && s.boxOn)}
+                            style={{ padding: 0, cursor: "pointer" }}
+                            aria-label={label(column, index)}
+                            aria-pressed={value() === true ? "true" : "false"}
+                            onClick={() => setCell(index, column.key, value() !== true)}
+                          />
+                        </Match>
+                        <Match when={column.kind === "tags"}>
+                          <CommitInput
+                            label={`${label(column, index)} (comma separated)`}
+                            value={Array.isArray(value()) ? (value() as string[]).join(", ") : ""}
+                            onCommit={(next) =>
+                              setCell(
+                                index,
+                                column.key,
+                                String(next)
+                                  .split(",")
+                                  .map((tag) => tag.trim())
+                                  .filter(Boolean),
+                              )
+                            }
+                          />
+                        </Match>
+                      </Switch>
+                    </span>
+                  );
+                }}
+              </For>
+              <span {...sx(s.td)}>
+                <button
+                  {...sx(s.rowButton)}
+                  aria-label={`Remove ${props.block.title ?? props.block.key} row ${index + 1}`}
+                  onClick={() => save(props.rows.filter((_, i) => i !== index))}
                 >
-                  <span {...sx(s.bar)}>
-                    <span
-                      {...sx(s.barFill)}
-                      style={{
-                        width: `${Math.min(100, ((value(item) as number) / item.max!) * 100)}%`,
-                      }}
-                    />
-                    <span {...sx(s.barText)}>{shown(item)}</span>
-                  </span>
-                </Show>
-              </div>
-            )}
-          </For>
-        </div>
-      </Match>
-      <Match when={props.variant === "boxes"}>
-        <div {...sx(s.statBoxes)}>
-          <For each={props.items}>
-            {(item) => (
-              <div {...sx(s.statBox)}>
-                <span {...sx(s.label)}>{item.label}</span>
-                <span {...sx(s.statBoxValue)}>{shown(item)}</span>
-              </div>
-            )}
-          </For>
-        </div>
-      </Match>
-      <Match when={props.variant === "list"}>
-        <div {...sx(s.statList)}>
-          <For each={props.items}>
-            {(item) => (
-              <div {...sx(s.statLine)}>
-                <span {...sx(s.label)}>{item.label}</span>
-                <span {...sx(s.statLineValue)}>{shown(item)}</span>
-              </div>
-            )}
-          </For>
-        </div>
-      </Match>
-      <Match when={true}>
-        <div {...sx(s.stats)}>
-          <For each={props.items}>
-            {(item) => (
-              <div {...sx(s.stat)}>
-                <span {...sx(s.label)}>{item.label}</span>
-                <span {...sx(s.statValue)}>{shown(item)}</span>
-              </div>
-            )}
-          </For>
-        </div>
-      </Match>
-    </Switch>
+                  ×
+                </button>
+              </span>
+            </>
+          )}
+        </For>
+      </div>
+      <button {...sx(s.addRow)} onClick={() => save([...props.rows, blank()])}>
+        + Add {props.block.title ? props.block.title.toLowerCase() : "row"}
+      </button>
+    </>
   );
 }
 
@@ -874,6 +1154,9 @@ function List(props: { block: Extract<LeafBlock, { type: "list" }>; variant: str
     <>
       <Show when={props.block.title}>{(title) => <Heading text={title()} />}</Show>
       <Switch>
+        <Match when={props.ctx.editing}>
+          <ListEditor block={props.block} rows={rows()} ctx={props.ctx} />
+        </Match>
         <Match when={props.variant === "cards"}>
           <div {...sx(s.cards)}>
             <For each={rows().map((_, i) => i)}>
@@ -994,20 +1277,42 @@ function Leaf(props: { block: LeafBlock; ctx: Ctx }) {
         {(block) => (
           <div {...sx(variant() === "boxes" ? s.trackerRow : s.labelled)}>
             <For each={block().items}>
-              {(item) => (
-                <Tracker
-                  item={item}
-                  boxed={variant() === "boxes"}
-                  value={num(values()[item.key], item.min)}
-                  set={(n) => props.ctx.onChange(item.key, clamp(n, item))}
-                />
-              )}
+              {(item) => {
+                // Display comes from the layout's range, so a personal maximum can't flip pips to a bar.
+                const effective = () => ({
+                  ...item,
+                  display: resolveTrackerDisplay(item),
+                  max: props.ctx.trackerMax?.(item) ?? item.max,
+                });
+                const value = () =>
+                  props.ctx.trackerValue?.(item) ?? num(values()[item.key], item.start ?? item.max);
+                return (
+                  <Tracker
+                    item={effective()}
+                    boxed={variant() === "boxes"}
+                    value={value()}
+                    set={(n) =>
+                      props.ctx.onTracker
+                        ? props.ctx.onTracker(item.key, clamp(n, effective()))
+                        : props.ctx.onChange(item.key, clamp(n, effective()))
+                    }
+                    maxEdit={
+                      props.ctx.editing && props.ctx.onTrackerMax
+                        ? {
+                            layoutMax: item.max,
+                            set: (max) => props.ctx.onTrackerMax!(item.key, max),
+                          }
+                        : undefined
+                    }
+                  />
+                );
+              }}
             </For>
           </div>
         )}
       </Match>
       <Match when={b.type === "stats" && b}>
-        {(block) => <Stats items={block().items} variant={variant()} values={values()} />}
+        {(block) => <Stats items={block().items} variant={variant()} ctx={props.ctx} />}
       </Match>
       <Match when={b.type === "fields" && b}>
         {(block) => (
@@ -1026,15 +1331,27 @@ function Leaf(props: { block: LeafBlock; ctx: Ctx }) {
                   )}
                 >
                   <span {...sx(s.label)}>{item.label}</span>
-                  <span
-                    {...sx(
-                      s.fieldValue,
-                      variant() === "inline" && s.fieldInlineValue,
-                      !values()[item.key] && s.empty,
-                    )}
+                  <Show
+                    when={props.ctx.editing}
+                    fallback={
+                      <span
+                        {...sx(
+                          s.fieldValue,
+                          variant() === "inline" && s.fieldInlineValue,
+                          !values()[item.key] && s.empty,
+                        )}
+                      >
+                        {String(values()[item.key] ?? "—")}
+                      </span>
+                    }
                   >
-                    {String(values()[item.key] ?? "—")}
-                  </span>
+                    <CommitInput
+                      label={item.label}
+                      value={scalar(values()[item.key])}
+                      numeric={typeof values()[item.key] === "number"}
+                      onCommit={(next) => props.ctx.onChange(item.key, next)}
+                    />
+                  </Show>
                 </div>
               )}
             </For>
@@ -1053,9 +1370,21 @@ function Leaf(props: { block: LeafBlock; ctx: Ctx }) {
             <Show when={block().label}>
               <span {...sx(s.label)}>{block().label}</span>
             </Show>
-            <p {...sx(s.text)} style={{ margin: 0 }}>
-              {String(values()[block().key] ?? "")}
-            </p>
+            <Show
+              when={props.ctx.editing}
+              fallback={
+                <p {...sx(s.text)} style={{ margin: 0 }}>
+                  {String(values()[block().key] ?? "")}
+                </p>
+              }
+            >
+              <CommitInput
+                multiline
+                label={block().label ?? block().key}
+                value={scalar(values()[block().key])}
+                onCommit={(next) => props.ctx.onChange(block().key, next)}
+              />
+            </Show>
           </>
         )}
       </Match>
@@ -1137,16 +1466,24 @@ export function SheetBlocks(props: Props) {
     customize: props.customize,
     onVariant: props.onVariant,
     onSpan: props.onSpan,
+    editing: props.editing,
+    trackerValue: props.trackerValue,
+    trackerMax: props.trackerMax,
+    onTracker: props.onTracker,
+    onTrackerMax: props.onTrackerMax,
+    computed: props.computed,
     mode: gridMode(width()),
   });
   return (
     <div {...sx(s.sheet)} ref={(element) => (root = element)} data-grid-mode={ctx().mode}>
-      <header {...sx(band() ? s.nameBand : s.nameBlock)}>
-        <h2 {...sx(s.name, band() && s.nameOnBand)}>{props.name}</h2>
-        <Show when={props.subtitle}>
-          <div {...sx(s.subtitle)}>{props.subtitle}</div>
-        </Show>
-      </header>
+      <Show when={props.showName !== false}>
+        <header {...sx(band() ? s.nameBand : s.nameBlock)}>
+          <h2 {...sx(s.name, band() && s.nameOnBand)}>{props.name}</h2>
+          <Show when={props.subtitle}>
+            <div {...sx(s.subtitle)}>{props.subtitle}</div>
+          </Show>
+        </header>
+      </Show>
       <Show when={props.layout.pages.length > 1}>
         <div {...sx(s.tabs)} role="tablist">
           <For each={props.layout.pages}>

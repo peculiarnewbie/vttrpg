@@ -2,7 +2,9 @@ import { For, Show, createEffect, createSignal, onSettled } from "solid-js";
 import * as stylex from "@stylexjs/stylex";
 import { api } from "../client/api";
 import { computeStats } from "../domain/dice";
-import { trackerDisplay, trackerPips, trackerPipValue } from "../domain/trackers";
+import { effectiveLayout } from "../domain/layout-from-template";
+import { trackerDefinitions } from "../domain/trackers-definitions";
+import { SheetBlocks } from "./sheet-blocks";
 import type {
   Character,
   CharacterValue,
@@ -413,10 +415,6 @@ const sheetStyles = stylex.create({
   },
 });
 
-/** Legacy fields hold text or numbers; anything richer (lists) isn't edited here. */
-const scalar = (value: CharacterValue) =>
-  typeof value === "string" || typeof value === "number" ? value : "";
-
 const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
 
 type Props = {
@@ -428,6 +426,11 @@ type Props = {
   members: WorldMember[];
   onRoll: (characterId: string, rollId: string, visibility: Visibility) => void;
   onTicker: (characterId: string, tickerId: string, value: number) => void;
+  /** Save one value right away (fields, lists, checkbox rows). */
+  onValue: (characterId: string, key: string, value: CharacterValue) => void;
+  onLayoutPref: (characterId: string, blockId: string, variant: string | null) => void;
+  /** A roll that isn't one of the template's roll definitions, e.g. a Property row's d8. */
+  onRollDice: (notation: string, label: string) => void;
   onSave: (input: SaveCharacterInput) => Promise<void>;
   onDelete: (characterId: string) => Promise<void>;
   onUploadAvatar: (characterId: string, file: File) => Promise<void>;
@@ -454,8 +457,9 @@ export function CharacterSheets(props: Props) {
   const [newTemplateId, setNewTemplateId] = createSignal(props.templates[0]?.id ?? "");
   const [newMemberId, setNewMemberId] = createSignal(props.me.id);
   const [editing, setEditing] = createSignal(false);
+  // Style mode: pick each block's variant (stats as bars, lists as cards…) for this character.
+  const [customizing, setCustomizing] = createSignal(false);
   const [draftName, setDraftName] = createSignal("");
-  const [draftValues, setDraftValues] = createSignal<Record<string, CharacterValue>>({});
   const [avatarError, setAvatarError] = createSignal("");
 
   const selected = () =>
@@ -489,21 +493,33 @@ export function CharacterSheets(props: Props) {
 
   const startEdit = (character: Character) => {
     setDraftName(character.name);
-    setDraftValues({ ...character.values });
     setDraftMax({ ...character.tickerMax });
     setEditing(true);
   };
 
+  // Values are saved one at a time as they're edited; Save commits the name and maxima.
   const saveEdit = async (character: Character) => {
     await props.onSave({
       id: character.id,
       name: draftName(),
       templateId: character.templateId,
       memberId: character.memberId,
-      values: draftValues(),
+      values: character.values,
       tickerMax: draftMax(),
     });
     setEditing(false);
+  };
+
+  /** Template rolls keep their modifiers and visibility; anything else rolls its dice. */
+  const rollFromSheet = (
+    character: Character,
+    template: SheetTemplate,
+    label: string,
+    dice: string,
+  ) => {
+    const defined = template.rolls.find((roll) => roll.label === label);
+    if (defined) props.onRoll(character.id, defined.id, defined.visibility);
+    else props.onRollDice(dice, label);
   };
 
   const uploadAvatar = async (character: Character, file: File) => {
@@ -535,87 +551,6 @@ export function CharacterSheets(props: Props) {
   const memberName = (character: Character) =>
     props.members.find((member) => member.id === character.memberId)?.displayName ?? "Unassigned";
 
-  const renderFields = (character: Character, template: SheetTemplate, readOnly: boolean) => {
-    const groups = new Map<string, typeof template.fields>();
-    for (const field of template.fields) {
-      const key = field.group ?? "Sheet";
-      groups.set(key, [...(groups.get(key) ?? []), field]);
-    }
-    return (
-      <For each={[...groups.entries()]}>
-        {([group, fields]) => (
-          <details {...sx(sheetStyles.group)} open>
-            <summary {...sx(sheetStyles.head, sheetStyles.summary)}>
-              {group}
-              <span {...sx(sheetStyles.rule)} />
-            </summary>
-            <div {...sx(sheetStyles.fields)}>
-              <For each={fields}>
-                {(field) => {
-                  const value = () =>
-                    editing()
-                      ? (draftValues()[field.id] ?? field.defaultValue ?? "")
-                      : (character.values[field.id] ?? field.defaultValue ?? "");
-                  const wide = field.kind === "longtext";
-                  return (
-                    <label {...sx(sheetStyles.field, wide && sheetStyles.fieldWide)}>
-                      <span {...sx(sheetStyles.fieldLabel)}>{field.label}</span>
-                      <Show
-                        when={editing()}
-                        fallback={
-                          <span
-                            {...sx(
-                              sheetStyles.fieldValue,
-                              wide && sheetStyles.longtext,
-                              value() === "" && sheetStyles.empty,
-                            )}
-                          >
-                            {value() === "" ? "—" : String(value())}
-                          </span>
-                        }
-                      >
-                        <Show
-                          when={wide}
-                          fallback={
-                            <input
-                              {...sx(sheetStyles.input)}
-                              type={field.kind === "number" ? "number" : "text"}
-                              value={scalar(value())}
-                              disabled={readOnly}
-                              onInput={(event) => {
-                                const raw = event.currentTarget.value;
-                                setDraftValues((prev) => ({
-                                  ...prev,
-                                  [field.id]: field.kind === "number" ? Number(raw) : raw,
-                                }));
-                              }}
-                            />
-                          }
-                        >
-                          <textarea
-                            {...sx(sheetStyles.input, sheetStyles.textarea)}
-                            value={String(value())}
-                            disabled={readOnly}
-                            onInput={(event) =>
-                              setDraftValues((prev) => ({
-                                ...prev,
-                                [field.id]: event.currentTarget.value,
-                              }))
-                            }
-                          />
-                        </Show>
-                      </Show>
-                    </label>
-                  );
-                }}
-              </For>
-            </div>
-          </details>
-        )}
-      </For>
-    );
-  };
-
   return (
     <div {...sx(styles.col)}>
       <Show when={view() === "list" || props.characters.length === 0}>
@@ -635,7 +570,7 @@ export function CharacterSheets(props: Props) {
           <div {...sx(sheetStyles.roster)}>
             <For each={props.characters}>
               {(character) => {
-                const trackers = () => templateFor(props.templates, character)?.tickers ?? [];
+                const trackers = () => trackerDefinitions(templateFor(props.templates, character));
                 return (
                   <button {...sx(sheetStyles.rosterRow)} onClick={() => select(character.id)}>
                     <span {...sx(sheetStyles.portrait, sheetStyles.portraitSmall)}>
@@ -699,11 +634,21 @@ export function CharacterSheets(props: Props) {
                       </Show>
                       <Show when={!editing() && canEdit(character())}>
                         <button
-                          {...sx(sheetStyles.barButton)}
-                          onClick={() => startEdit(character())}
+                          {...sx(sheetStyles.barButton, customizing() && sheetStyles.barPrimary)}
+                          aria-pressed={customizing() ? "true" : "false"}
+                          title="Choose how each part of this sheet looks"
+                          onClick={() => setCustomizing(!customizing())}
                         >
-                          Edit
+                          {customizing() ? "Done styling" : "Style"}
                         </button>
+                        <Show when={!customizing()}>
+                          <button
+                            {...sx(sheetStyles.barButton)}
+                            onClick={() => startEdit(character())}
+                          >
+                            Edit
+                          </button>
+                        </Show>
                       </Show>
                       <Show when={props.isDm && !editing()}>
                         <button
@@ -779,243 +724,47 @@ export function CharacterSheets(props: Props) {
                       <span {...sx(styles.errorBanner)}>{avatarError()}</span>
                     </Show>
 
-                    <Show when={sheet().tickers.length > 0}>
-                      <div {...sx(sheetStyles.head)}>
-                        Trackers
-                        <span {...sx(sheetStyles.rule)} />
-                      </div>
-                      <div {...sx(sheetStyles.trackers)}>
-                        <For each={sheet().tickers}>
-                          {(ticker) => {
-                            const display = () => trackerDisplay(ticker);
-                            const current = () =>
-                              character().tickers[ticker.id] ?? ticker.defaultValue;
-                            const maximum = () => character().tickerMax?.[ticker.id] ?? ticker.max;
-                            const [entering, setEntering] = createSignal(false);
-                            const [valueDraft, setValueDraft] = createSignal("");
-                            const locked = () => !canEdit(character()) || editing();
-                            const commitValue = () => {
-                              if (!entering()) return;
-                              setEntering(false);
-                              const value = Number(valueDraft());
-                              if (valueDraft().trim() && Number.isSafeInteger(value))
-                                props.onTicker(character().id, ticker.id, value);
-                            };
-                            const pct = () =>
-                              `${Math.max(0, Math.min(100, Math.round(((current() - ticker.min) / Math.max(1, maximum() - ticker.min)) * 100)))}%`;
-                            return (
-                              <div {...sx(sheetStyles.tracker)}>
-                                <span {...sx(sheetStyles.trackerLabel)}>{ticker.label}</span>
-                                <Show when={display() === "pips"}>
-                                  <div
-                                    {...sx(sheetStyles.pips)}
-                                    role="group"
-                                    aria-label={ticker.label}
-                                  >
-                                    <For each={trackerPips(ticker.min, maximum())}>
-                                      {(point) => (
-                                        <button
-                                          {...sx(
-                                            sheetStyles.pip,
-                                            point <= current() && sheetStyles.pipOn,
-                                          )}
-                                          aria-label={`Set ${ticker.label} to ${point}`}
-                                          aria-pressed={point <= current() ? "true" : "false"}
-                                          disabled={locked()}
-                                          onClick={() =>
-                                            props.onTicker(
-                                              character().id,
-                                              ticker.id,
-                                              trackerPipValue(point, current()),
-                                            )
-                                          }
-                                        />
-                                      )}
-                                    </For>
-                                  </div>
-                                </Show>
-                                <Show when={display() !== "pips"}>
-                                  <button
-                                    {...sx(
-                                      sheetStyles.step,
-                                      display() === "number" && sheetStyles.ledgerStep,
-                                    )}
-                                    aria-label={`Decrease ${ticker.label}`}
-                                    disabled={locked()}
-                                    onClick={() =>
-                                      props.onTicker(character().id, ticker.id, current() - 1)
-                                    }
-                                  >
-                                    <span {...sx(display() === "bar" && sheetStyles.stepGlyph)}>
-                                      {display() === "number" ? "⊖" : "−"}
-                                    </span>
-                                  </button>
-                                </Show>
-                                <div
-                                  {...sx(
-                                    sheetStyles.trackerValue,
-                                    display() === "pips" && sheetStyles.pipValue,
-                                    display() === "bar" && sheetStyles.meter,
-                                    display() === "number" && sheetStyles.ledgerValue,
-                                  )}
-                                >
-                                  <Show when={display() === "bar"}>
-                                    <div {...sx(sheetStyles.meterFill)} style={{ width: pct() }} />
-                                  </Show>
-                                  <Show
-                                    when={entering()}
-                                    fallback={
-                                      <button
-                                        {...sx(
-                                          sheetStyles.meterValue,
-                                          display() === "number" && sheetStyles.ledgerNumber,
-                                        )}
-                                        aria-label={`Set ${ticker.label}, now ${current()} of ${maximum()}`}
-                                        disabled={locked()}
-                                        onClick={() => {
-                                          setValueDraft(String(current()));
-                                          setEntering(true);
-                                        }}
-                                      >
-                                        <strong>{current()}</strong>
-                                        <span {...sx(sheetStyles.meterMax)}>/{maximum()}</span>
-                                      </button>
-                                    }
-                                  >
-                                    <input
-                                      {...sx(
-                                        sheetStyles.meterInput,
-                                        display() === "number" && sheetStyles.ledgerNumber,
-                                      )}
-                                      type="number"
-                                      step="1"
-                                      aria-label={`${ticker.label} value`}
-                                      value={valueDraft()}
-                                      ref={(element) =>
-                                        queueMicrotask(() => {
-                                          element.focus();
-                                          element.select();
-                                        })
-                                      }
-                                      onInput={(event) => setValueDraft(event.currentTarget.value)}
-                                      onBlur={commitValue}
-                                      onKeyDown={(event) => {
-                                        if (event.key === "Enter") {
-                                          event.preventDefault();
-                                          commitValue();
-                                        }
-                                        if (event.key === "Escape") {
-                                          event.preventDefault();
-                                          setEntering(false);
-                                        }
-                                      }}
-                                    />
-                                  </Show>
-                                </div>
-                                <Show when={display() !== "pips"}>
-                                  <button
-                                    {...sx(
-                                      sheetStyles.step,
-                                      display() === "number" && sheetStyles.ledgerStep,
-                                    )}
-                                    aria-label={`Increase ${ticker.label}`}
-                                    disabled={locked()}
-                                    onClick={() =>
-                                      props.onTicker(character().id, ticker.id, current() + 1)
-                                    }
-                                  >
-                                    <span {...sx(display() === "bar" && sheetStyles.stepGlyph)}>
-                                      {display() === "number" ? "⊕" : "+"}
-                                    </span>
-                                  </button>
-                                </Show>
-                                <Show when={editing()}>
-                                  <label {...sx(sheetStyles.maxEdit)}>
-                                    <span>max</span>
-                                    <input
-                                      {...sx(sheetStyles.input, sheetStyles.maxInput)}
-                                      type="number"
-                                      step="1"
-                                      min={ticker.min}
-                                      aria-label={`${ticker.label} maximum`}
-                                      title="Blank uses the template maximum"
-                                      placeholder={String(ticker.max)}
-                                      value={draftMax()[ticker.id] ?? ""}
-                                      onInput={(event) => {
-                                        const raw = event.currentTarget.value;
-                                        setDraftMax((previous) => {
-                                          const next = { ...previous };
-                                          if (!raw.trim()) delete next[ticker.id];
-                                          else if (Number.isSafeInteger(Number(raw)))
-                                            next[ticker.id] = Math.max(ticker.min, Number(raw));
-                                          return next;
-                                        });
-                                      }}
-                                    />
-                                  </label>
-                                </Show>
-                              </div>
-                            );
-                          }}
-                        </For>
-                      </div>
-                    </Show>
-
-                    <Show when={sheet().stats.length > 0}>
-                      <div {...sx(sheetStyles.head)}>
-                        Stats
-                        <span {...sx(sheetStyles.rule)} />
-                      </div>
-                      <div {...sx(sheetStyles.stats)}>
-                        <For each={sheet().stats}>
-                          {(stat) => {
-                            const values = () => (editing() ? draftValues() : character().values);
-                            const stats = () => computeStats(sheet().stats, values());
-                            return (
-                              <div {...sx(sheetStyles.stat)}>
-                                <span {...sx(sheetStyles.statLabel)}>{stat.label}</span>
-                                <span {...sx(sheetStyles.statValue)}>{stats()[stat.id] ?? 0}</span>
-                              </div>
-                            );
-                          }}
-                        </For>
-                      </div>
-                    </Show>
-
-                    <Show when={sheet().rolls.length > 0}>
-                      <div {...sx(sheetStyles.head)}>
-                        Rolls
-                        <span {...sx(sheetStyles.rule)} />
-                      </div>
-                      <div {...sx(sheetStyles.rolls)}>
-                        <For each={sheet().rolls}>
-                          {(roll) => (
-                            <button
-                              {...sx(sheetStyles.roll)}
-                              disabled={editing()}
-                              title={
-                                roll.visibility === "public"
-                                  ? `Roll ${roll.label}`
-                                  : `Roll ${roll.label} (${roll.visibility === "dm" ? "DM only" : "only you"})`
-                              }
-                              onClick={() => props.onRoll(character().id, roll.id, roll.visibility)}
-                            >
-                              <span {...sx(sheetStyles.rollLabel)}>{roll.label}</span>
-                              <Show when={roll.visibility !== "public"}>
-                                <span {...sx(sheetStyles.rollPrivacy)}>
-                                  {roll.visibility === "dm" ? "DM" : "me"}
-                                </span>
-                              </Show>
-                              <span {...sx(sheetStyles.rollDice)}>
-                                {roll.dice.map((die) => `${die.count}d${die.sides}`).join("+")}
-                              </span>
-                            </button>
-                          )}
-                        </For>
-                      </div>
-                    </Show>
-
-                    {renderFields(character(), sheet(), !canEdit(character()))}
+                    <SheetBlocks
+                      layout={effectiveLayout(sheet())}
+                      name={character().name}
+                      showName={false}
+                      values={character().values}
+                      overrides={character().layoutPrefs}
+                      editing={editing()}
+                      customize={customizing() && !editing()}
+                      trackerValue={(item) =>
+                        character().tickers[item.key] ?? item.start ?? item.max
+                      }
+                      trackerMax={(item) =>
+                        (editing() ? draftMax()[item.key] : undefined) ??
+                        character().tickerMax?.[item.key] ??
+                        item.max
+                      }
+                      computed={(key) =>
+                        sheet().stats.some((stat) => stat.id === key)
+                          ? computeStats(sheet().stats, character().values)[key]
+                          : undefined
+                      }
+                      onTracker={(key, value) => {
+                        if (canEdit(character())) props.onTicker(character().id, key, value);
+                      }}
+                      onTrackerMax={(key, max) =>
+                        setDraftMax((previous) => {
+                          const next = { ...previous };
+                          if (max === null) delete next[key];
+                          else next[key] = max;
+                          return next;
+                        })
+                      }
+                      onChange={(key, value) => {
+                        if (canEdit(character()) && value !== undefined)
+                          props.onValue(character().id, key, value as CharacterValue);
+                      }}
+                      onVariant={(blockId, variant) =>
+                        props.onLayoutPref(character().id, blockId, variant)
+                      }
+                      onRoll={(label, dice) => rollFromSheet(character(), sheet(), label, dice)}
+                    />
                   </div>
                 )}
               </Show>

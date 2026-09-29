@@ -62,7 +62,8 @@ export const layoutFromTemplate = (template: SheetTemplate): SheetLayout => {
           id: `${prefix}-text-${index}`,
           type: "text",
           key: field.id,
-          label: field.label,
+          // A lone longtext field usually shares its group's name; the heading already says it.
+          label: field.label === title ? undefined : field.label,
         });
       });
   }

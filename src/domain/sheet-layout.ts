@@ -172,7 +172,7 @@ export type SheetLayout = typeof SheetLayout.Type;
 export type ListRow = Record<string, string | number | boolean | readonly string[]>;
 export type SheetValues = Record<
   string,
-  string | number | readonly string[] | readonly ListRow[] | undefined
+  string | number | boolean | readonly string[] | readonly ListRow[] | undefined
 >;
 
 /** A viewer's own choice of variant for particular blocks, by block id. */

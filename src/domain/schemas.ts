@@ -329,6 +329,8 @@ export const ClientFrame = Schema.Union([
     notation: Schema.String,
     visibility: Visibility,
     recipientMemberIds: Schema.optional(Schema.Array(Schema.String)),
+    /** What was rolled, e.g. a Property row's item ("Longsword"); shown with the dice. */
+    label: Schema.optional(Schema.String.check(Schema.isMaxLength(120))),
   }),
   Schema.Struct({
     type: Schema.Literals(["character.save"]),

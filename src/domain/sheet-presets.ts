@@ -60,7 +60,7 @@ export const bastionlandClassic: SheetLayout = {
               type: "trackers",
               items: [
                 { key: "gd", label: "Guard", short: "GD", min: 0, max: 6 },
-                { key: "glory", label: "Glory", min: 0, max: 12 },
+                { key: "glory", label: "Glory", min: 0, max: 12, start: 0 },
               ],
             },
             {
@@ -142,7 +142,7 @@ export const bastionlandCompact: SheetLayout = {
           wide: 3,
           items: [
             { key: "gd", label: "Guard", short: "GD", min: 0, max: 6 },
-            { key: "glory", label: "Glory", min: 0, max: 12 },
+            { key: "glory", label: "Glory", min: 0, max: 12, start: 0 },
           ],
         },
         { ...bastionProperty, variant: "slots", span: 6, wide: 3 },
@@ -199,8 +199,8 @@ export const mothership: SheetLayout = {
           wide: 3,
           items: [
             { key: "hp", label: "Health", min: 0, max: 10 },
-            { key: "wounds", label: "Wounds", min: 0, max: 3 },
-            { key: "stress", label: "Stress", min: 2, max: 20, display: "number" },
+            { key: "wounds", label: "Wounds", min: 0, max: 3, start: 0 },
+            { key: "stress", label: "Stress", min: 2, max: 20, start: 2, display: "number" },
           ],
         },
         {
@@ -281,7 +281,7 @@ export const mothership: SheetLayout = {
   ],
 };
 
-const action = (key: string, label: string) => ({ key, label, min: 0, max: 4 });
+const action = (key: string, label: string) => ({ key, label, min: 0, max: 4, start: 0 });
 
 export const bladesInTheDark: SheetLayout = {
   system: "Blades in the Dark",
@@ -311,7 +311,7 @@ export const bladesInTheDark: SheetLayout = {
             {
               id: "stress",
               type: "trackers",
-              items: [{ key: "stress", label: "Stress", min: 0, max: 9 }],
+              items: [{ key: "stress", label: "Stress", min: 0, max: 9, start: 0 }],
             },
             {
               id: "trauma",
@@ -349,8 +349,8 @@ export const bladesInTheDark: SheetLayout = {
           variant: "boxes",
           wide: 3,
           items: [
-            { key: "healing", label: "Healing", min: 0, max: 4, display: "clock" },
-            { key: "vendetta", label: "Vendetta", min: 0, max: 8, display: "clock" },
+            { key: "healing", label: "Healing", min: 0, max: 4, start: 0, display: "clock" },
+            { key: "vendetta", label: "Vendetta", min: 0, max: 8, start: 0, display: "clock" },
           ],
         },
         {

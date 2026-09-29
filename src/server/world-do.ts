@@ -945,6 +945,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     authorMemberId: string,
     authorName: string,
     recipientMemberIds: readonly string[] = [],
+    label = "",
   ) {
     const cleaned = parseRollCommand(notation) ?? notation;
     const parsed = parseDiceExpression(cleaned);
@@ -964,7 +965,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       authorMemberId,
       authorName,
       kind: "roll",
-      content: "",
+      content: label.trim(),
       visibility,
       recipientMemberIds: [...recipientMemberIds],
       roll: result,
@@ -1523,6 +1524,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         attachment.memberId,
         attachment.name,
         frame.recipientMemberIds,
+        frame.label,
       );
       if (message) this.broadcastMessage(message);
       return;

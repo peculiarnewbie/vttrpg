@@ -532,6 +532,17 @@ export default function WorldPage() {
                         members={members()}
                         onRoll={roll}
                         onTicker={ticker}
+                        onValue={setCharacterValue}
+                        onLayoutPref={setLayoutPref}
+                        onRollDice={(notation, label) => {
+                          if (status() === "open")
+                            controller?.send({
+                              type: "roll.dice",
+                              notation,
+                              label,
+                              visibility: "public",
+                            });
+                        }}
                         onSave={saveCharacter}
                         onDelete={deleteCharacter}
                         onUploadAvatar={uploadAvatar}
