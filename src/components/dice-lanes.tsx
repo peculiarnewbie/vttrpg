@@ -1,6 +1,10 @@
 import DiceBox from "@3d-dice/dice-box-threejs";
-import { For, createEffect, createSignal, onCleanup, onSettled } from "solid-js";
+import { Show, For, createEffect, createSignal, onCleanup, onSettled } from "solid-js";
 import type { ChatMessage, RollResult } from "../domain/schemas";
+
+import { showDiceTotals } from "../client/dice-display";
+import { styles } from "./styles.stylex";
+import { sx } from "../theme/sx";
 
 const PALETTE = [
   { colorset: "white", hex: "#f5f5f5" },
@@ -45,8 +49,7 @@ function DiceLane(props: {
   onDone: (id: string) => void;
 }) {
   const [ready, setReady] = createSignal(false);
-  const [total, setTotal] = createSignal<number | null>(null);
-  const [notation, setNotation] = createSignal("");
+  const [result, setResult] = createSignal<RollResult | null>(null);
   const [queue, setQueue] = createSignal<ChatMessage[]>([]);
   const processed = new Set<string>();
   let box: DiceBox | undefined;
@@ -109,7 +112,7 @@ function DiceLane(props: {
     } catch {
       // ignore
     }
-    setTotal(null);
+    setResult(null);
     try {
       const isReady = await waitReady();
       if (isReady && box && message.roll) {
@@ -120,8 +123,7 @@ function DiceLane(props: {
         }
       }
       if (message.roll) {
-        setTotal(message.roll.total);
-        setNotation(message.roll.notation);
+        setResult(message.roll);
       }
       props.onReveal(message);
       // The message is in chat now; the lane keeps the dice on screen a little
@@ -139,7 +141,7 @@ function DiceLane(props: {
         } catch {
           // ignore
         }
-        setTotal(null);
+        setResult(null);
       }, 10000);
       if (queue().length > 0) void pump();
     }
@@ -159,7 +161,7 @@ function DiceLane(props: {
     },
   );
 
-  const active = () => queue().length > 0 || total() !== null;
+  const active = () => queue().length > 0 || result() !== null;
 
   return (
     <div
@@ -169,12 +171,32 @@ function DiceLane(props: {
       style={{ "--lane-color": props.hex }}
     >
       <div class="ttrpg-dice-lane-head">{props.memberName}</div>
-      {total() !== null ? (
-        <div class="ttrpg-dice-total ttrpg-dice-lane-total">
-          <span class="ttrpg-dice-total-value">{total()}</span>
-          <span class="ttrpg-dice-total-label">{notation()}</span>
-        </div>
-      ) : null}
+      <Show when={result()}>
+        {(roll) => (
+          <div class="ttrpg-dice-total ttrpg-dice-lane-total">
+            <div {...sx(styles.rollResult)}>
+              <div {...sx(styles.rowWrap)}>
+                <For each={roll().dice}>
+                  {(die) => (
+                    <For each={die.results}>
+                      {(value) => (
+                        <span {...sx(styles.die)}>
+                          <span>{value}</span>
+                          <span {...sx(styles.dieLabel)}>d{die.sides}</span>
+                        </span>
+                      )}
+                    </For>
+                  )}
+                </For>
+              </div>
+              <Show when={showDiceTotals()}>
+                <span class="ttrpg-dice-total-label">Total {roll().total}</span>
+              </Show>
+              <span class="ttrpg-dice-total-label">{roll().notation}</span>
+            </div>
+          </div>
+        )}
+      </Show>
     </div>
   );
 }
