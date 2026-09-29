@@ -2,6 +2,7 @@ import { For, Show, createEffect, createSignal, onSettled } from "solid-js";
 import * as stylex from "@stylexjs/stylex";
 import { api } from "../client/api";
 import { computeStats } from "../domain/dice";
+import { trackerDisplay, trackerPips, trackerPipValue } from "../domain/trackers";
 import type {
   Character,
   SaveCharacterInput,
@@ -11,7 +12,8 @@ import type {
 } from "../domain/schemas";
 import { Button, EmptyState, Field, Input, Modal } from "./ui";
 import { styles } from "./styles.stylex";
-import { colors, fonts, radii } from "../theme/tokens.stylex";
+import { colors, fonts, radii, skin, space } from "../theme/tokens.stylex";
+import { useTheme } from "../theme/theme-context";
 import { sx } from "../theme/sx";
 
 // Dense, paper-sheet layout: players learn a sheet by heart, so favour seeing
@@ -22,7 +24,13 @@ const hairline = {
   borderColor: colors.border,
 } as const;
 const sheetStyles = stylex.create({
-  sheet: { display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px" },
+  sheet: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
+    fontSize: "13px",
+    fontFamily: fonts.body,
+  },
   bar: { display: "flex", alignItems: "center", gap: "2px", marginTop: "-2px" },
   barButton: {
     paddingInline: "6px",
@@ -36,7 +44,21 @@ const sheetStyles = stylex.create({
   },
   barPrimary: { color: colors.accent, fontWeight: 600 },
   barDanger: { color: colors.danger },
-  identity: { display: "flex", alignItems: "center", gap: "8px" },
+  identity: { display: "flex", alignItems: "center", gap: "8px", textAlign: "center" },
+  identityBand: {
+    marginInline: `calc(-1 * ${space.x3})`,
+    paddingInline: space.x3,
+    paddingBlock: "6px",
+    textAlign: "left",
+    backgroundColor: colors.accent,
+    backgroundImage: skin.band,
+    backgroundSize: skin.bandSize,
+    color: colors.accentText,
+    borderBottomWidth: "3px",
+    borderBottomStyle: "solid",
+    borderBottomColor: colors.borderStrong,
+  },
+  bandText: { color: colors.accentText },
   portrait: {
     flexShrink: 0,
     width: "40px",
@@ -69,6 +91,7 @@ const sheetStyles = stylex.create({
     cursor: "pointer",
   },
   rosterName: {
+    fontFamily: fonts.display,
     fontSize: "13px",
     fontWeight: 600,
     whiteSpace: "nowrap",
@@ -79,7 +102,7 @@ const sheetStyles = stylex.create({
     display: "flex",
     flexDirection: "column",
     alignItems: "flex-end",
-    fontFamily: fonts.mono,
+    fontFamily: fonts.numeric,
     fontSize: "11px",
     color: colors.textMuted,
     whiteSpace: "nowrap",
@@ -89,15 +112,23 @@ const sheetStyles = stylex.create({
   identityText: { display: "flex", flexDirection: "column", minWidth: 0, flex: 1 },
   name: {
     margin: 0,
-    fontSize: "17px",
-    fontWeight: 700,
+    fontFamily: fonts.display,
+    fontSize: "26px",
+    fontWeight: skin.headWeight,
+    textTransform: skin.nameTransform,
+    color: colors.accent,
     lineHeight: 1.15,
-    letterSpacing: "-0.01em",
+    letterSpacing: skin.nameTracking,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
-  nameInput: { fontSize: "15px", fontWeight: 600 },
+  nameInput: {
+    fontFamily: fonts.display,
+    fontSize: "20px",
+    letterSpacing: skin.nameTracking,
+    textTransform: skin.nameTransform,
+  },
   meta: {
     fontSize: "11px",
     color: colors.textMuted,
@@ -110,27 +141,30 @@ const sheetStyles = stylex.create({
     alignItems: "center",
     gap: "6px",
     marginTop: "4px",
-    fontFamily: fonts.mono,
-    fontSize: "10px",
-    letterSpacing: "0.08em",
-    textTransform: "uppercase",
-    color: colors.textFaint,
+    fontFamily: fonts.display,
+    fontSize: "12px",
+    fontWeight: skin.headWeight,
+    letterSpacing: skin.headTracking,
+    textTransform: skin.headTransform,
+    color: colors.accent,
+    "::before": { content: skin.ornament },
   },
   summary: { cursor: "pointer", userSelect: "none", listStyle: "none" },
-  rule: { flex: 1, height: "1px", backgroundColor: colors.border },
+  rule: { flex: 1, height: skin.ruleHeight, backgroundImage: skin.rule },
   trackers: { display: "flex", flexDirection: "column", gap: "3px" },
   tracker: {
     display: "grid",
-    gridTemplateColumns: "minmax(44px, max-content) 22px 1fr 22px",
+    gridTemplateColumns: "minmax(44px, max-content) 22px minmax(0, 1fr) 22px",
     alignItems: "center",
     columnGap: "4px",
     rowGap: "2px",
   },
   trackerLabel: {
+    fontFamily: fonts.display,
     fontSize: "11px",
-    fontWeight: 600,
-    textTransform: "uppercase",
-    letterSpacing: "0.03em",
+    fontWeight: skin.headWeight,
+    textTransform: skin.headTransform,
+    letterSpacing: skin.headTracking,
     color: colors.textMuted,
     whiteSpace: "nowrap",
   },
@@ -138,7 +172,8 @@ const sheetStyles = stylex.create({
     width: "22px",
     height: "22px",
     padding: 0,
-    borderRadius: radii.sm,
+    borderRadius: skin.stepperRadius,
+    transform: `rotate(${skin.stepperRotate})`,
     ...hairline,
     backgroundColor: { default: colors.surface, ":hover": colors.surfaceHover },
     color: colors.text,
@@ -147,20 +182,46 @@ const sheetStyles = stylex.create({
     cursor: "pointer",
     ":disabled": { opacity: 0.4, cursor: "default" },
   },
+  stepGlyph: { display: "inline-block", transform: `rotate(calc(-1 * ${skin.stepperRotate}))` },
+  ledgerStep: {
+    borderWidth: 0,
+    backgroundColor: "transparent",
+    transform: "none",
+    fontSize: "20px",
+  },
+  pipTracker: { gridTemplateColumns: "minmax(44px, max-content) minmax(0, 1fr) auto" },
+  pips: { display: "flex", flexWrap: "wrap", gap: "3px", paddingBlock: "3px" },
+  pip: {
+    width: skin.pipSize,
+    height: skin.pipSize,
+    flexShrink: 0,
+    padding: 0,
+    borderWidth: "2px",
+    borderStyle: "solid",
+    borderColor: skin.pipBorder,
+    borderRadius: skin.pipRadius,
+    backgroundColor: { default: "transparent", ":hover": colors.surfaceHover },
+    cursor: "pointer",
+    ":disabled": { cursor: "default" },
+  },
+  pipOn: { backgroundColor: { default: skin.pipOn, ":hover": skin.pipOn } },
+  trackerValue: { height: "22px", minWidth: "48px", position: "relative" },
+  ledgerValue: { height: "28px" },
+  ledgerNumber: { fontSize: "20px", paddingTop: 0 },
   meter: {
     position: "relative",
     height: "22px",
     overflow: "hidden",
-    borderRadius: radii.sm,
+    borderRadius: skin.controlRadius,
     ...hairline,
-    backgroundColor: colors.surfaceMuted,
+    backgroundColor: skin.meterTrack,
   },
   meterFill: {
     position: "absolute",
     insetBlock: 0,
     left: 0,
-    backgroundColor: colors.success,
-    opacity: 0.55,
+    backgroundImage: skin.meterFill,
+    opacity: 0.45,
   },
   meterValue: {
     position: "relative",
@@ -174,7 +235,7 @@ const sheetStyles = stylex.create({
     borderWidth: 0,
     backgroundColor: "transparent",
     color: colors.text,
-    fontFamily: fonts.mono,
+    fontFamily: fonts.numeric,
     fontSize: "13px",
     cursor: "text",
     ":disabled": { cursor: "default" },
@@ -187,12 +248,12 @@ const sheetStyles = stylex.create({
     borderWidth: 0,
     backgroundColor: colors.surface,
     color: colors.text,
-    fontFamily: fonts.mono,
+    fontFamily: fonts.numeric,
     fontSize: "13px",
     textAlign: "center",
   },
   maxEdit: {
-    gridColumn: "3 / 5",
+    gridColumn: "2 / -1",
     display: "flex",
     alignItems: "center",
     gap: "4px",
@@ -234,7 +295,7 @@ const sheetStyles = stylex.create({
     maxWidth: "100%",
     paddingInline: "4px",
   },
-  statValue: { fontFamily: fonts.mono, fontSize: "16px", fontWeight: 700, lineHeight: 1.1 },
+  statValue: { fontFamily: fonts.numeric, fontSize: "18px", fontWeight: 700, lineHeight: 1.1 },
   rolls: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fill, minmax(128px, 1fr))",
@@ -247,10 +308,12 @@ const sheetStyles = stylex.create({
     minWidth: 0,
     height: "26px",
     paddingInline: "6px",
-    borderRadius: radii.sm,
+    borderRadius: skin.controlRadius,
+    boxShadow: skin.controlShadow,
     ...hairline,
     backgroundColor: { default: colors.surface, ":hover": colors.surfaceHover },
     color: colors.text,
+    fontFamily: fonts.body,
     fontSize: "12px",
     textAlign: "left",
     cursor: "pointer",
@@ -273,7 +336,7 @@ const sheetStyles = stylex.create({
     color: colors.accent,
   },
   rollDice: {
-    fontFamily: fonts.mono,
+    fontFamily: fonts.numeric,
     fontSize: "11px",
     color: colors.textMuted,
     whiteSpace: "nowrap",
@@ -298,6 +361,7 @@ const sheetStyles = stylex.create({
   fieldWide: { gridColumn: "1 / -1", flexDirection: "column", alignItems: "stretch", gap: "2px" },
   fieldLabel: { fontSize: "11px", color: colors.textMuted, whiteSpace: "nowrap" },
   fieldValue: {
+    fontFamily: fonts.body,
     flex: 1,
     minWidth: 0,
     textAlign: "right",
@@ -318,10 +382,12 @@ const sheetStyles = stylex.create({
     minWidth: 0,
     height: "24px",
     paddingInline: "5px",
-    borderRadius: radii.sm,
+    borderRadius: skin.controlRadius,
+    boxShadow: skin.controlShadow,
     ...hairline,
     backgroundColor: colors.surface,
     color: colors.text,
+    fontFamily: fonts.body,
     fontSize: "12px",
     ":focus": { borderColor: colors.accent, outline: "none" },
   },
@@ -356,6 +422,8 @@ const templateFor = (templates: SheetTemplate[], character: Character) =>
 const selectionKey = (worldId: string) => `ttrpg:selected-character:${worldId}`;
 
 export function CharacterSheets(props: Props) {
+  const theme = useTheme();
+  const bandHeader = () => theme.skin().header === "band";
   const stored =
     typeof localStorage !== "undefined" ? localStorage.getItem(selectionKey(props.worldId)) : null;
   const [selectedId, setSelectedId] = createSignal<string | null>(stored);
@@ -633,7 +701,7 @@ export function CharacterSheets(props: Props) {
                       </Show>
                     </div>
 
-                    <div {...sx(sheetStyles.identity)}>
+                    <div {...sx(sheetStyles.identity, bandHeader() && sheetStyles.identityBand)}>
                       <label
                         {...sx(
                           sheetStyles.portrait,
@@ -672,7 +740,11 @@ export function CharacterSheets(props: Props) {
                       <div {...sx(sheetStyles.identityText)}>
                         <Show
                           when={editing()}
-                          fallback={<h2 {...sx(sheetStyles.name)}>{character().name}</h2>}
+                          fallback={
+                            <h2 {...sx(sheetStyles.name, bandHeader() && sheetStyles.bandText)}>
+                              {character().name}
+                            </h2>
+                          }
                         >
                           <input
                             {...sx(sheetStyles.input, sheetStyles.nameInput)}
@@ -681,7 +753,7 @@ export function CharacterSheets(props: Props) {
                             onInput={(event) => setDraftName(event.currentTarget.value)}
                           />
                         </Show>
-                        <span {...sx(sheetStyles.meta)}>
+                        <span {...sx(sheetStyles.meta, bandHeader() && sheetStyles.bandText)}>
                           {memberName(character())} · {sheet().name}
                         </span>
                       </div>
@@ -698,6 +770,7 @@ export function CharacterSheets(props: Props) {
                       <div {...sx(sheetStyles.trackers)}>
                         <For each={sheet().tickers}>
                           {(ticker) => {
+                            const display = () => trackerDisplay(ticker);
                             const current = () =>
                               character().tickers[ticker.id] ?? ticker.defaultValue;
                             const maximum = () => character().tickerMax?.[ticker.id] ?? ticker.max;
@@ -714,28 +787,76 @@ export function CharacterSheets(props: Props) {
                             const pct = () =>
                               `${Math.max(0, Math.min(100, Math.round(((current() - ticker.min) / Math.max(1, maximum() - ticker.min)) * 100)))}%`;
                             return (
-                              <div {...sx(sheetStyles.tracker)}>
+                              <div
+                                {...sx(
+                                  sheetStyles.tracker,
+                                  display() === "pips" && sheetStyles.pipTracker,
+                                )}
+                              >
                                 <span {...sx(sheetStyles.trackerLabel)}>{ticker.label}</span>
-                                <button
-                                  {...sx(sheetStyles.step)}
-                                  aria-label={`Decrease ${ticker.label}`}
-                                  disabled={locked()}
-                                  onClick={() =>
-                                    props.onTicker(character().id, ticker.id, current() - 1)
-                                  }
-                                >
-                                  −
-                                </button>
-                                <div {...sx(sheetStyles.meter)}>
+                                <Show when={display() === "pips"}>
                                   <div
-                                    {...sx(sheetStyles.meterFill)}
-                                    style={{ width: pct(), "background-color": ticker.color }}
-                                  />
+                                    {...sx(sheetStyles.pips)}
+                                    role="group"
+                                    aria-label={ticker.label}
+                                  >
+                                    <For each={trackerPips(ticker.min, maximum())}>
+                                      {(point) => (
+                                        <button
+                                          {...sx(
+                                            sheetStyles.pip,
+                                            point <= current() && sheetStyles.pipOn,
+                                          )}
+                                          aria-label={`Set ${ticker.label} to ${point}`}
+                                          aria-pressed={point <= current() ? "true" : "false"}
+                                          disabled={locked()}
+                                          onClick={() =>
+                                            props.onTicker(
+                                              character().id,
+                                              ticker.id,
+                                              trackerPipValue(point, current()),
+                                            )
+                                          }
+                                        />
+                                      )}
+                                    </For>
+                                  </div>
+                                </Show>
+                                <Show when={display() !== "pips"}>
+                                  <button
+                                    {...sx(
+                                      sheetStyles.step,
+                                      display() === "number" && sheetStyles.ledgerStep,
+                                    )}
+                                    aria-label={`Decrease ${ticker.label}`}
+                                    disabled={locked()}
+                                    onClick={() =>
+                                      props.onTicker(character().id, ticker.id, current() - 1)
+                                    }
+                                  >
+                                    <span {...sx(display() === "bar" && sheetStyles.stepGlyph)}>
+                                      {display() === "number" ? "⊖" : "−"}
+                                    </span>
+                                  </button>
+                                </Show>
+                                <div
+                                  {...sx(
+                                    sheetStyles.trackerValue,
+                                    display() === "bar" && sheetStyles.meter,
+                                    display() === "number" && sheetStyles.ledgerValue,
+                                  )}
+                                >
+                                  <Show when={display() === "bar"}>
+                                    <div {...sx(sheetStyles.meterFill)} style={{ width: pct() }} />
+                                  </Show>
                                   <Show
                                     when={entering()}
                                     fallback={
                                       <button
-                                        {...sx(sheetStyles.meterValue)}
+                                        {...sx(
+                                          sheetStyles.meterValue,
+                                          display() === "number" && sheetStyles.ledgerNumber,
+                                        )}
                                         aria-label={`Set ${ticker.label}, now ${current()} of ${maximum()}`}
                                         disabled={locked()}
                                         onClick={() => {
@@ -749,7 +870,10 @@ export function CharacterSheets(props: Props) {
                                     }
                                   >
                                     <input
-                                      {...sx(sheetStyles.meterInput)}
+                                      {...sx(
+                                        sheetStyles.meterInput,
+                                        display() === "number" && sheetStyles.ledgerNumber,
+                                      )}
                                       type="number"
                                       step="1"
                                       aria-label={`${ticker.label} value`}
@@ -775,16 +899,23 @@ export function CharacterSheets(props: Props) {
                                     />
                                   </Show>
                                 </div>
-                                <button
-                                  {...sx(sheetStyles.step)}
-                                  aria-label={`Increase ${ticker.label}`}
-                                  disabled={locked()}
-                                  onClick={() =>
-                                    props.onTicker(character().id, ticker.id, current() + 1)
-                                  }
-                                >
-                                  +
-                                </button>
+                                <Show when={display() !== "pips"}>
+                                  <button
+                                    {...sx(
+                                      sheetStyles.step,
+                                      display() === "number" && sheetStyles.ledgerStep,
+                                    )}
+                                    aria-label={`Increase ${ticker.label}`}
+                                    disabled={locked()}
+                                    onClick={() =>
+                                      props.onTicker(character().id, ticker.id, current() + 1)
+                                    }
+                                  >
+                                    <span {...sx(display() === "bar" && sheetStyles.stepGlyph)}>
+                                      {display() === "number" ? "⊕" : "+"}
+                                    </span>
+                                  </button>
+                                </Show>
                                 <Show when={editing()}>
                                   <label {...sx(sheetStyles.maxEdit)}>
                                     <span>max</span>
