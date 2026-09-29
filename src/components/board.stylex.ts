@@ -283,7 +283,8 @@ export const boardStyles = stylex.create({
     boxShadow: skin.controlShadow,
     fontFamily: fonts.display,
     fontWeight: skin.headWeight,
-    letterSpacing: skin.headTracking,
+    // Half the heading tracking: toolbar labels must fit one row even in spaced-out themes.
+    letterSpacing: `calc(${skin.headTracking} / 2)`,
     textTransform: skin.headTransform,
     flexShrink: 0,
     minWidth: { default: "36px", "@media (pointer: coarse)": "44px" },

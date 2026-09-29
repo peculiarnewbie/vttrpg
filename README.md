@@ -81,9 +81,21 @@ pnpm db:migrate:preview
 
 ## Theming
 
-Two themes ship: `posthog` (warm light paper) and `factory` (dark terminal).
-Design tokens live in `src/theme/tokens.stylex.ts`; toggling happens in
-`src/theme/theme-context.tsx`.
+Three art directions ship, chosen per player from the ⚙ menu (stored per browser):
+**Rulebook** (a printed page: paper grain, EB Garamond and IM Fell small caps, one
+oxblood accent), **OSR zine** (black on off-white with one riso pink, Anton and IBM
+Plex Mono, hard offsets), and **Dark fantasy** (black, bronze and gold, Cinzel and
+Alegreya). Older saved choices migrate: PostHog → Rulebook, Factory → Dark fantasy.
+
+Tokens live in `src/theme/tokens.stylex.ts`: colours, font roles (`display`, `body`,
+`numeric`), and a `skin` group for texture, rules, ornaments, control and tracker
+shapes. Each theme is a set of `stylex.createTheme` overrides in `src/theme/themes.ts`;
+`skins` there holds the few structural differences CSS can't express (the zine's
+halftone name band). Fonts are self-hosted via Fontsource and only download when a
+theme uses them. Prototypes of the three sheets live at `/lab/sheets`.
+
+Tracker display is a per-tracker template option (Auto, Pips, Bar, Number); Auto
+shows pips for ranges of 12 or less and a bar otherwise.
 
 ## Realtime protocol
 

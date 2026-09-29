@@ -378,7 +378,7 @@ export function Chat(props: {
             }
           }}
         />
-        <div {...sx(styles.rowWrap)}>
+        <div {...sx(styles.composerControls)}>
           <Button
             small
             variant={showDice() ? "primary" : "default"}
@@ -402,7 +402,7 @@ export function Chat(props: {
           <label {...sx(styles.chatAudienceSelect)}>
             <span {...sx(styles.faint)}>To</span>
             <select
-              {...sx(styles.select)}
+              {...sx(styles.select, styles.composerSelect)}
               aria-label="Who hears this"
               value={audience()}
               onChange={(event) => setAudience(event.currentTarget.value)}
@@ -417,7 +417,6 @@ export function Chat(props: {
               </For>
             </select>
           </label>
-          <div {...sx(styles.spacer)} />
           <Button type="submit" variant="primary" disabled={!props.connected || !text().trim()}>
             Send
           </Button>

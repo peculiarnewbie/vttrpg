@@ -221,7 +221,7 @@ const sheetStyles = stylex.create({
     insetBlock: 0,
     left: 0,
     backgroundImage: skin.meterFill,
-    opacity: 0.45,
+    opacity: 0.9,
   },
   meterValue: {
     position: "relative",
@@ -235,6 +235,7 @@ const sheetStyles = stylex.create({
     borderWidth: 0,
     backgroundColor: "transparent",
     color: colors.text,
+    textShadow: `0 0 2px ${colors.surface}, 0 0 3px ${colors.surface}, 0 0 4px ${colors.surface}`,
     fontFamily: fonts.numeric,
     fontSize: "13px",
     cursor: "text",
@@ -263,7 +264,7 @@ const sheetStyles = stylex.create({
   maxInput: { width: "64px" },
   stats: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(72px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(72px, 1fr))",
     borderTopWidth: "1px",
     borderTopStyle: "solid",
     borderTopColor: colors.border,
@@ -366,9 +367,7 @@ const sheetStyles = stylex.create({
     minWidth: 0,
     textAlign: "right",
     fontWeight: 600,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
+    overflowWrap: "anywhere",
   },
   longtext: {
     textAlign: "left",

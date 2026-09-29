@@ -664,12 +664,22 @@ export const styles = stylex.create({
     fontWeight: fontWeight.regular,
     color: colors.textMuted,
   },
+  // One row at any panel width: the "To" picker absorbs the slack, Send stays put.
+  composerControls: {
+    display: "flex",
+    alignItems: "center",
+    gap: space.x2,
+    flexWrap: "nowrap",
+    minWidth: 0,
+  },
+  composerSelect: { flex: 1, minWidth: 0, width: "100%" },
   chatAudienceSelect: {
     display: "inline-flex",
     alignItems: "center",
     gap: space.x2,
     fontSize: fontSize.micro,
     minWidth: 0,
+    flex: 1,
   },
   chatEmpty: {
     height: "100%",
