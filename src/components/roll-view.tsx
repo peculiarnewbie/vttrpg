@@ -65,6 +65,25 @@ export function RollView(props: { roll: RollResult; showTotal: boolean }) {
   const several = () => rollGroups(props.roll).length > 1;
   return (
     <div {...sx(v.roll)}>
+      <Show when={props.roll.table}>
+        {(table) => (
+          <div {...sx(v.table)}>
+            <Show
+              when={table().row}
+              fallback={<span {...sx(v.tableNone)}>No row for {props.roll.total}</span>}
+            >
+              {(row) => (
+                <span>
+                  <span {...sx(v.tableRange)}>
+                    {row().min === row().max ? row().min : `${row().min}–${row().max}`}
+                  </span>{" "}
+                  {row().text}
+                </span>
+              )}
+            </Show>
+          </div>
+        )}
+      </Show>
       <For each={rollGroups(props.roll)}>
         {(group) => (
           <div {...sx(styles.rollResult)}>
@@ -100,5 +119,9 @@ const v = stylex.create({
     borderStyle: "dashed",
   },
   sign: { fontFamily: fonts.numeric, color: colors.textMuted },
+  // The oracle's row reads first: it is what people rolled for (the message names the table).
+  table: { display: "flex", flexDirection: "column", gap: "1px", fontSize: fontSize.body },
+  tableRange: { fontFamily: fonts.numeric, color: colors.textMuted },
+  tableNone: { color: colors.textMuted, fontStyle: "italic" },
   sides: { fontFamily: fonts.numeric, fontSize: fontSize.micro, color: colors.textMuted },
 });

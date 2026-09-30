@@ -30,7 +30,17 @@ function inline(text: string, entryLink?: EntryLinkResolver): string {
     result += escapeHtml(text.slice(offset, match.index));
     if (match[1] !== undefined) {
       const part = splitEntryLinks(match[0])[0];
-      if (part.kind === "text") continue;
+      if (part.kind === "text") {
+        result += escapeHtml(part.text);
+        offset = match.index + match[0].length;
+        continue;
+      }
+      if (part.kind === "roll") {
+        const label = part.label ?? part.notation;
+        result += `<button type="button" class="ttrpg-inline-roll" data-roll="${escapeHtml(part.notation)}" data-label="${escapeHtml(label)}">${escapeHtml(label)}</button>`;
+        offset = match.index + match[0].length;
+        continue;
+      }
       const name = part.kind === "ref" ? part.label : part.name;
       const id = entryLink?.(part.kind === "ref" ? { name, id: part.id } : { name });
       result += id

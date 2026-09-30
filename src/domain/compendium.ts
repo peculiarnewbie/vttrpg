@@ -16,6 +16,18 @@ export { EntryVisibility, IndexRow };
  * into list rows (lists with a `source`).
  */
 
+/**
+ * - `select` one of `options` (a spell's school); `set` any of them (a
+ *   monster's senses).
+ * - `reference` other entries by id (a class's features, a monster's spells),
+ *   of the types in `ref.typeIds`; one id, or several with `ref.multiple`.
+ * - `actions` rows of `{name, roll?, text?}` — attacks, moves, abilities; each
+ *   roll is clickable wherever the entry shows.
+ * - `progression` rows keyed by `level` (a number) plus the field's `columns`
+ *   (e.g. `features`, `proficiency`); sheets show the rows up to a level.
+ * - `oracle` a rollable table: `dice` notation and rows `{min, max, text}`;
+ *   rolling shows the row the dice landed on — the table decides what it means.
+ */
 export const EntryFieldKind = Schema.Literals([
   "text",
   "longtext",
@@ -23,6 +35,12 @@ export const EntryFieldKind = Schema.Literals([
   "dice",
   "tags",
   "list",
+  "select",
+  "set",
+  "reference",
+  "actions",
+  "progression",
+  "oracle",
 ]);
 export type EntryFieldKind = typeof EntryFieldKind.Type;
 
@@ -30,8 +48,19 @@ export const EntryField = Schema.Struct({
   key: Schema.String,
   label: Schema.String,
   kind: EntryFieldKind,
-  /** Row shape for `list` fields (a Knight's starting Property). */
+  /** Row shape for `list` fields (a Knight's starting Property) and extra `progression` columns. */
   columns: Schema.optional(Schema.Array(ListColumn)),
+  /** Choices for `select` and `set`. */
+  options: Schema.optional(Schema.Array(Schema.String)),
+  /** What a `reference` field may point at. */
+  ref: Schema.optional(
+    Schema.Struct({
+      typeIds: Schema.Array(Schema.String),
+      multiple: Schema.optional(Schema.Boolean),
+    }),
+  ),
+  /** Notation an `oracle` field rolls, e.g. `1d100`. */
+  dice: Schema.optional(Schema.String),
 });
 export type EntryField = typeof EntryField.Type;
 
@@ -43,6 +72,20 @@ export const EntryType = Schema.Struct({
   /** Plural for headings, e.g. "Knights"; defaults to `name`. */
   plural: Schema.optional(Schema.String),
   fields: Schema.Array(EntryField),
+  /**
+   * Fields people filter this type by (a spell's level and school): they're
+   * copied into index rows as `facets`, so pickers and the compendium page can
+   * filter without loading entries. `range` for numbers, `set` for
+   * select/set/tags, `flag` for a field that's filled or not.
+   */
+  filters: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        key: Schema.String,
+        kind: Schema.Literals(["range", "set", "flag"]),
+      }),
+    ),
+  ),
 });
 export type EntryType = typeof EntryType.Type;
 

@@ -437,7 +437,11 @@ type Props = {
   onSave: (input: SaveCharacterInput) => Promise<void>;
   onDelete: (characterId: string) => Promise<void>;
   onUploadAvatar: (characterId: string, file: File) => Promise<void>;
+  /** Lock or unlock a shared sheet (DM). */
+  onLock?: (characterId: string, locked: boolean) => void;
 };
+
+const shared = (character: Character) => character.scope === "world";
 
 const templateFor = (templates: SheetTemplate[], character: Character) =>
   templates.find((template) => template.id === character.templateId) ?? templates[0];
@@ -467,7 +471,15 @@ export function CharacterSheets(props: Props) {
 
   const selected = () =>
     props.characters.find((character) => character.id === selectedId()) ?? null;
-  const canEdit = (character: Character) => props.isDm || character.memberId === props.me.id;
+  // Shared sheets (a crew, a steading) are everyone's until the DM locks one.
+  const canEdit = (character: Character) =>
+    props.isDm || (shared(character) ? !character.locked : character.memberId === props.me.id);
+  const isShared = (templateId: string) =>
+    props.templates.find((template) => template.id === templateId)?.layout?.subject === "shared";
+  const roster = () => [
+    ...props.characters.filter(shared),
+    ...props.characters.filter((character) => !shared(character)),
+  ];
 
   const select = (characterId: string | null) => {
     setSelectedId(characterId);
@@ -548,18 +560,25 @@ export function CharacterSheets(props: Props) {
   const create = async (event: Event) => {
     event.preventDefault();
     if (!newName().trim()) return;
+    const templateId = newTemplateId() || props.templates[0]?.id || "";
     await props.onSave({
       name: newName().trim(),
-      templateId: newTemplateId() || props.templates[0]?.id || "",
-      memberId: props.isDm ? newMemberId() : props.me.id,
+      templateId,
+      memberId: props.isDm && !isShared(templateId) ? newMemberId() : props.me.id,
       values: {},
+      ...(isShared(templateId) ? { scope: "world" as const } : {}),
     });
     setNewName("");
     setCreating(false);
   };
 
   const memberName = (character: Character) =>
-    props.members.find((member) => member.id === character.memberId)?.displayName ?? "Unassigned";
+    shared(character)
+      ? character.locked
+        ? "Shared · locked"
+        : "Shared"
+      : (props.members.find((member) => member.id === character.memberId)?.displayName ??
+        "Unassigned");
 
   return (
     <div {...sx(styles.col)}>
@@ -578,7 +597,7 @@ export function CharacterSheets(props: Props) {
       >
         <Show when={view() === "list"}>
           <div {...sx(sheetStyles.roster)}>
-            <For each={props.characters}>
+            <For each={roster()}>
               {(character) => {
                 const trackers = () => trackerDefinitions(templateFor(props.templates, character));
                 return (
@@ -659,6 +678,20 @@ export function CharacterSheets(props: Props) {
                             Edit
                           </button>
                         </Show>
+                      </Show>
+                      <Show when={props.isDm && !editing() && shared(character()) && props.onLock}>
+                        <button
+                          {...sx(sheetStyles.barButton)}
+                          aria-pressed={character().locked ? "true" : "false"}
+                          title={
+                            character().locked
+                              ? "Let every member edit this sheet again"
+                              : "Only you can edit it while it's locked"
+                          }
+                          onClick={() => props.onLock?.(character().id, !character().locked)}
+                        >
+                          {character().locked ? "Unlock" : "Lock"}
+                        </button>
                       </Show>
                       <Show when={props.isDm && !editing()}>
                         <button
@@ -845,7 +878,12 @@ export function CharacterSheets(props: Props) {
               </For>
             </select>
           </Field>
-          <Show when={props.isDm}>
+          <Show when={isShared(newTemplateId())}>
+            <span {...sx(styles.muted)}>
+              A shared sheet: every member can edit it, and you can lock it.
+            </span>
+          </Show>
+          <Show when={props.isDm && !isShared(newTemplateId())}>
             <Field label="Assign to player">
               <select
                 {...sx(styles.select)}

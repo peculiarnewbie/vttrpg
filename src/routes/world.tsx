@@ -337,6 +337,12 @@ export default function WorldPage() {
     { id: "notes", label: "Notes" },
     { id: "compendium", label: "Compendium" },
   ];
+  /** Roll an entry's oracle table; the server finds the row the dice land on. */
+  const rollTable = (entryId: string, field: string) => {
+    if (status() === "open")
+      controller?.send({ type: "roll.table", entryId, field, visibility: "public" });
+  };
+
   /**
    * A labelled public roll from a sheet or compendium card ("Longsword · d8").
    * `sheet` lets the server resolve `@refs` against that character (and a list row).
@@ -511,6 +517,7 @@ export default function WorldPage() {
                     onRollDice={rollDice}
                     compendium={compendium}
                     onOpenEntry={setOpenEntry}
+                    onRollInline={(notation, label) => rollLabelled(notation, label)}
                   />
                 </section>
                 <aside
@@ -560,6 +567,9 @@ export default function WorldPage() {
                         onValue={setCharacterValue}
                         onLayoutPref={setLayoutPref}
                         onRollDice={rollLabelled}
+                        onLock={(characterId, locked) =>
+                          controller?.send({ type: "character.lock", characterId, locked })
+                        }
                         compendium={compendium}
                         onOpenEntry={setOpenEntry}
                         onSave={saveCharacter}
@@ -576,6 +586,7 @@ export default function WorldPage() {
                         onNotes={setNotes}
                         compendium={compendium}
                         onOpenEntry={setOpenEntry}
+                        onRollInline={(notation, label) => rollLabelled(notation, label)}
                       />
                     </div>
                     <Show when={tab() === "compendium"}>
@@ -584,6 +595,7 @@ export default function WorldPage() {
                         isDm={isDm()}
                         compendium={compendium}
                         onRoll={(label, dice) => rollLabelled(dice, label)}
+                        onRollTable={rollTable}
                         onSetup={() => navigate(`/worlds/${params.id}/settings?section=compendium`)}
                         search={(query) =>
                           controller ? controller.search(query) : Promise.resolve([])
@@ -627,6 +639,7 @@ export default function WorldPage() {
                   entry={entry()}
                   type={type()}
                   onRoll={(label, dice) => rollLabelled(dice, label)}
+                  onRollTable={rollTable}
                   compendium={compendium}
                   onOpenEntry={setOpenEntry}
                 />

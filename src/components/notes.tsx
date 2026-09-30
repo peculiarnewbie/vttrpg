@@ -21,6 +21,8 @@ export function NotesPanel(props: {
   /** For `[[Entry]]` links in notes and suggestions while writing. */
   compendium?: CompendiumStore;
   onOpenEntry?: (entryId: string) => void;
+  /** Roll an inline `[[r:…]]` roll in a note. */
+  onRollInline?: (notation: string, label: string) => void;
 }) {
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
   const [ownerId, setOwnerId] = createSignal<string | null>(null);
@@ -37,8 +39,10 @@ export function NotesPanel(props: {
 
   const entryLink = (link: { name: string; id?: string }) => linkedRow(props.compendium, link)?.id;
   const openLink = (event: MouseEvent) => {
-    const link = (event.target as Element).closest<HTMLElement>("[data-entry-id]");
+    const link = (event.target as Element).closest<HTMLElement>("[data-entry-id], [data-roll]");
     if (link?.dataset.entryId) props.onOpenEntry?.(link.dataset.entryId);
+    else if (link?.dataset.roll)
+      props.onRollInline?.(link.dataset.roll, link.dataset.label || link.dataset.roll);
   };
   const suggest = createLinkSuggest({
     entries: () => props.compendium?.rows() ?? [],

@@ -43,6 +43,15 @@ import {
 import { searchEntries } from "../domain/compendium-search";
 import { evaluate, parseExpr, type Expr } from "../domain/derived";
 import { sheetDerived, sheetScope } from "../domain/sheet-refs";
+import {
+  PROGRESS_BOXES,
+  TICKS_PER_BOX,
+  clampTicks,
+  progressBoxes,
+  progressScore,
+} from "../domain/progress";
+import { slotLayout } from "../domain/slots";
+import { rowsUpToLevel } from "../domain/progression";
 import { colors, fonts, radii, skin } from "../theme/tokens.stylex";
 import { useTheme } from "../theme/theme-context";
 import { moveIndex } from "../client/sortable";
@@ -303,6 +312,16 @@ const s = stylex.create({
     fontWeight: 700,
   },
   clock: { cursor: "pointer", display: "block", color: colors.accent },
+  progress: { display: "inline-flex", alignItems: "center", gap: "5px", flexWrap: "wrap" },
+  progressBoxes: { display: "inline-flex", gap: "2px" },
+  progressBox: {
+    display: "block",
+    ...hair,
+    borderColor: colors.borderStrong,
+    color: colors.accent,
+    backgroundColor: colors.surface,
+  },
+  progressBoxLive: { cursor: "pointer" },
   // stats and fields
   stats: {
     display: "grid",
@@ -468,7 +487,7 @@ const s = stylex.create({
   slots: { display: "flex", flexDirection: "column" },
   slot: {
     display: "grid",
-    gridTemplateColumns: "16px minmax(0, 1fr)",
+    gridTemplateColumns: "minmax(16px, auto) minmax(0, 1fr)",
     alignItems: "baseline",
     gap: "4px",
     minHeight: "21px",
@@ -476,6 +495,22 @@ const s = stylex.create({
     ...underline,
   },
   slotNumber: { fontFamily: fonts.numeric, fontSize: "11px", color: colors.textFaint },
+  slotCount: {
+    alignSelf: "flex-end",
+    fontFamily: fonts.numeric,
+    fontSize: "11px",
+    color: colors.textMuted,
+  },
+  slotOver: { color: colors.danger },
+  progression: { display: "flex", flexDirection: "column", gap: "1px", fontSize: "13px" },
+  progressionRow: {
+    display: "grid",
+    gridTemplateColumns: "2em minmax(0, 1fr)",
+    gap: "6px",
+    ...underline,
+  },
+  progressionNow: { fontWeight: 700 },
+  progressionLevel: { fontFamily: fonts.numeric, color: colors.textMuted, textAlign: "right" },
   slotBody: { display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "6px" },
   // checks, text, rolls
   chips: { display: "flex", flexWrap: "wrap", gap: "3px" },
@@ -778,6 +813,67 @@ function Clock(props: { item: TrackerItem; value: number; set: (n: number) => vo
   );
 }
 
+/**
+ * An Ironsworn-style progress track: ten boxes of four ticks. Ticks draw as
+ * strokes (/ then X, then the box's sides); clicking a box fills up to it and
+ * the steppers mark a single tick. The score is the number of full boxes.
+ */
+function ProgressTrack(props: {
+  label: string;
+  ticks: number;
+  set?: (ticks: number) => void;
+  small?: boolean;
+}) {
+  const size = () => (props.small ? 11 : 18);
+  const strokes = (ticks: number) => {
+    const s = size() - 3;
+    return [
+      `M 2 ${s + 1} L ${s + 1} 2`,
+      `M 2 2 L ${s + 1} ${s + 1}`,
+      `M ${size() / 2} 1 L ${size() / 2} ${s + 2}`,
+      `M 1 ${size() / 2} L ${s + 2} ${size() / 2}`,
+    ].slice(0, ticks);
+  };
+  const setTo = (ticks: number) => props.set?.(clampTicks(ticks));
+  return (
+    <span {...sx(s.progress)}>
+      <Show when={props.set && !props.small}>
+        <Stepper label={props.label} glyph="−" onClick={() => setTo(props.ticks - 1)} />
+      </Show>
+      <span
+        {...sx(s.progressBoxes)}
+        role="group"
+        aria-label={`${props.label} progress, ${progressScore(props.ticks)} of ${PROGRESS_BOXES}`}
+      >
+        <For each={progressBoxes(props.ticks)}>
+          {(ticks, box) => (
+            <svg
+              {...sx(s.progressBox, props.set && s.progressBoxLive)}
+              width={size()}
+              height={size()}
+              viewBox={`0 0 ${size()} ${size()}`}
+              role={props.set ? "button" : undefined}
+              aria-label={props.set ? `Fill ${props.label} to box ${box() + 1}` : undefined}
+              onClick={() => {
+                const full = (box() + 1) * TICKS_PER_BOX;
+                setTo(props.ticks === full ? full - TICKS_PER_BOX : full);
+              }}
+            >
+              <For each={strokes(ticks)}>
+                {(d) => <path d={d} stroke="currentColor" stroke-width="1.6" fill="none" />}
+              </For>
+            </svg>
+          )}
+        </For>
+      </span>
+      <Show when={props.set && !props.small}>
+        <Stepper label={props.label} glyph="+" onClick={() => setTo(props.ticks + 1)} />
+      </Show>
+      <span {...sx(s.ofMax)}>{progressScore(props.ticks)}</span>
+    </span>
+  );
+}
+
 function Tracker(props: {
   item: TrackerItem;
   boxed: boolean;
@@ -805,6 +901,9 @@ function Tracker(props: {
       </Match>
       <Match when={display() === "clock"}>
         <Clock item={props.item} value={props.value} set={props.set} />
+      </Match>
+      <Match when={display() === "progress"}>
+        <ProgressTrack label={props.item.label} ticks={props.value} set={props.set} />
       </Match>
       <Match when={display() === "bar"}>
         <span {...sx(s.numberLine)} style={{ flex: 1 }}>
@@ -922,10 +1021,20 @@ function Cell(props: {
   onRoll: (dice: string) => void;
   onToggle: () => void;
   derived: (column: ListColumn, row: ListRow) => number | undefined;
+  /** Set this cell's value in place (progress tracks mark ticks without editing the sheet). */
+  onSet?: (value: number) => void;
 }) {
   const value = () => props.row?.[props.column.key];
   return (
     <Switch fallback={<span>{value() === undefined ? "" : String(value())}</span>}>
+      <Match when={props.column.kind === "progress" && props.row}>
+        <ProgressTrack
+          small
+          label={props.column.label}
+          ticks={clampTicks(value())}
+          set={props.onSet}
+        />
+      </Match>
       <Match when={props.column.kind === "derived"}>
         <span {...sx(s.derivedCell)}>
           {props.row ? formatNumber(props.derived(props.column, props.row) ?? 0) : ""}
@@ -1194,13 +1303,15 @@ function Stats(props: { items: readonly StatItem[]; variant: string; ctx: Ctx })
 }
 
 const emptyCell = (column: ListColumn): ListRow[string] =>
-  column.kind === "number"
-    ? ""
-    : column.kind === "tags"
-      ? []
-      : column.kind === "check"
-        ? false
-        : "";
+  column.kind === "progress"
+    ? 0
+    : column.kind === "number"
+      ? ""
+      : column.kind === "tags"
+        ? []
+        : column.kind === "check"
+          ? false
+          : "";
 
 /**
  * Edits a list block's rows in place: every cell is an input that commits on
@@ -1289,6 +1400,29 @@ export function ListEditor(props: {
                             )}
                           </span>
                         </Match>
+                        <Match when={column.kind === "select"}>
+                          <select
+                            {...sx(s.input)}
+                            aria-label={label(column, index)}
+                            value={typeof value() === "string" ? (value() as string) : ""}
+                            onChange={(event) =>
+                              setCell(index, column.key, event.currentTarget.value)
+                            }
+                          >
+                            <option value="">—</option>
+                            <For each={column.options ?? []}>
+                              {(option) => <option value={option}>{option}</option>}
+                            </For>
+                          </select>
+                        </Match>
+                        <Match when={column.kind === "progress"}>
+                          <ProgressTrack
+                            small
+                            label={label(column, index)}
+                            ticks={clampTicks(value())}
+                            set={(ticks) => setCell(index, column.key, ticks)}
+                          />
+                        </Match>
                         <Match when={column.kind === "check"}>
                           <button
                             {...sx(s.box, value() === true && s.boxOn)}
@@ -1343,6 +1477,13 @@ export function ListEditor(props: {
 function List(props: { block: Extract<LeafBlock, { type: "list" }>; variant: string; ctx: Ctx }) {
   const rows = () => (props.ctx.values[props.block.key] as readonly ListRow[] | undefined) ?? [];
   const count = () => Math.max(rows().length, props.block.slots ?? 0);
+  // Bulky rows take several slots; the count is shown, never enforced.
+  const slots = () => slotLayout(rows(), props.block.slotSize);
+  const emptySlots = () =>
+    Array.from(
+      { length: Math.max(0, (props.block.slots ?? 0) - slots().used) },
+      (_, i) => slots().used + i,
+    );
   const indexes = () => Array.from({ length: count() }, (_, i) => i);
   const [first, ...rest] = props.block.columns;
   const rowLabel = (index: number) => String(rows()[index]?.[first.key] ?? "");
@@ -1424,6 +1565,15 @@ function List(props: { block: Extract<LeafBlock, { type: "list" }>; variant: str
           onRoll={rollRow(index)}
           onToggle={() => toggle(index, column.key)}
           derived={props.ctx.derivedCell}
+          onSet={
+            props.ctx.readOnly
+              ? undefined
+              : (next) =>
+                  props.ctx.onChange(
+                    props.block.key,
+                    rows().map((row, i) => (i === index ? { ...row, [column.key]: next } : row)),
+                  )
+          }
         />
       }
     >
@@ -1503,14 +1653,38 @@ function List(props: { block: Extract<LeafBlock, { type: "list" }>; variant: str
         </Match>
         <Match when={props.variant === "slots"}>
           <div {...sx(s.slots)}>
-            <For each={indexes()}>
-              {(index) => (
-                <div {...sx(s.slot)}>
-                  <span {...sx(s.slotNumber)}>{index + 1}</span>
-                  <span {...sx(s.slotBody)}>
-                    <For each={props.block.columns}>{(column) => cell(index, column)}</For>
-                    {rowRoll(index)}
+            <Show when={props.block.slotSize}>
+              <span
+                {...sx(s.slotCount, slots().used > (props.block.slots ?? Infinity) && s.slotOver)}
+              >
+                {slots().used}
+                {props.block.slots ? ` / ${props.block.slots}` : ""} slots
+              </span>
+            </Show>
+            <For each={slots().placed}>
+              {(place) => (
+                <div
+                  {...sx(s.slot)}
+                  style={{ "min-height": `${21 * place.size}px` }}
+                  data-size={place.size}
+                >
+                  <span {...sx(s.slotNumber)}>
+                    {place.size > 1
+                      ? `${place.start + 1}–${place.start + place.size}`
+                      : place.start + 1}
                   </span>
+                  <span {...sx(s.slotBody)}>
+                    <For each={props.block.columns}>{(column) => cell(place.index, column)}</For>
+                    {rowRoll(place.index)}
+                  </span>
+                </div>
+              )}
+            </For>
+            <For each={emptySlots()}>
+              {(slot) => (
+                <div {...sx(s.slot)}>
+                  <span {...sx(s.slotNumber)}>{slot + 1}</span>
+                  <span {...sx(s.slotBody)} />
                 </div>
               )}
             </For>
@@ -1743,10 +1917,26 @@ function EntryBlock(props: {
   const type = () => lookup()?.typeById(props.block.entryType);
   const label = () => props.block.label ?? type()?.name ?? "Entry";
   const canPick = () => !props.ctx.readOnly && !!lookup() && !!type();
+  /** An entry with one list field replaced, so the row copier sees only those rows. */
+  const withRows = (source: CompendiumEntry, key: string, rows: readonly ListRow[]) => ({
+    ...source,
+    fields: { ...source.fields, [key]: rows as CompendiumEntry["fields"][string] },
+  });
   const fills = (picked: CompendiumEntry) =>
     (props.block.fill ?? []).flatMap((fill) => {
       const list = props.ctx.listBlock(fill.to);
-      const rows = list ? rowsFromEntryList(picked, fill.from, list.columns) : [];
+      // A progression only offers what the character's level reaches.
+      const spec = props.block.progression;
+      const all = picked.fields[fill.from];
+      const source =
+        spec?.field === fill.from && Array.isArray(all)
+          ? withRows(
+              picked,
+              fill.from,
+              rowsUpToLevel(all as readonly ListRow[], num(props.ctx.values[spec.level], 0)),
+            )
+          : picked;
+      const rows = list ? rowsFromEntryList(source, fill.from, list.columns) : [];
       return rows.length ? [{ to: fill.to, title: list?.title ?? fill.to, rows }] : [];
     });
   const pick = async (picked: IndexRow) => {
@@ -1763,6 +1953,50 @@ function EntryBlock(props: {
       props.ctx.onChange(fill.to, [...existing, ...fill.rows]);
     }
     setOffer(null);
+  };
+  // The progression variant: rows up to the character's level, read from the sheet.
+  const progression = () => {
+    const spec = props.block.progression;
+    const current = entry();
+    const field = spec && type()?.fields.find((item) => item.key === spec.field);
+    if (!spec || !current || !field) return undefined;
+    const level = num(props.ctx.values[spec.level], 0);
+    const all = (
+      Array.isArray(current.fields[field.key]) ? current.fields[field.key] : []
+    ) as readonly ListRow[];
+    return {
+      label: field.label,
+      level,
+      columns: field.columns ?? [],
+      rows: rowsUpToLevel(all, level),
+      all,
+    };
+  };
+  // Offered, never automatic: copy this level's rows into a list the block fills.
+  const levelFills = () =>
+    props.ctx.readOnly
+      ? []
+      : (props.block.fill ?? []).flatMap((fill) => {
+          const list = fill.from === props.block.progression?.field && props.ctx.listBlock(fill.to);
+          return list ? [{ to: fill.to, title: list.title ?? fill.to, columns: list.columns }] : [];
+        });
+  const addLevel = (to: string) => {
+    const table = progression();
+    const current = entry();
+    const fill = levelFills().find((item) => item.to === to);
+    if (!table || !current || !fill) return;
+    const field = props.block.progression!.field;
+    const rows = rowsFromEntryList(
+      withRows(
+        current,
+        field,
+        table.all.filter((row) => row.level === table.level),
+      ),
+      field,
+      fill.columns,
+    );
+    const existing = (props.ctx.values[to] as readonly ListRow[] | undefined) ?? [];
+    props.ctx.onChange(to, [...existing, ...rows]);
   };
   const offerText = () => {
     const picked = offer();
@@ -1812,7 +2046,45 @@ function EntryBlock(props: {
           This world's compendium has no “{props.block.entryType}” entry type yet.
         </span>
       </Show>
-      <Show when={props.variant !== "line" && entry() && type()}>
+      <Show when={props.variant === "progression" && progression()}>
+        {(table) => (
+          <div {...sx(s.progression)} role="table" aria-label={table().label}>
+            <span {...sx(s.label)}>
+              {table().label} · up to level {table().level}
+            </span>
+            <For each={table().rows}>
+              {(row) => (
+                <div
+                  {...sx(s.progressionRow, row.level === table().level && s.progressionNow)}
+                  role="row"
+                >
+                  <span {...sx(s.progressionLevel)} role="cell">
+                    {String(row.level)}
+                  </span>
+                  <span role="cell">
+                    {table()
+                      .columns.map((column) => row[column.key])
+                      .filter((value) => value !== undefined && value !== "")
+                      .map((value) => (Array.isArray(value) ? value.join(", ") : String(value)))
+                      .join(" · ")}
+                  </span>
+                </div>
+              )}
+            </For>
+            <Show when={!table().rows.length}>
+              <span {...sx(s.entryMissing)}>Nothing up to level {table().level}.</span>
+            </Show>
+            <For each={levelFills()}>
+              {(fill) => (
+                <button {...sx(s.addRow)} onClick={() => addLevel(fill.to)}>
+                  Add level {table().level} to {fill.title}
+                </button>
+              )}
+            </For>
+          </div>
+        )}
+      </Show>
+      <Show when={props.variant === "card" && entry() && type()}>
         {(current) => (
           <For each={entryFieldsForDisplay(entry()!, current(), props.block.show)}>
             {(item) => (

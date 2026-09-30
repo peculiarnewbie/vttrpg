@@ -192,3 +192,20 @@ a {
 .ttrpg-entry-link:hover {
   text-decoration-style: solid;
 }
+
+/* [[r:2d6|Damage]] inline rolls: a small die-coloured chip that rolls when clicked. */
+.ttrpg-inline-roll {
+  padding: 0 4px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  background: none;
+  color: var(--ttrpg-roll, inherit);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  cursor: pointer;
+}
+
+.ttrpg-inline-roll:hover {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}

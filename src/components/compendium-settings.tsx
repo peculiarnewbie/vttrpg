@@ -38,9 +38,54 @@ const kindLabels: Record<EntryField["kind"], string> = {
   dice: "Dice",
   tags: "Tags",
   list: "List",
+  select: "One of…",
+  set: "Any of…",
+  reference: "Other entries",
+  actions: "Actions",
+  progression: "Progression by level",
+  oracle: "Oracle table",
 };
 
 const emptyType = (): EntryType => ({ id: "", name: "", fields: [] });
+
+const splitOptions = (raw: string) =>
+  raw
+    .split(",")
+    .map((option) => option.trim())
+    .filter(Boolean);
+
+/** Comma-separated choices; commits on blur so a trailing comma doesn't vanish mid-typing. */
+function OptionsInput(props: {
+  label: string;
+  options: readonly string[] | undefined;
+  onChange: (options: string[]) => void;
+}) {
+  return (
+    <input
+      {...sx(styles.input, t.compact)}
+      aria-label={props.label}
+      placeholder="Choices, separated by commas"
+      value={(props.options ?? []).join(", ")}
+      onChange={(event) => props.onChange(splitOptions(event.currentTarget.value))}
+    />
+  );
+}
+
+/** A new field's starting settings for its kind. */
+const kindDefaults = (kind: EntryField["kind"], field: EntryField): Partial<EntryField> => ({
+  kind,
+  columns:
+    kind === "list"
+      ? (field.columns ?? [{ key: "name", label: "Name", kind: "text" }])
+      : kind === "progression"
+        ? (field.columns?.filter((column) => column.key !== "level") ?? [
+            { key: "features", label: "Features", kind: "text" },
+          ])
+        : undefined,
+  options: kind === "select" || kind === "set" ? (field.options ?? []) : undefined,
+  ref: kind === "reference" ? (field.ref ?? { typeIds: [] }) : undefined,
+  dice: kind === "oracle" ? (field.dice ?? "1d100") : undefined,
+});
 
 function ColumnsEditor(props: {
   label: string;
@@ -112,6 +157,15 @@ function ColumnsEditor(props: {
             >
               ×
             </button>
+            <Show when={props.columns[index]?.kind === "select"}>
+              <span {...sx(t.extraRow)}>
+                <OptionsInput
+                  label={`${props.label} column ${index + 1} choices`}
+                  options={props.columns[index]?.options}
+                  onChange={(options) => set(index, { options })}
+                />
+              </span>
+            </Show>
           </div>
         )}
       </For>
@@ -122,6 +176,88 @@ function ColumnsEditor(props: {
       >
         + Column
       </button>
+    </div>
+  );
+}
+
+type Filter = NonNullable<EntryType["filters"]>[number];
+
+/** The filter kinds that make sense for a field. */
+const filterKinds = (field: EntryField): Filter["kind"][] =>
+  field.kind === "number"
+    ? ["range", "flag"]
+    : field.kind === "select" || field.kind === "set" || field.kind === "tags"
+      ? ["set", "flag"]
+      : ["flag"];
+
+const filterLabels: Record<Filter["kind"], string> = {
+  range: "by range",
+  set: "by value",
+  flag: "has it or not",
+};
+
+/** Fields people filter entries by, copied into the index so filtering needs no loading. */
+function FiltersEditor(props: {
+  type: EntryType;
+  onChange: (filters: Filter[] | undefined) => void;
+}) {
+  const filters = () => props.type.filters ?? [];
+  const fieldFor = (key: string) => props.type.fields.find((field) => field.key === key);
+  const unused = () =>
+    props.type.fields.filter(
+      (field) => field.key && !filters().some((filter) => filter.key === field.key),
+    );
+  const set = (next: Filter[]) => props.onChange(next.length ? next : undefined);
+  return (
+    <div {...sx(t.filters)}>
+      <span {...sx(t.small)}>Filter by</span>
+      <For each={filters()}>
+        {(filter, index) => (
+          <span {...sx(t.filter)}>
+            {fieldFor(filter.key)?.label ?? filter.key}
+            <select
+              {...sx(styles.select, t.compact)}
+              aria-label={`Filter ${fieldFor(filter.key)?.label ?? filter.key} kind`}
+              value={filter.kind}
+              onChange={(event) =>
+                set(
+                  filters().map((item, i) =>
+                    i === index()
+                      ? { ...item, kind: event.currentTarget.value as Filter["kind"] }
+                      : item,
+                  ),
+                )
+              }
+            >
+              <For each={fieldFor(filter.key) ? filterKinds(fieldFor(filter.key)!) : [filter.kind]}>
+                {(kind) => <option value={kind}>{filterLabels[kind]}</option>}
+              </For>
+            </select>
+            <button
+              {...sx(t.remove)}
+              aria-label={`Remove filter ${fieldFor(filter.key)?.label ?? filter.key}`}
+              onClick={() => set(filters().filter((_, i) => i !== index()))}
+            >
+              ×
+            </button>
+          </span>
+        )}
+      </For>
+      <Show when={unused().length}>
+        <select
+          {...sx(styles.select, t.compact)}
+          aria-label="Add a filter"
+          value=""
+          onChange={(event) => {
+            const field = fieldFor(event.currentTarget.value);
+            event.currentTarget.value = "";
+            if (field) set([...filters(), { key: field.key, kind: filterKinds(field)[0] }]);
+          }}
+        >
+          <option value="">+ Filter…</option>
+          <For each={unused()}>{(field) => <option value={field.key}>{field.label}</option>}</For>
+        </select>
+      </Show>
     </div>
   );
 }
@@ -245,16 +381,12 @@ function TypeEditor(props: {
                     {...sx(styles.select, t.compact)}
                     aria-label={`Field ${index + 1} kind`}
                     value={field()?.kind ?? "text"}
-                    onChange={(event) => {
-                      const kind = event.currentTarget.value as EntryField["kind"];
-                      setField(index, {
-                        kind,
-                        columns:
-                          kind === "list"
-                            ? (field().columns ?? [{ key: "name", label: "Name", kind: "text" }])
-                            : undefined,
-                      });
-                    }}
+                    onChange={(event) =>
+                      setField(
+                        index,
+                        kindDefaults(event.currentTarget.value as EntryField["kind"], field()),
+                      )
+                    }
                   >
                     <For each={EntryFieldKind.literals}>
                       {(kind) => <option value={kind}>{kindLabels[kind]}</option>}
@@ -268,12 +400,80 @@ function TypeEditor(props: {
                     ×
                   </button>
                 </div>
-                <Show when={field()?.kind === "list"}>
+                <Show when={field()?.kind === "list" || field()?.kind === "progression"}>
                   <ColumnsEditor
                     label={field().label || `Field ${index + 1}`}
                     columns={field().columns ?? []}
                     onChange={(columns) => setField(index, { columns })}
                   />
+                  <Show when={field()?.kind === "progression"}>
+                    <span {...sx(t.hint)}>
+                      Every row also has a level. Sheets show the rows up to a character's level.
+                    </span>
+                  </Show>
+                </Show>
+                <Show when={field()?.kind === "select" || field()?.kind === "set"}>
+                  <div {...sx(t.extras)}>
+                    <OptionsInput
+                      label={`${field().label || `Field ${index + 1}`} choices`}
+                      options={field().options}
+                      onChange={(options) => setField(index, { options })}
+                    />
+                  </div>
+                </Show>
+                <Show when={field()?.kind === "oracle"}>
+                  <label {...sx(t.extras)}>
+                    <span {...sx(t.small)}>Roll</span>
+                    <input
+                      {...sx(styles.input, t.compact)}
+                      aria-label={`${field().label || `Field ${index + 1}`} dice`}
+                      style={{ width: "7em" }}
+                      placeholder="1d100"
+                      value={field().dice ?? ""}
+                      onInput={(event) => setField(index, { dice: event.currentTarget.value })}
+                    />
+                    <span {...sx(t.hint)}>then read the row whose range holds the total</span>
+                  </label>
+                </Show>
+                <Show when={field()?.kind === "reference" && field().ref}>
+                  {(ref) => (
+                    <div {...sx(t.extras)}>
+                      <span {...sx(t.small)}>Points at</span>
+                      <For each={[...props.others, draft()].filter((type) => type.id)}>
+                        {(type) => (
+                          <label {...sx(t.check)}>
+                            <input
+                              type="checkbox"
+                              checked={ref().typeIds.includes(type.id)}
+                              onChange={(event) =>
+                                setField(index, {
+                                  ref: {
+                                    ...ref(),
+                                    typeIds: event.currentTarget.checked
+                                      ? [...ref().typeIds, type.id]
+                                      : ref().typeIds.filter((id) => id !== type.id),
+                                  },
+                                })
+                              }
+                            />
+                            {type.plural ?? type.name}
+                          </label>
+                        )}
+                      </For>
+                      <label {...sx(t.check)}>
+                        <input
+                          type="checkbox"
+                          checked={ref().multiple === true}
+                          onChange={(event) =>
+                            setField(index, {
+                              ref: { ...ref(), multiple: event.currentTarget.checked || undefined },
+                            })
+                          }
+                        />
+                        several
+                      </label>
+                    </div>
+                  )}
                 </Show>
               </div>
             );
@@ -293,6 +493,7 @@ function TypeEditor(props: {
         Every entry also has a name, tags, and a markdown description. Renaming a key hides what
         entries stored under the old one.
       </span>
+      <FiltersEditor type={draft()} onChange={(filters) => patch({ filters })} />
       <div {...sx(styles.row)}>
         <Button small variant="primary" onClick={save}>
           {props.isNew ? "Create type" : "Save type"}
@@ -607,6 +808,30 @@ const t = stylex.create({
     alignItems: "center",
   },
   compact: { height: "26px", paddingBlock: 0, fontSize: "12px", lineHeight: 1.2 },
+  // Kind-specific settings sit under their field, indented like list columns.
+  extras: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: "6px",
+    marginLeft: "16px",
+    paddingLeft: "10px",
+    borderLeftWidth: "2px",
+    borderLeftStyle: "solid",
+    borderLeftColor: colors.borderStrong,
+  },
+  extraRow: { gridColumn: "2 / -1", display: "flex" },
+  check: { display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "12px" },
+  filters: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px" },
+  filter: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    paddingLeft: "6px",
+    ...hair,
+    borderRadius: skin.controlRadius,
+    fontSize: "12px",
+  },
   small: { fontSize: "11px", color: colors.textMuted },
   remove: {
     width: "22px",

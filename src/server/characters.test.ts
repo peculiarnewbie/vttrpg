@@ -711,3 +711,229 @@ describe("character layout preferences", () => {
     }
   });
 });
+
+it("lets members edit shared sheets, preserves their scope and creator, and enforces DM locks", async () => {
+  const sheet = await template();
+  const shared = Schema.decodeUnknownSync(Character)(
+    await (
+      await save({ name: "Crew", templateId: sheet.id, values: {}, scope: "world" }, playerCookie)
+    ).json(),
+  );
+  expect(shared).toMatchObject({ scope: "world", locked: false });
+  expect(await (await call(`/worlds/${worldId}`, { cookie: playerCookie })).json()).toMatchObject({
+    characters: [{ id: shared.id, scope: "world", locked: false }],
+  });
+  expect((await list()).find((character) => character.id === shared.id)).toMatchObject({
+    scope: "world",
+    locked: false,
+  });
+  const invited = await call(`/worlds/${worldId}/members`, {
+    method: "POST",
+    body: { displayName: "Other", role: "player", kind: "invite", email: "other@example.test" },
+  });
+  expect(invited.status).toBe(201);
+  const otherCookie = await tabletop.signin("other@example.test", "Other");
+  const peer = await tabletop.connect({ worldId, cookie: otherCookie });
+  const gm = await tabletop.connect({ worldId, cookie });
+  const tracker = sheet.tickers[0];
+  const current = async () => (await list()).find((character) => character.id === shared.id);
+  try {
+    await peer.sync();
+    await gm.sync();
+    peer.send({ type: "character.value", characterId: shared.id, key: "crew", value: "Hawkers" });
+    peer.send({
+      type: "ticker.set",
+      characterId: shared.id,
+      tickerId: tracker.id,
+      value: tracker.min,
+    });
+    peer.send({ type: "roll.dice", characterId: shared.id, notation: "1d6", visibility: "public" });
+    await peer.sync();
+    expect(await current()).toMatchObject({
+      values: { crew: "Hawkers" },
+      tickers: { [tracker.id]: tracker.min },
+    });
+    expect(
+      peer.frames.some((frame) => frame.type === "message" && frame.message.kind === "roll"),
+    ).toBe(true);
+    const saved = await save(
+      { ...shared, name: "The crew", scope: "member", memberId: "forged-owner" },
+      otherCookie,
+    );
+    expect(saved.status).toBe(200);
+    expect(Schema.decodeUnknownSync(Character)(await saved.json())).toMatchObject({
+      scope: "world",
+      memberId: shared.memberId,
+    });
+    peer.send({ type: "character.save", character: { ...shared, scope: "member", locked: true } });
+    await peer.sync();
+    expect(await current()).toMatchObject({
+      scope: "world",
+      locked: false,
+      memberId: shared.memberId,
+    });
+    peer.send({ type: "character.lock", characterId: shared.id, locked: true });
+    await peer.sync();
+    expect(peer.frames.filter((frame) => frame.type === "error")).toHaveLength(1);
+    expect(await current()).toMatchObject({ locked: false });
+
+    gm.send({ type: "character.lock", characterId: shared.id, locked: true });
+    await gm.sync();
+    await peer.sync();
+    expect(
+      peer.frames.some(
+        (frame) =>
+          frame.type === "character" && frame.character.id === shared.id && frame.character.locked,
+      ),
+    ).toBe(true);
+    peer.send({ type: "character.value", characterId: shared.id, key: "crew", value: "Denied" });
+    peer.send({
+      type: "ticker.set",
+      characterId: shared.id,
+      tickerId: tracker.id,
+      value: tracker.max,
+    });
+    peer.send({
+      type: "character.prefs",
+      characterId: shared.id,
+      blockId: "anything",
+      variant: "bars",
+    });
+    peer.send({ type: "character.save", character: { ...shared, locked: false } });
+    peer.send({ type: "roll.dice", characterId: shared.id, notation: "1d6", visibility: "public" });
+    await peer.sync();
+    expect(peer.frames.filter((frame) => frame.type === "error")).toHaveLength(6);
+    expect((await save({ ...shared, locked: false }, otherCookie)).status).toBe(403);
+    expect(await current()).toMatchObject({ locked: true, tickers: { [tracker.id]: tracker.min } });
+    gm.send({ type: "character.value", characterId: shared.id, key: "crew", value: "DM edit" });
+    gm.send({
+      type: "ticker.set",
+      characterId: shared.id,
+      tickerId: tracker.id,
+      value: tracker.max,
+    });
+    gm.send({ type: "roll.dice", characterId: shared.id, notation: "1d6", visibility: "public" });
+    await gm.sync();
+    expect(await current()).toMatchObject({
+      locked: true,
+      values: { crew: "DM edit" },
+      tickers: { [tracker.id]: tracker.max },
+    });
+    expect(gm.frames.filter((frame) => frame.type === "error")).toHaveLength(0);
+    gm.send({ type: "character.lock", characterId: shared.id, locked: false });
+    await gm.sync();
+    peer.send({ type: "character.value", characterId: shared.id, key: "crew", value: "Unlocked" });
+    peer.send({
+      type: "ticker.set",
+      characterId: shared.id,
+      tickerId: tracker.id,
+      value: tracker.min,
+    });
+    await peer.sync();
+    expect(await current()).toMatchObject({
+      locked: false,
+      values: { crew: "Unlocked" },
+      tickers: { [tracker.id]: tracker.min },
+    });
+    expect(peer.frames.filter((frame) => frame.type === "error")).toHaveLength(6);
+
+    expect(
+      (
+        await call(`/worlds/${worldId}/characters/${shared.id}`, {
+          method: "DELETE",
+          cookie: otherCookie,
+        })
+      ).status,
+    ).toBe(403);
+    // The creator can delete even while a shared sheet is locked.
+    gm.send({ type: "character.lock", characterId: shared.id, locked: true });
+    await gm.sync();
+    expect(
+      (
+        await call(`/worlds/${worldId}/characters/${shared.id}`, {
+          method: "DELETE",
+          cookie: playerCookie,
+        })
+      ).status,
+    ).toBe(200);
+  } finally {
+    peer.socket.close();
+    gm.socket.close();
+  }
+});
+
+it("keeps member sheets private to their owner for values, preferences, rolls and scope updates", async () => {
+  const owner = await create();
+  expect(owner).toMatchObject({ scope: "member", locked: false });
+  const peer = await tabletop.connect({ worldId, cookie: playerCookie });
+  try {
+    peer.send({ type: "character.value", characterId: owner.id, key: "name", value: "Denied" });
+    peer.send({
+      type: "character.prefs",
+      characterId: owner.id,
+      blockId: "stats",
+      variant: "bars",
+    });
+    peer.send({ type: "roll.dice", characterId: owner.id, notation: "1d6", visibility: "public" });
+    await peer.sync();
+    expect(peer.frames.filter((frame) => frame.type === "error")).toHaveLength(3);
+    expect((await list())[0].values).toEqual(owner.values);
+    const saved = await save({ ...owner, scope: "world" });
+    expect(saved.status).toBe(200);
+    expect(Schema.decodeUnknownSync(Character)(await saved.json()).scope).toBe("member");
+  } finally {
+    peer.socket.close();
+  }
+});
+
+it("uses shared permissions for avatar uploads and deletion, including the DO boundary", async () => {
+  const sheet = await template();
+  const shared = Schema.decodeUnknownSync(Character)(
+    await (
+      await save({ name: "Steading", templateId: sheet.id, values: {}, scope: "world" })
+    ).json(),
+  );
+  const namespace = await mf.getDurableObjectNamespace("WORLDS");
+  const stub = namespace.get(namespace.idFromName(`world:${worldId}`));
+  const player = await create(playerCookie);
+  const privateSheet = await create();
+  const avatarPath = `/worlds/${worldId}/characters/${shared.id}/avatar`;
+  const upload = (authCookie: string) =>
+    mf.dispatchFetch(`https://tabletop.test/api${avatarPath}`, {
+      method: "POST",
+      headers: { cookie: authCookie, "content-type": "image/png" },
+      body: new Uint8Array([137, 80, 78, 71]),
+    });
+  expect((await upload(playerCookie)).status).toBe(200);
+  expect((await list()).find((character) => character.id === shared.id)?.avatarKey).toBeTypeOf(
+    "string",
+  );
+  expect((await call(avatarPath, { method: "DELETE", cookie: playerCookie })).status).toBe(200);
+  expect((await list()).find((character) => character.id === shared.id)?.avatarKey).toBeUndefined();
+  const gm = await tabletop.connect({ worldId, cookie });
+  try {
+    gm.send({ type: "character.lock", characterId: shared.id, locked: true });
+    await gm.sync();
+    expect((await upload(playerCookie)).status).toBe(403);
+    expect((await call(avatarPath, { method: "DELETE", cookie: playerCookie })).status).toBe(403);
+    for (const characterId of [shared.id, privateSheet.id]) {
+      expect(
+        (
+          await stub.fetch("https://world/internal/character/avatar", {
+            method: "POST",
+            headers: {
+              "x-ttrpg-member-id": player.memberId,
+              "x-ttrpg-role": "player",
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({ characterId, avatarKey: "forged-key" }),
+          })
+        ).status,
+      ).toBe(403);
+    }
+    expect((await upload(cookie)).status).toBe(200);
+    expect((await call(avatarPath, { method: "DELETE" })).status).toBe(200);
+  } finally {
+    gm.socket.close();
+  }
+});

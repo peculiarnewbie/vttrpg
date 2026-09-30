@@ -2,13 +2,23 @@ import {
   compendiumLimits,
   type CompendiumPack,
   type EntryType,
+  type EntryField,
   type SaveEntryInput,
 } from "./compendium";
-import type { ListColumnKind } from "./sheet-layout";
-import { parseEntryId, WORLD_SOURCE } from "./entry-id";
+import type { ListColumn, ListColumnKind } from "./sheet-layout";
+import { isEntryId, parseEntryId, WORLD_SOURCE } from "./entry-id";
+import { notationRefs, parseNotation } from "./dice-notation";
+import { oracleRows } from "./oracle";
 
 const slug = /^[a-z0-9][a-z0-9_-]{0,39}$/;
 const jsonBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+
+const validOptions = (options: readonly string[] | undefined): boolean =>
+  options !== undefined &&
+  options.length >= 1 &&
+  options.length <= 50 &&
+  options.every((option) => option.trim().length > 0 && option.length <= 60) &&
+  new Set(options).size === options.length;
 
 export const typeError = (
   type: EntryType,
@@ -27,23 +37,60 @@ export const typeError = (
     if (keys.has(field.key)) return "Field keys must be unique";
     keys.add(field.key);
     if (!field.label.trim()) return "Field labels must not be empty";
-    if (field.kind !== "list") {
-      if (field.columns !== undefined) return "Only list fields may have columns";
+    if ((field.kind === "select" || field.kind === "set") && !validOptions(field.options))
+      return `${field.label} needs 1–50 unique options of 1–60 characters`;
+    if (
+      field.kind === "reference" &&
+      (!field.ref ||
+        field.ref.typeIds.length < 1 ||
+        field.ref.typeIds.length > 10 ||
+        field.ref.typeIds.some((id) => !slug.test(id)))
+    )
+      return `${field.label} needs 1–10 reference type ids`;
+    if (field.kind === "oracle") {
+      const parsed = field.dice === undefined ? undefined : parseNotation(field.dice);
+      if (!parsed?.ok || notationRefs(parsed.value).length)
+        return `${field.label} needs dice notation without references`;
+    }
+    if (field.kind !== "list" && field.kind !== "progression") {
+      if (field.columns !== undefined) return `${field.label} cannot have columns`;
       continue;
     }
-    if (!field.columns?.length) return "List fields must have at least one column";
+    if (field.kind === "list" && !field.columns?.length)
+      return `List ${field.label} needs at least one column`;
     const columnKeys = new Set<string>();
-    for (const column of field.columns) {
-      if (!slug.test(column.key)) return "Column keys must be lowercase slugs of 1–40 characters";
-      if (columnKeys.has(column.key)) return "List column keys must be unique";
+    for (const column of field.columns ?? []) {
+      if (!slug.test(column.key)) return `Invalid column key in ${field.label}`;
+      if (field.kind === "progression" && column.key === "level")
+        return `${field.label} reserves the level column`;
+      if (columnKeys.has(column.key)) return `Duplicate column key in ${field.label}`;
       columnKeys.add(column.key);
-      if (!column.label.trim()) return "Column labels must not be empty";
+      if (!column.label.trim()) return `Empty column label in ${field.label}`;
+      if (column.kind === "select" && !validOptions(column.options))
+        return `${field.label} column ${column.label} needs 1–50 unique options of 1–60 characters`;
     }
+  }
+  if ((type.filters?.length ?? 0) > 10) return "A type can have at most 10 filters";
+  const filterKeys = new Set<string>();
+  for (const filter of type.filters ?? []) {
+    const field = type.fields.find((candidate) => candidate.key === filter.key);
+    if (!field) return `Unknown filter field: ${filter.key}`;
+    if (filterKeys.has(filter.key)) return `Duplicate filter: ${filter.key}`;
+    filterKeys.add(filter.key);
+    if (
+      (filter.kind === "range" && field.kind !== "number") ||
+      (filter.kind === "set" && !["select", "set", "tags"].includes(field.kind))
+    )
+      return `Invalid filter kind for ${field.label}`;
   }
   return undefined;
 };
 
-const matchesKind = (value: unknown, kind: ListColumnKind | "longtext"): boolean => {
+const matchesKind = (
+  value: unknown,
+  kind: ListColumnKind | "longtext",
+  options?: readonly string[],
+): boolean => {
   switch (kind) {
     case "text":
     case "longtext":
@@ -61,6 +108,90 @@ const matchesKind = (value: unknown, kind: ListColumnKind | "longtext"): boolean
     case "derived":
       // Computed from the row, never stored.
       return false;
+    case "select":
+      return typeof value === "string" && (value === "" || options?.includes(value) === true);
+    case "progress":
+      return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 40;
+  }
+};
+
+const fieldError = (value: unknown, field: EntryField): string | undefined => {
+  const invalid = `Invalid value for ${field.label} (${field.kind})`;
+  switch (field.kind) {
+    case "select":
+      return matchesKind(value, "select", field.options) ? undefined : invalid;
+    case "set":
+      return Array.isArray(value) &&
+        value.length <= 50 &&
+        value.every((item) => typeof item === "string" && field.options?.includes(item)) &&
+        new Set(value).size === value.length
+        ? undefined
+        : invalid;
+    case "reference": {
+      const validId = (id: unknown) => typeof id === "string" && isEntryId(id);
+      return (
+        field.ref?.multiple
+          ? Array.isArray(value) && value.length <= 50 && value.every(validId)
+          : validId(value)
+      )
+        ? undefined
+        : invalid;
+    }
+    case "oracle":
+      return oracleRows(value).ok ? undefined : invalid;
+    case "actions":
+      if (!Array.isArray(value) || value.length > 50) return invalid;
+      for (const row of value) {
+        if (
+          typeof row !== "object" ||
+          row === null ||
+          Array.isArray(row) ||
+          typeof row.name !== "string" ||
+          !row.name.trim() ||
+          (row.roll !== undefined &&
+            (typeof row.roll !== "string" || !parseNotation(row.roll).ok)) ||
+          (row.text !== undefined && typeof row.text !== "string") ||
+          Object.keys(row).some((key) => !["name", "roll", "text"].includes(key))
+        )
+          return invalid;
+      }
+      return undefined;
+    case "list":
+    case "progression": {
+      const maximum = field.kind === "list" ? 100 : 30;
+      if (!Array.isArray(value) || value.length > maximum)
+        return `${field.label} must have at most ${maximum} rows`;
+      for (const row of value) {
+        if (typeof row !== "object" || row === null || Array.isArray(row))
+          return `Invalid row in ${field.label}`;
+        if (
+          field.kind === "progression" &&
+          (!Number.isInteger(row.level) || row.level < 1 || row.level > 30)
+        )
+          return `${field.label} needs integer levels from 1–30`;
+        for (const [columnKey, cell] of Object.entries(row)) {
+          if (field.kind === "progression" && columnKey === "level") continue;
+          if (columnKey === "_entry") {
+            if (typeof cell !== "string") return `${field.label} row _entry must be a string`;
+            continue;
+          }
+          if (columnKey === "_rev") {
+            if (typeof cell !== "number" || !Number.isSafeInteger(cell) || cell < 0)
+              return `${field.label} row _rev must be a non-negative integer`;
+            continue;
+          }
+          const column: ListColumn | undefined = field.columns?.find(
+            (candidate) => candidate.key === columnKey,
+          );
+          if (!column) return `Unknown column in ${field.label}: ${columnKey}`;
+          if (!matchesKind(cell, column.kind, column.options))
+            return `Invalid ${field.label} column ${column.label}`;
+        }
+      }
+      return undefined;
+    }
+    default:
+      return matchesKind(value, field.kind) ? undefined : invalid;
   }
 };
 
@@ -81,31 +212,8 @@ export const entryError = (entry: SaveEntryInput, type: EntryType): string | und
   for (const [key, value] of Object.entries(entry.fields)) {
     const field = type.fields.find((candidate) => candidate.key === key);
     if (!field) return `Unknown entry field: ${key}`;
-    if (field.kind !== "list") {
-      if (!matchesKind(value, field.kind))
-        return `Invalid value for ${field.label} (${field.kind})`;
-      continue;
-    }
-    if (!Array.isArray(value) || value.length > 100)
-      return `List ${field.label} must have at most 100 rows`;
-    for (const row of value) {
-      if (typeof row !== "object" || row === null || Array.isArray(row))
-        return `Invalid row in ${field.label}`;
-      for (const [columnKey, cell] of Object.entries(row)) {
-        if (columnKey === "_entry") {
-          if (typeof cell !== "string") return "Row _entry must be a string";
-          continue;
-        }
-        if (columnKey === "_rev") {
-          if (typeof cell !== "number" || !Number.isSafeInteger(cell) || cell < 0)
-            return "Row _rev must be a non-negative integer";
-          continue;
-        }
-        const column = field.columns?.find((candidate) => candidate.key === columnKey);
-        if (!column) return `Unknown column in ${field.label}: ${columnKey}`;
-        if (!matchesKind(cell, column.kind)) return `Invalid value for column ${column.label}`;
-      }
-    }
+    const error = fieldError(value, field);
+    if (error) return error;
   }
   return undefined;
 };

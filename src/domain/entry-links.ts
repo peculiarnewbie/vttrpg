@@ -1,4 +1,5 @@
 import { isEntryId } from "./entry-id";
+import { parseNotation } from "./dice-notation";
 
 /*
  * `[[Entry name]]` in chat, notes, and entry descriptions links to a compendium
@@ -13,17 +14,28 @@ import { isEntryId } from "./entry-id";
  * shows if the entry is gone). `[[Name]]` still works, resolved by name.
  */
 
+/*
+ * `[[r:2d6+1|Damage]]` (or `[[r:2d6+1]]`) is an inline roll: text shows the
+ * label (or the notation) as a button that rolls it. Notation that doesn't
+ * parse stays plain text.
+ */
+
 export type LinkPart =
   | { kind: "text"; text: string }
   | { kind: "link"; name: string }
-  | { kind: "ref"; id: string; label: string };
+  | { kind: "ref"; id: string; label: string }
+  | { kind: "roll"; notation: string; label?: string };
 
 /** `[[ref:id|Label]]`; `|` and brackets are removed from the label. */
 export const formatRefLink = (id: string, label: string): string =>
   `[[ref:${id}|${label.replace(/[|[\]]/g, "")}]]`;
 
-/** Name links have 1–120 characters; ref links also allow the longer id prefix. */
-export const ENTRY_LINK = /\[\[((?:ref:[^[\]\n]+\|[^[\]\n]*)|[^[\]\n]{1,120})\]\]/g;
+/** `[[r:notation|Label]]`; label delimiters and newlines are removed. */
+export const formatRollLink = (notation: string, label?: string): string =>
+  `[[r:${notation}${label === undefined ? "" : `|${label.replace(/[|[\]\r\n]/g, "")}`}]]`;
+
+/** Name links have 1–120 characters; ref and roll links allow longer payloads. */
+export const ENTRY_LINK = /\[\[((?:ref:[^[\]\n]+\|[^[\]\n]*)|(?:r:[^[\]\n]*)|[^[\]\n]{1,120})\]\]/g;
 
 export const splitEntryLinks = (text: string): LinkPart[] => {
   const parts: LinkPart[] = [];
@@ -33,7 +45,21 @@ export const splitEntryLinks = (text: string): LinkPart[] => {
     const name = match[1].trim();
     const separator = name.indexOf("|");
     const id = name.slice(4, separator);
-    if (name.startsWith("ref:") && separator >= 0 && isEntryId(id)) {
+    if (name.startsWith("r:")) {
+      const payload = name.slice(2).trim();
+      const labelSeparator = payload.lastIndexOf("|");
+      if (parseNotation(payload).ok) {
+        parts.push({ kind: "roll", notation: payload });
+      } else if (labelSeparator >= 0 && parseNotation(payload.slice(0, labelSeparator).trim()).ok) {
+        parts.push({
+          kind: "roll",
+          notation: payload.slice(0, labelSeparator).trim(),
+          label: payload.slice(labelSeparator + 1).trim(),
+        });
+      } else {
+        parts.push({ kind: "text", text: match[0] });
+      }
+    } else if (name.startsWith("ref:") && separator >= 0 && isEntryId(id)) {
       parts.push({ kind: "ref", id, label: name.slice(separator + 1).trim() });
     } else {
       parts.push({ kind: "link", name: name.startsWith("ref:") ? name.slice(4).trim() : name });
