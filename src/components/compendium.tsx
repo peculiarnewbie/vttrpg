@@ -11,6 +11,7 @@ import type {
 } from "../domain/compendium";
 import { entryError } from "../domain/compendium-rules";
 import { indexEntries, searchIndex } from "../domain/compendium-search";
+import { findEntryByName } from "../domain/entry-links";
 import type { CharacterValue } from "../domain/schemas";
 import type { LayoutBlock, ListRow, SheetLayout, SheetValues } from "../domain/sheet-layout";
 import { colors, fonts, radii, skin } from "../theme/tokens.stylex";
@@ -80,7 +81,16 @@ export function EntryCard(props: {
   entry: CompendiumEntry;
   type: EntryType;
   onRoll?: (label: string, dice: string) => void;
+  /** For `[[Entry]]` links in the description. */
+  entries?: readonly CompendiumEntry[];
+  onOpenEntry?: (entryId: string) => void;
 }) {
+  const link = (name: string) =>
+    props.entries ? findEntryByName(props.entries, name)?.id : undefined;
+  const open = (event: MouseEvent) => {
+    const target = (event.target as Element).closest<HTMLElement>("[data-entry-id]");
+    if (target?.dataset.entryId) props.onOpenEntry?.(target.dataset.entryId);
+  };
   return (
     <article {...sx(c.card)} aria-label={props.entry.name}>
       <SheetBlocks
@@ -95,7 +105,8 @@ export function EntryCard(props: {
       <Show when={props.entry.body.trim()}>
         <div
           class={`ttrpg-note-markdown ${sx(c.body).class}`}
-          innerHTML={renderNoteMarkdown(props.entry.body)}
+          innerHTML={renderNoteMarkdown(props.entry.body, link)}
+          onClick={open}
         />
       </Show>
     </article>
@@ -296,6 +307,8 @@ export function CompendiumPanel(props: {
   onFocus?: (entryId: string | null) => void;
   onRoll?: (label: string, dice: string) => void;
   onSetup?: () => void;
+  /** Post a link to the entry in chat. */
+  onShare?: (entry: CompendiumEntry) => void;
 }) {
   const [query, setQuery] = createSignal("");
   const [typeFilter, setTypeFilter] = createSignal<string | null>(null);
@@ -384,6 +397,13 @@ export function CompendiumPanel(props: {
                 ← All
               </button>
               <div {...sx(styles.spacer)} />
+              <Show when={props.onShare && selected()?.visibility === "public" && selected()}>
+                {(entry) => (
+                  <Button small variant="ghost" onClick={() => props.onShare?.(entry())}>
+                    Share in chat
+                  </Button>
+                )}
+              </Show>
               <Show when={props.isDm && selected()}>
                 {(entry) => (
                   <>
@@ -439,6 +459,8 @@ export function CompendiumPanel(props: {
                     entry={entry()}
                     type={props.compendium.typeById(entry().typeId)!}
                     onRoll={props.onRoll}
+                    entries={props.compendium.entries()}
+                    onOpenEntry={setFocus}
                   />
                 </>
               )}

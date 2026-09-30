@@ -26,3 +26,15 @@ it("escapes HTML and attributes and rejects unsafe link protocols", () => {
   expect(html).toContain("&quot;onmouseover=&quot;");
   expect(renderNoteMarkdown("[x](jav&#97;script:bad)")).not.toContain("<a ");
 });
+
+it("links [[entries]] the reader can open and leaves the rest as text", () => {
+  const html = renderNoteMarkdown("Ask [[Example Knight]] about [[<Secret>]].", (name) =>
+    name === "Example Knight" ? 'ent_"1' : undefined,
+  );
+  expect(html).toBe(
+    '<p>Ask <button type="button" class="ttrpg-entry-link" data-entry-id="ent_&quot;1">Example Knight</button> about <span class="ttrpg-entry-missing">&lt;Secret&gt;</span>.</p>',
+  );
+  expect(renderNoteMarkdown("[[Plain]]")).toBe(
+    '<p><span class="ttrpg-entry-missing">Plain</span></p>',
+  );
+});

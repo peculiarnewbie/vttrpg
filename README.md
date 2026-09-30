@@ -113,7 +113,8 @@ them, move them into or out of groups, or drop them on another page's tab (touch
 drags by the ⠿ handle; with the handle focused, arrow keys reorder); ungroup a
 group to keep its blocks (deleting a non-empty group asks first); duplicate and
 remove blocks, edit their contents, preview at panel or wide width, or edit the
-layout as JSON. Templates can start from a premade layout (Mythic Bastionland
+layout as JSON. Items inside blocks (stats, trackers, columns), entry-type fields,
+and a sheet's list rows while editing reorder the same way, by their ⠿ handles. Templates can start from a premade layout (Mythic Bastionland
 Classic and Compact, Mothership, Blades in the Dark) and be exported or imported as
 `ttrpg-template` JSON. Older templates render through an equivalent derived layout
 and can be converted; their formulas and roll modifiers stay in effect. On the
@@ -140,6 +141,11 @@ ids. Presets contain entry types only — no copyrighted game content is shipped
   Property); it never does so on its own. Lists with a `source` gain
   "+ From compendium", which copies an entry into a row the player can change;
   the row remembers its entry and links back to it.
+- **Links**: write `[[Entry name]]` in chat, notes, or an entry's description to
+  link an entry (typing `[[` suggests names); readers who can see the entry open
+  its card, everyone else sees the plain name. Entry cards can be shared in chat.
+- Any block can be shown only while a value is empty or filled ("Only show when"),
+  e.g. Bastionland's hand-typed Ability shows only until a Knight is linked.
 
 ## Realtime protocol
 
