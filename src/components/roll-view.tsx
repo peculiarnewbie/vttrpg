@@ -19,12 +19,11 @@ export const rolledDiceCount = (roll: RollResult) =>
 
 const signed = (value: number) => `${value >= 0 ? "+" : "−"}${Math.abs(value)}`;
 
+/** Named modifiers ("STR mod +2"); flat numbers already read in the notation. */
 export const modifierText = (modifiers: readonly RollModifierPart[]) =>
   modifiers
-    .filter((part) => part.value !== 0 || part.label !== "static")
-    .map((part) =>
-      part.label === "static" ? signed(part.value) : `${part.label} ${signed(part.value)}`,
-    )
+    .filter((part) => part.label !== "static")
+    .map((part) => `${part.label} ${signed(part.value)}`)
     .join(", ");
 
 function Dice(props: { die: RolledDie; compact: boolean }) {

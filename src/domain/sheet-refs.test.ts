@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { SheetLayout, SheetValues } from "./sheet-layout";
-import { layoutProblems, sheetDerived, sheetRefLookup, sheetScope, valueScope } from "./sheet-refs";
+import {
+  layoutProblems,
+  refValues,
+  sheetDerived,
+  sheetRefLookup,
+  sheetScope,
+  valueScope,
+} from "./sheet-refs";
 
 const layout: SheetLayout = {
   system: "Test",
@@ -323,5 +330,41 @@ describe("layoutProblems (needs dice-notation)", () => {
       'Roll "Pool" uses @missing, which isn\'t on the sheet',
       'Roll "Pool" uses @row.bonus, which isn\'t on the sheet',
     ]);
+  });
+});
+
+describe("refValues", () => {
+  const layout: SheetLayout = {
+    system: "Test",
+    name: "Test",
+    pages: [
+      {
+        id: "p",
+        title: "P",
+        blocks: [
+          {
+            id: "t",
+            type: "trackers",
+            items: [
+              { key: "hunt", label: "Hunt", min: 0, max: 4, start: 0 },
+              { key: "hp", label: "HP", min: 0, max: 10 },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+
+  it("reads trackers from their own values, falling back like the sheet does", () => {
+    expect(refValues(layout, { hunt: 3, str: 12 }, { hunt: 2 })).toEqual({
+      hunt: 2,
+      hp: 10,
+      str: 12,
+    });
+    expect(refValues(layout, {}, {})).toEqual({ hunt: 0, hp: 10 });
+  });
+
+  it("keeps trackers of older templates that have no layout", () => {
+    expect(refValues(undefined, { str: 12 }, { hp: 4 })).toEqual({ str: 12, hp: 4 });
   });
 });

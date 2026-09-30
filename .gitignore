@@ -5,3 +5,5 @@ dist
 *.cpuprofile
 *.local
 .env
+test-results
+playwright-report

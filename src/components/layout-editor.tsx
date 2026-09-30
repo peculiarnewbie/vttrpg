@@ -598,7 +598,7 @@ function Inspector(props: {
                   options: TrackerDisplay.literals,
                   width: "70px",
                 },
-                { key: "roll", label: "Roll", placeholder: "(@key)d6khz", width: "80px" },
+                { key: "roll", label: "Roll", placeholder: "optional", width: "80px" },
               ]}
               onChange={(items) => patch({ items })}
               make={() => ({
@@ -622,7 +622,7 @@ function Inspector(props: {
                 {
                   key: "roll",
                   label: "Roll on click",
-                  placeholder: "1d20 + @key",
+                  placeholder: "optional",
                   width: "minmax(0, 1.4fr)",
                 },
               ]}

@@ -293,7 +293,9 @@ export function Chat(props: {
             {(item) => (
               <div
                 data-index={item.index}
-                ref={(el) => virtualizer.measureElement(el)}
+                // Solid 2 runs refs before the row is attached; measuring a detached node is a
+                // no-op, and only a measured row is observed for later size changes.
+                ref={(el) => requestAnimationFrame(() => virtualizer.measureElement(el))}
                 style={{
                   position: "absolute",
                   top: 0,

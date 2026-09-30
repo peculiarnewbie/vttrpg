@@ -13,6 +13,7 @@ import {
 import {
   blockShown,
   blockVariants,
+  layoutTrackers,
   gridMode,
   resolveSpan,
   resolveTrackerDisplay,
@@ -1996,7 +1997,15 @@ export function SheetBlocks(props: Props) {
     props.layout.pages.find((item) => item.id === (props.page ?? page())) ?? props.layout.pages[0];
   const band = () => (props.header ?? themeSkin().header) === "band";
   // Derived values are computed here, from the layout and the values, and never stored.
-  const derived = createMemo(() => sheetDerived(props.layout, props.values));
+  // Trackers can live outside `values`; refs read them as the sheet shows them.
+  const refSource = createMemo(() => {
+    const merged: SheetValues = { ...props.values };
+    for (const item of layoutTrackers(props.layout))
+      merged[item.key] =
+        props.trackerValue?.(item) ?? num(props.values[item.key], item.start ?? item.max);
+    return merged;
+  });
+  const derived = createMemo(() => sheetDerived(props.layout, refSource()));
   const computed = (key: string) =>
     key in derived().values ? derived().values[key] : props.computed?.(key);
   const parsed = new Map<string, Expr | null>();
@@ -2007,7 +2016,7 @@ export function SheetBlocks(props: Props) {
       parsed.set(column.expr, result.ok ? result.value : null);
     }
     const expr = parsed.get(column.expr);
-    return expr ? evaluate(expr, sheetScope(props.layout, props.values, row)) : undefined;
+    return expr ? evaluate(expr, sheetScope(props.layout, refSource(), row)) : undefined;
   };
   const ctx = (): Ctx => ({
     values: props.values,

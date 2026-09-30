@@ -3,7 +3,7 @@ import { DurableObject } from "cloudflare:workers";
 import * as Schema from "effect/Schema";
 import { SheetLayout, type ListRow } from "../domain/sheet-layout";
 import { notationRefs, parseNotation, rollText, type Parsed } from "../domain/dice-notation";
-import { sheetRefLookup } from "../domain/sheet-refs";
+import { refValues, sheetRefLookup } from "../domain/sheet-refs";
 import { layoutLimitsError } from "../domain/template-io";
 import {
   CompendiumEntry,
@@ -1196,7 +1196,9 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     }
     const layout = character ? this.getTemplate(character.templateId)?.layout : undefined;
     const rolled = rollText(cleaned, {
-      lookup: character ? sheetRefLookup(layout, character.values, row) : undefined,
+      lookup: character
+        ? sheetRefLookup(layout, refValues(layout, character.values, character.tickers), row)
+        : undefined,
     });
     if (!rolled.ok) return rolled;
 

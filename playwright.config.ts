@@ -19,6 +19,9 @@ export default defineConfig<Options>({
     baseURL: `http://localhost:${port}`,
     viewport: { width: 1400, height: 900 },
     screenshot: "only-on-failure",
+    // The 3D dice throw runs physics on the main thread, which software WebGL can't keep up
+    // with; reduced motion shows results without it (as it does for people who ask for it).
+    reducedMotion: "reduce",
   },
   projects: (["rulebook", "zine", "fantasy"] as const).map((theme) => ({
     name: theme,

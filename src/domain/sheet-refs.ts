@@ -1,7 +1,7 @@
 import { notationRefs, parseNotation, type Ref, type RefLookup } from "./dice-notation";
 import { computeDerived, exprRefs, parseExpr, type DerivedResult, type ExprScope } from "./derived";
 import { allBlocks, derivedKeys, layoutKeys } from "./layout-edit";
-import type { ListRow, SheetLayout, SheetValues } from "./sheet-layout";
+import { layoutTrackers, type ListRow, type SheetLayout, type SheetValues } from "./sheet-layout";
 
 /*
  * How `@refs` in derived values and roll notation read a character's values.
@@ -34,6 +34,22 @@ const ownValue = <T>(values: Readonly<Record<string, T>>, key: string): T | unde
 const isList = (value: SheetValues[string]): value is readonly ListRow[] =>
   Array.isArray(value) &&
   value.every((row) => typeof row === "object" && row !== null && !Array.isArray(row));
+
+/**
+ * The values refs read. Trackers keep their values apart from the others
+ * (`Character.tickers`), so they're merged in the way the sheet shows them:
+ * the character's value, else the item's start, else its maximum.
+ */
+export const refValues = (
+  layout: SheetLayout | undefined,
+  values: SheetValues,
+  tickers: Readonly<Record<string, number>> = {},
+): SheetValues => {
+  const merged: SheetValues = { ...values, ...tickers };
+  for (const item of layout ? layoutTrackers(layout) : [])
+    merged[item.key] = tickers[item.key] ?? item.start ?? item.max;
+  return merged;
+};
 
 /** Resolve refs to non-derived values. */
 export const valueScope =

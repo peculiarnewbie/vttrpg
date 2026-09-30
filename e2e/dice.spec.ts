@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import type { SheetLayout } from "../src/domain/sheet-layout";
 
@@ -53,6 +54,18 @@ const layout: SheetLayout = {
   ],
 };
 
+/** A player with one character lands on its sheet; with several, on the roster. */
+const openSheet = async (page: Page, name: string) => {
+  await page.getByRole("tab", { name: "Characters" }).click();
+  const tools = page.locator("#world-tools");
+  await tools
+    .getByRole("heading", { name })
+    .or(tools.getByRole("button", { name: new RegExp(name) }))
+    .first()
+    .click();
+  await expect(tools.getByRole("heading", { name })).toBeVisible();
+};
+
 test("derived values show on the sheet and rolls resolve them", async ({ table }) => {
   const template = await table.saveTemplate({
     name: "E2E 5e",
@@ -72,15 +85,14 @@ test("derived values show on the sheet and rolls resolve them", async ({ table }
 
   const { page } = table.player;
   await table.open(table.player);
-  await page.getByRole("tab", { name: "Characters" }).click();
-  await page.getByRole("button", { name: /Brienne/ }).click();
+  await openSheet(page, "Brienne");
 
   const sheet = page.locator("#world-tools");
   // floor((14 - 10) / 2) = 2, ceil(5 / 4) + 1 = 3, and the row's 1 + 2.
-  await expect(sheet.getByRole("button", { name: "STR mod" })).toBeVisible();
+  await expect(sheet.getByRole("button", { name: "STR mod", exact: true })).toBeVisible();
   await expect(sheet.getByText("3", { exact: true }).first()).toBeVisible();
 
-  await sheet.getByRole("button", { name: "STR mod" }).click();
+  await sheet.getByRole("button", { name: "STR mod", exact: true }).click();
   await expect(page.getByText("(STR mod +2)").first()).toBeVisible({ timeout: 15_000 });
 
   await sheet.getByRole("button", { name: /STR save/ }).click();
@@ -92,9 +104,15 @@ test("derived values show on the sheet and rolls resolve them", async ({ table }
   await expect(page.getByText("(Bonus +1, STR mod +2)").first()).toBeVisible({ timeout: 15_000 });
 
   // Zero dots: two dice, the higher one dropped.
-  await sheet.getByRole("button", { name: "Hunt" }).click();
-  await expect(page.getByText("(@hunt)d6khz").first()).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByTitle("Dropped").first()).toBeVisible();
+  await sheet.getByRole("button", { name: "Hunt", exact: true }).click();
+  await expect(page.getByText("(@hunt)d6kh1z").first()).toBeVisible({ timeout: 15_000 });
+  const chat = page.locator("#world-chat");
+  await expect(chat.getByTitle("Dropped")).toHaveCount(1);
+
+  // Trackers keep their values apart from the others; @hunt reads what the pips show.
+  await sheet.getByRole("button", { name: "Set Hunt to 3" }).click();
+  await sheet.getByRole("button", { name: "Hunt", exact: true }).click();
+  await expect(chat.getByTitle("Dropped")).toHaveCount(3, { timeout: 15_000 });
 
   // The DM sees the same rolls; nothing was written to the character.
   await table.open(table.dm);
@@ -133,8 +151,7 @@ test("a typo in a roll is reported instead of rolled", async ({ table }) => {
   });
   const { page } = table.player;
   await table.open(table.player);
-  await page.getByRole("tab", { name: "Characters" }).click();
-  await page.getByRole("button", { name: /Typo/ }).click();
+  await openSheet(page, "Typo");
   await page.locator("#world-tools").getByRole("button", { name: /Oops/ }).click();
   await expect(page.getByText(/Unknown value @wis/)).toBeVisible();
 });
