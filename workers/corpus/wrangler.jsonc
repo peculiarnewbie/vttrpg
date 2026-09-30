@@ -1,0 +1,37 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "ttrpg-corpus",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-03-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [],
+  "d1_databases": [{
+    "binding": "CORPUS_DB",
+    "database_name": "ttrpg-corpus",
+    // Replace with the dashboard-created database id before deploying.
+    "database_id": "00000000-0000-0000-0000-000000000000",
+    "migrations_dir": "migrations",
+  }],
+  "r2_buckets": [{ "binding": "CORPUS_BUCKET", "bucket_name": "ttrpg-corpus-files" }],
+  "durable_objects": { "bindings": [{ "name": "SOURCES", "class_name": "SourceDO" }] },
+  "exports": { "SourceDO": { "type": "durable-object", "storage": "sqlite" } },
+  "env": {
+    "preview": {
+      "name": "ttrpg-corpus-preview",
+      "workers_dev": false,
+      "preview_urls": false,
+      "routes": [],
+      "d1_databases": [{
+        "binding": "CORPUS_DB",
+        "database_name": "ttrpg-corpus-preview",
+        "database_id": "00000000-0000-0000-0000-000000000000",
+        "migrations_dir": "migrations",
+      }],
+      "r2_buckets": [{ "binding": "CORPUS_BUCKET", "bucket_name": "ttrpg-corpus-files-preview" }],
+      "durable_objects": { "bindings": [{ "name": "SOURCES", "class_name": "SourceDO" }] },
+      "exports": { "SourceDO": { "type": "durable-object", "storage": "sqlite" } },
+    },
+  },
+}

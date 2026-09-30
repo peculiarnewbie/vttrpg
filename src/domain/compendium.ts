@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { CharacterValue } from "./schemas";
 import { ListColumn } from "./sheet-layout";
 import { EntryVisibility, IndexRow } from "./compendium-index";
+import { Licence } from "./licence";
 
 export { EntryVisibility, IndexRow };
 
@@ -108,6 +109,10 @@ export const CompendiumEntry = Schema.Struct({
   updatedAt: Schema.String,
   /** The world's compendium revision when this entry last changed; copies remember it. */
   rev: Schema.optional(Schema.Int),
+  /** Source rights and provenance survive world overrides and exports. */
+  licence: Schema.optional(Licence),
+  sourceVersion: Schema.optional(Schema.Int),
+  sourceRev: Schema.optional(Schema.Int),
 });
 export type CompendiumEntry = typeof CompendiumEntry.Type;
 
@@ -174,6 +179,7 @@ export const PackEntry = Schema.Struct({
   body: Schema.String,
   fields: Schema.Record(Schema.String, CharacterValue),
   visibility: EntryVisibility,
+  licence: Schema.optional(Licence),
 });
 export type PackEntry = typeof PackEntry.Type;
 
