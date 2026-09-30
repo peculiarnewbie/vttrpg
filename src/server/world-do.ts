@@ -1,7 +1,9 @@
 import { canSeeNote, canSaveNote } from "../domain/note-permissions";
 import { DurableObject } from "cloudflare:workers";
 import * as Schema from "effect/Schema";
-import { SheetLayout } from "../domain/sheet-layout";
+import { SheetLayout, type ListRow } from "../domain/sheet-layout";
+import { notationRefs, parseNotation, rollText, type Parsed } from "../domain/dice-notation";
+import { sheetRefLookup } from "../domain/sheet-refs";
 import { layoutLimitsError } from "../domain/template-io";
 import {
   CompendiumEntry,
@@ -11,17 +13,7 @@ import {
   compendiumLimits,
 } from "../domain/compendium";
 import { entryError, packError, typeError } from "../domain/compendium-rules";
-import {
-  capDice,
-  computeStats,
-  evaluateRoll,
-  formatDice,
-  makeResolver,
-  parseDiceExpression,
-  parseRollCommand,
-  rollDice,
-  sumDice,
-} from "../domain/dice";
+import { computeStats, evaluateRoll, makeResolver, parseRollCommand } from "../domain/dice";
 import {
   Character,
   ChatMessage,
@@ -1171,38 +1163,56 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
   }
 
   private directRoll(
-    notation: string,
-    visibility: Visibility,
-    authorMemberId: string,
-    authorName: string,
-    recipientMemberIds: readonly string[] = [],
-    label = "",
-  ) {
-    const cleaned = parseRollCommand(notation) ?? notation;
-    const parsed = parseDiceExpression(cleaned);
-    const dice = capDice(parsed.dice);
-    if (dice.length === 0 && parsed.staticBonus === 0) return undefined;
-    const rolled = rollDice(dice);
-    const modifiers =
-      parsed.staticBonus !== 0 ? [{ label: "static", value: parsed.staticBonus }] : [];
-    const result: RollResult = {
-      notation: cleaned || formatDice(dice),
-      dice: rolled,
-      modifiers,
-      total: sumDice(rolled) + parsed.staticBonus,
-    };
-    const character = this.characterForMember(authorMemberId);
-    return this.createMessage({
-      authorMemberId,
-      authorName,
-      kind: "roll",
-      content: label.trim(),
-      visibility,
-      recipientMemberIds: [...recipientMemberIds],
-      roll: result,
-      authorAvatarKey: character?.avatarKey,
-      characterId: character?.id,
+    frame: Extract<ClientFrame, { type: "roll.dice" }>,
+    attachment: SocketAttachment,
+  ): Parsed<ChatMessage> {
+    // parseRollCommand lowercases refs; strip the prefix from the original instead.
+    const cleaned =
+      parseRollCommand(frame.notation) === null
+        ? frame.notation
+        : frame.notation.trim().replace(/^\/roll\s*/i, "");
+    const parsed = parseNotation(cleaned);
+    if (!parsed.ok) return parsed;
+
+    let character: Character | undefined;
+    if (notationRefs(parsed.value).length || frame.characterId !== undefined) {
+      if (frame.characterId === undefined)
+        return { ok: false, error: "Choose a character to roll sheet values" };
+      character = this.getCharacter(frame.characterId);
+      if (!character) return { ok: false, error: "Character not found" };
+      if (!this.canEditCharacter(character.id, attachment.memberId, attachment.role))
+        return { ok: false, error: "You cannot roll for this character" };
+    }
+
+    let row: ListRow | undefined;
+    if (frame.row !== undefined) {
+      const rows = character?.values[frame.row.key];
+      const selected = Array.isArray(rows) ? rows[frame.row.index] : undefined;
+      if (typeof selected !== "object" || selected === null || Array.isArray(selected))
+        return { ok: false, error: "List row not found" };
+      row = selected;
+    }
+    const layout = character ? this.getTemplate(character.templateId)?.layout : undefined;
+    const rolled = rollText(cleaned, {
+      lookup: character ? sheetRefLookup(layout, character.values, row) : undefined,
     });
+    if (!rolled.ok) return rolled;
+
+    const authorCharacter = character ?? this.characterForMember(attachment.memberId);
+    return {
+      ok: true,
+      value: this.createMessage({
+        authorMemberId: attachment.memberId,
+        authorName: attachment.name,
+        kind: "roll",
+        content: (frame.label ?? "").trim(),
+        visibility: frame.visibility,
+        recipientMemberIds: frame.recipientMemberIds ?? [],
+        roll: rolled.value,
+        authorAvatarKey: authorCharacter?.avatarKey,
+        characterId: authorCharacter?.id,
+      }),
+    };
   }
 
   private rollFor(characterId: string, rollId: string) {
@@ -1768,15 +1778,16 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     }
 
     if (frame.type === "roll.dice") {
-      const message = this.directRoll(
-        frame.notation,
-        frame.visibility,
-        attachment.memberId,
-        attachment.name,
-        frame.recipientMemberIds,
-        frame.label,
-      );
-      if (message) this.broadcastMessage(message);
+      const result = this.directRoll(frame, attachment);
+      if (result.ok) this.broadcastMessage(result.value);
+      else
+        socket.send(
+          JSON.stringify({
+            type: "error",
+            code: "roll",
+            message: result.error,
+          } satisfies ServerFrame),
+        );
       return;
     }
 
