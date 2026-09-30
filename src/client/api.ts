@@ -4,6 +4,10 @@ import {
   CompendiumEntry,
   CompendiumPack,
   EntryType,
+  EntryBodies,
+  EntryBodiesInput,
+  IndexDelta,
+  compendiumLimits,
   ImportPackResult,
   type SaveEntryInput,
 } from "../domain/compendium";
@@ -66,6 +70,22 @@ export type WorldBootstrap = {
 };
 
 export const api = {
+  getCompendiumIndex: async (worldId: string, since: number) =>
+    Schema.decodeUnknownSync(IndexDelta)(
+      await request(`/api/worlds/${encodeURIComponent(worldId)}/compendium/index?since=${since}`),
+    ),
+  getEntryBodies: async (worldId: string, ids: readonly string[]) => {
+    if (ids.length > compendiumLimits.bodiesPerRequest) {
+      throw new ApiError(`At most ${compendiumLimits.bodiesPerRequest} entry ids per request`);
+    }
+    const input = Schema.decodeUnknownSync(EntryBodiesInput)({ ids });
+    return Schema.decodeUnknownSync(EntryBodies)(
+      await request(`/api/worlds/${encodeURIComponent(worldId)}/compendium/bodies`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    );
+  },
   getCompendium: async (worldId: string) =>
     Schema.decodeUnknownSync(Compendium)(await request(`/api/worlds/${worldId}/compendium`)),
   saveEntryType: async (worldId: string, input: EntryType) =>
