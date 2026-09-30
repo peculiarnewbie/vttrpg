@@ -224,9 +224,12 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       sql: ctx.storage.sql,
       broadcast: (frame) => this.broadcast(frame),
       transactionSync: (closure) => ctx.storage.transactionSync(closure),
+      bucket: env.BUCKET,
+      worldId: this.worldId,
     });
     ctx.blockConcurrencyWhile(async () => {
       this.ensureSchema();
+      await this.compendium.ensureMigrated();
     });
   }
 
@@ -1277,6 +1280,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
           body,
           role,
           decodeURIComponent(request.headers.get("x-ttrpg-world-name") ?? "World"),
+          url.searchParams.get("since"),
         );
       if (path === "scenes" || path.startsWith("scenes/")) {
         if (role !== "dm") return json({ error: "Only the DM can manage scenes" }, 403);
@@ -1466,14 +1470,49 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     }
     const decoded = Schema.decodeUnknownResult(ClientFrame)(parsed);
     if (decoded._tag === "Failure") {
+      const searchRequest =
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "type" in parsed &&
+        parsed.type === "search" &&
+        "requestId" in parsed &&
+        typeof parsed.requestId === "string"
+          ? parsed.requestId
+          : undefined;
       socket.send(
-        JSON.stringify({ type: "error", message: "Invalid frame" } satisfies ServerFrame),
+        JSON.stringify({
+          type: "error",
+          message: "Invalid frame",
+          ...(searchRequest === undefined ? {} : { code: "search", requestId: searchRequest }),
+        } satisfies ServerFrame),
       );
       return;
     }
     const attachment = socket.deserializeAttachment() as SocketAttachment | null;
     if (!attachment) return;
     const frame = decoded.success;
+
+    if (frame.type === "search") {
+      try {
+        socket.send(
+          JSON.stringify({
+            type: "search.result",
+            requestId: frame.requestId,
+            results: this.compendium.search(frame, attachment.role),
+          } satisfies ServerFrame),
+        );
+      } catch {
+        socket.send(
+          JSON.stringify({
+            type: "error",
+            code: "search",
+            requestId: frame.requestId,
+            message: "Compendium search failed",
+          } satisfies ServerFrame),
+        );
+      }
+      return;
+    }
 
     if (frame.type === "board.focus") {
       if (attachment.role !== "dm") {
