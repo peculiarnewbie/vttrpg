@@ -12,6 +12,7 @@ import {
 } from "../domain/compendium";
 import { entryFacets } from "../domain/entry-facets";
 import { entryError, packError, typeError } from "../domain/compendium-rules";
+import { licenceError } from "../domain/licence";
 import {
   entryId,
   isEntryId,
@@ -41,6 +42,7 @@ type CompendiumIndexRow = {
   updated_at: string;
   rev: number;
   facets: string | null;
+  licence?: string | null;
 };
 type CompendiumEntryRow = CompendiumIndexRow & {
   body: string;
@@ -86,6 +88,7 @@ const toEntry = (row: CompendiumEntryRow): CompendiumEntry[] => {
     ...toIndex(row)[0],
     body: row.body,
     fields: parse<unknown>(row.fields, undefined),
+    licence: parse<unknown>(row.licence ?? null, undefined),
   });
   return decoded._tag === "Success" ? [decoded.success] : [];
 };
@@ -121,7 +124,107 @@ type WorldCompendiumOptions = {
   worldId: string;
 };
 
+export interface CompendiumSources {
+  readonly available: boolean;
+  resolve(id: string, role: string): Promise<CompendiumEntry | undefined>;
+  ownsType(id: string): boolean;
+  exportEntries(): Promise<CompendiumEntry[]>;
+}
+
 export class WorldCompendium {
+  private sources?: CompendiumSources;
+
+  setSources(sources: CompendiumSources) {
+    this.sources = sources;
+  }
+
+  sourceTypes(): EntryType[] {
+    return this.types();
+  }
+
+  /** Caller holds the transaction encompassing source metadata and index changes. */
+  replaceSourceRows(
+    sourceId: string,
+    rows: readonly IndexRow[],
+    types: readonly EntryType[],
+  ): number {
+    const rev = this.bump();
+    const next = new Set(rows.map((row) => row.id));
+    const previous = this.sql
+      .exec<CompendiumIndexRow & { source_rev: number }>(
+        "SELECT * FROM compendium_entries WHERE id GLOB ?",
+        `${sourceId}/*`,
+      )
+      .toArray();
+    const byId = new Map(previous.map((row) => [row.id, row]));
+    const removed = previous.filter((row) => !next.has(row.id));
+    for (let start = 0; start < removed.length; start += 20) {
+      const batch = removed.slice(start, start + 20);
+      this.sql.exec(
+        `INSERT INTO compendium_tombstones (id, rev, public) VALUES ${batch.map(() => "(?, ?, ?)").join(",")}
+        ON CONFLICT(id) DO UPDATE SET rev=excluded.rev, public=MAX(compendium_tombstones.public, excluded.public)`,
+        ...batch.flatMap((row) => [row.id, rev, row.visibility === "public" ? 1 : 0]),
+      );
+      this.sql.exec(
+        `DELETE FROM compendium_entries WHERE id IN (${batch.map(() => "?").join(",")})`,
+        ...batch.map((row) => row.id),
+      );
+    }
+    if (removed.length) this.pruneTombstones();
+    for (const type of types) this.writeCompendiumType(type);
+    const changed = rows.filter((row) => {
+      const old = byId.get(row.id);
+      return (
+        !old ||
+        old.source_rev !== row.rev ||
+        old.name !== row.name ||
+        old.tags !== JSON.stringify(row.tags) ||
+        old.visibility !== row.visibility ||
+        old.updated_at !== row.updatedAt ||
+        old.facets !== (row.facets ? JSON.stringify(row.facets) : null)
+      );
+    });
+    for (let start = 0; start < changed.length; start += 6) {
+      const batch = changed.slice(start, start + 6);
+      this.sql.exec(
+        `INSERT INTO compendium_entries (id, type_id, name, tags, body, fields, visibility, updated_at, rev, name_key, name_words, tags_key, text_key, facets, source_rev)
+        VALUES ${batch.map(() => "(?, ?, ?, ?, '', '{}', ?, ?, ?, ?, ?, ?, '', ?, ?)").join(",")}
+        ON CONFLICT(id) DO UPDATE SET type_id=excluded.type_id, name=excluded.name, tags=excluded.tags, body='', fields='{}', visibility=excluded.visibility, updated_at=excluded.updated_at, rev=excluded.rev, name_key=excluded.name_key, name_words=excluded.name_words, tags_key=excluded.tags_key, text_key='', facets=excluded.facets, source_rev=excluded.source_rev`,
+        ...batch.flatMap((row) => [
+          row.id,
+          row.typeId,
+          row.name,
+          JSON.stringify(row.tags),
+          row.visibility,
+          row.updatedAt,
+          rev,
+          normalize(row.name),
+          nameWords(row.name),
+          normalize(row.tags.join(" ")),
+          row.facets ? JSON.stringify(row.facets) : null,
+          row.rev,
+        ]),
+      );
+    }
+    for (const row of changed) {
+      const old = byId.get(row.id);
+      if (row.visibility === "dm" && old?.visibility === "public")
+        this.tombstone(row.id, rev, true);
+    }
+    const publicRows = changed.filter((row) => row.visibility === "public");
+    for (let start = 0; start < publicRows.length; start += 50) {
+      const batch = publicRows.slice(start, start + 50);
+      this.sql.exec(
+        `DELETE FROM compendium_tombstones WHERE id IN (${batch.map(() => "?").join(",")})`,
+        ...batch.map((row) => row.id),
+      );
+    }
+    return rev;
+  }
+
+  notifySources(rev: number) {
+    this.updated(rev);
+  }
   private readonly sql: SqlStorage;
   private readonly broadcast: WorldCompendiumOptions["broadcast"];
   private readonly transactionSync: WorldCompendiumOptions["transactionSync"];
@@ -166,6 +269,8 @@ export class WorldCompendium {
     for (const [name, ddl] of [
       ["rev", "INTEGER NOT NULL DEFAULT 0"],
       ["facets", "TEXT"],
+      ["licence", "TEXT"],
+      ["source_rev", "INTEGER"],
       ["name_key", "TEXT NOT NULL DEFAULT ''"],
       ["name_words", "TEXT NOT NULL DEFAULT ''"],
       ["tags_key", "TEXT NOT NULL DEFAULT ''"],
@@ -179,6 +284,13 @@ export class WorldCompendium {
       "CREATE TABLE IF NOT EXISTS compendium_tombstones (id TEXT PRIMARY KEY, rev INTEGER NOT NULL)",
     );
     sql.exec("CREATE INDEX IF NOT EXISTS compendium_tombstones_rev ON compendium_tombstones(rev)");
+    if (
+      !sql
+        .exec<{ name: string }>("PRAGMA table_info(compendium_tombstones)")
+        .toArray()
+        .some((row) => row.name === "public")
+    )
+      sql.exec("ALTER TABLE compendium_tombstones ADD COLUMN public INTEGER NOT NULL DEFAULT 1");
     sql.exec(
       "CREATE TABLE IF NOT EXISTS compendium_aliases (old_id TEXT PRIMARY KEY, new_id TEXT NOT NULL)",
     );
@@ -407,7 +519,9 @@ export class WorldCompendium {
     return {
       types: this.types(),
       entries: this.sql
-        .exec<CompendiumEntryRow>("SELECT * FROM compendium_entries ORDER BY updated_at DESC, id")
+        .exec<CompendiumEntryRow>(
+          "SELECT * FROM compendium_entries WHERE source_rev IS NULL ORDER BY updated_at DESC, id",
+        )
         .toArray()
         .flatMap(toEntry),
     };
@@ -417,6 +531,12 @@ export class WorldCompendium {
     const rev = this.revision();
     const requested = since === null || !/^\d+$/.test(since) ? 0 : Number(since);
     const full =
+      (!this.sources?.available &&
+        this.sql
+          .exec(
+            "SELECT id FROM compendium_entries WHERE id NOT GLOB 'world/*' AND id LIKE '%/%' UNION ALL SELECT id FROM compendium_tombstones WHERE id NOT GLOB 'world/*' AND id LIKE '%/%' LIMIT 1",
+          )
+          .toArray().length > 0) ||
       !Number.isSafeInteger(requested) ||
       requested <= 0 ||
       requested > rev ||
@@ -424,7 +544,7 @@ export class WorldCompendium {
     const after = full ? -1 : requested;
     const upserts = this.sql
       .exec<CompendiumIndexRow>(
-        `SELECT ${indexColumns} FROM compendium_entries WHERE rev > ? ${role === "dm" ? "" : "AND visibility = 'public'"}`,
+        `SELECT ${indexColumns} FROM compendium_entries WHERE rev > ? ${this.sources?.available ? "" : "AND (id GLOB 'world/*' OR id NOT LIKE '%/%')"} ${role === "dm" ? "" : "AND visibility = 'public'"}`,
         after,
       )
       .toArray()
@@ -433,8 +553,8 @@ export class WorldCompendium {
       ? []
       : this.sql
           .exec<{ id: string }>(
-            `SELECT id FROM compendium_tombstones WHERE rev > ? ${role === "dm" ? "" : "UNION SELECT id FROM compendium_entries WHERE rev > ? AND visibility = 'dm'"}`,
-            ...(role === "dm" ? [after] : [after, after]),
+            `SELECT id FROM compendium_tombstones WHERE rev > ? ${this.sources?.available ? "" : "AND (id GLOB 'world/*' OR id NOT LIKE '%/%')"} ${role === "dm" ? "" : "AND public = 1"}`,
+            after,
           )
           .toArray()
           .map((row) => row.id);
@@ -448,28 +568,44 @@ export class WorldCompendium {
     );
   }
   /** Resolve legacy ids and enforce entry visibility before handing content to rolls. */
-  lookup(id: string, role: string): { entry: CompendiumEntry; type: EntryType } | undefined {
+  async lookup(
+    id: string,
+    role: string,
+  ): Promise<{ entry: CompendiumEntry; type: EntryType } | undefined> {
     const row = this.sql
       .exec<CompendiumEntryRow>("SELECT * FROM compendium_entries WHERE id = ?", this.resolveId(id))
       .toArray()[0];
     if (!row || (role !== "dm" && row.visibility !== "public")) return undefined;
-    const entry = toEntry(row)[0];
+    if (
+      isEntryId(row.id) &&
+      parseEntryId(row.id)?.source !== WORLD_SOURCE &&
+      !this.sources?.available
+    )
+      return undefined;
+    const entry =
+      isEntryId(row.id) && parseEntryId(row.id)?.source !== WORLD_SOURCE
+        ? await this.sources?.resolve(row.id, role)
+        : toEntry(row)[0];
+    const current = this.sql
+      .exec<{ rev: number; visibility: string }>(
+        "SELECT rev, visibility FROM compendium_entries WHERE id = ?",
+        row.id,
+      )
+      .toArray()[0];
+    if (!current || current.rev !== row.rev || (role !== "dm" && current.visibility !== "public"))
+      return undefined;
     const type = entry && this.types().find((type) => type.id === entry.typeId);
     return entry && type ? { entry, type } : undefined;
   }
 
-  bodies(input: EntryBodiesInput, role: string): EntryBodies {
+  async bodies(input: EntryBodiesInput, role: string): Promise<EntryBodies> {
     const aliases: Record<string, string> = {};
     const missing: string[] = [];
     const ids = new Set<string>();
     const entries: CompendiumEntry[] = [];
     for (const oldId of input.ids) {
       const id = this.resolveId(oldId);
-      const row = this.sql
-        .exec<CompendiumEntryRow>("SELECT * FROM compendium_entries WHERE id = ?", id)
-        .toArray()[0];
-      const entry =
-        row && (role === "dm" || row.visibility === "public") ? toEntry(row)[0] : undefined;
+      const entry = (await this.lookup(id, role))?.entry;
       if (!entry) {
         missing.push(oldId);
         continue;
@@ -496,6 +632,7 @@ export class WorldCompendium {
     const limit = Math.min(frame.limit ?? 20, compendiumLimits.searchResults);
     const params: (string | number)[] = [];
     const filters: string[] = [];
+    if (!this.sources?.available) filters.push("(id GLOB 'world/*' OR id NOT LIKE '%/%')");
     if (role !== "dm") filters.push("visibility = 'public'");
     if (frame.typeIds) {
       filters.push(`type_id IN (${frame.typeIds.map(() => "?").join(",")})`);
@@ -651,7 +788,10 @@ export class WorldCompendium {
   }
   private recomputeFacets(type: EntryType, rev: number) {
     const entries = this.sql
-      .exec<CompendiumEntryRow>("SELECT * FROM compendium_entries WHERE type_id = ?", type.id)
+      .exec<CompendiumEntryRow>(
+        "SELECT * FROM compendium_entries WHERE type_id = ? AND (id GLOB 'world/*' OR id NOT LIKE '%/%')",
+        type.id,
+      )
       .toArray()
       .flatMap(toEntry);
     for (const entry of entries) {
@@ -666,6 +806,12 @@ export class WorldCompendium {
   }
 
   private writeCompendiumEntry(entry: CompendiumEntry, type?: EntryType) {
+    const previous = this.sql
+      .exec<{ visibility: string }>(
+        "SELECT visibility FROM compendium_entries WHERE id = ?",
+        entry.id,
+      )
+      .toArray()[0];
     const text = (type?.fields ?? [])
       .filter((field) => field.kind === "text" || field.kind === "longtext")
       .map((field) => entry.fields[field.key])
@@ -673,11 +819,11 @@ export class WorldCompendium {
       .join(" ");
     const facets = type ? entryFacets(entry, type) : undefined;
     this.sql.exec(
-      `INSERT INTO compendium_entries (id, type_id, name, tags, body, fields, visibility, updated_at, rev, name_key, name_words, tags_key, text_key, facets)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO compendium_entries (id, type_id, name, tags, body, fields, visibility, updated_at, rev, name_key, name_words, tags_key, text_key, facets, licence)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET name = excluded.name, tags = excluded.tags, body = excluded.body,
       fields = excluded.fields, visibility = excluded.visibility, updated_at = excluded.updated_at,
-      rev = excluded.rev, name_key = excluded.name_key, name_words = excluded.name_words, tags_key = excluded.tags_key, text_key = excluded.text_key, facets = excluded.facets`,
+      licence = excluded.licence, rev = excluded.rev, name_key = excluded.name_key, name_words = excluded.name_words, tags_key = excluded.tags_key, text_key = excluded.text_key, facets = excluded.facets`,
       entry.id,
       entry.typeId,
       entry.name,
@@ -692,15 +838,23 @@ export class WorldCompendium {
       normalize(entry.tags.join(" ")),
       normalize(`${entry.body} ${text}`),
       facets === undefined ? null : JSON.stringify(facets),
+      entry.licence ? JSON.stringify(entry.licence) : null,
     );
-    this.sql.exec("DELETE FROM compendium_tombstones WHERE id = ?", entry.id);
+    if (entry.visibility === "dm" && previous?.visibility === "public")
+      this.tombstone(entry.id, entry.rev ?? 0, true);
+    else if (entry.visibility === "public")
+      this.sql.exec("DELETE FROM compendium_tombstones WHERE id = ?", entry.id);
   }
-  private tombstone(id: string, rev: number) {
+  private tombstone(id: string, rev: number, publicEntry = true) {
     this.sql.exec(
-      "INSERT INTO compendium_tombstones (id, rev) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET rev = excluded.rev",
+      "INSERT INTO compendium_tombstones (id, rev, public) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET rev = excluded.rev, public = MAX(compendium_tombstones.public, excluded.public)",
       id,
       rev,
+      publicEntry ? 1 : 0,
     );
+    this.pruneTombstones();
+  }
+  private pruneTombstones() {
     const evicted = this.sql
       .exec<{ rev: number }>(
         "SELECT rev FROM compendium_tombstones ORDER BY rev DESC, id DESC LIMIT -1 OFFSET 20000",
@@ -721,14 +875,14 @@ export class WorldCompendium {
     );
   }
 
-  handle(
+  async handle(
     method: string,
     path: string,
     body: unknown,
     role: string,
     worldName: string,
     since: string | null = null,
-  ): Response {
+  ): Promise<Response> {
     if (method === "GET" && path === "compendium/index") return json(this.index(since, role));
     if (method === "POST" && path === "compendium/bodies") {
       const decoded = Schema.decodeUnknownResult(EntryBodiesInput)(body);
@@ -740,7 +894,11 @@ export class WorldCompendium {
           { error: `Request at most ${compendiumLimits.bodiesPerRequest} entry ids` },
           400,
         );
-      return json(this.bodies(decoded.success, role));
+      try {
+        return json(await this.bodies(decoded.success, role));
+      } catch {
+        return json({ error: "Library content is temporarily unavailable" }, 503);
+      }
     }
     if (method === "GET" && path === "compendium") {
       const compendium = this.list();
@@ -755,16 +913,32 @@ export class WorldCompendium {
     const sql = this.sql;
     const types = this.types();
     if (method === "GET" && path === "compendium/export") {
+      let overrides: CompendiumEntry[] = [];
+      if (this.sources?.available) {
+        try {
+          overrides = await this.sources.exportEntries();
+        } catch {
+          return json({ error: "Library content is temporarily unavailable" }, 503);
+        }
+      }
       const pack: CompendiumPack = {
         format: "ttrpg-pack",
         version: 2,
         name: worldName,
         types,
-        entries: this.list().entries.map(({ updatedAt: _updatedAt, rev: _rev, ...entry }) => entry),
+        entries: [...this.list().entries, ...overrides].map(
+          ({ updatedAt: _updatedAt, rev: _rev, ...entry }) => entry,
+        ),
       };
       return json(pack);
     }
     const typeMatch = /^compendium\/types\/([^/]+)$/.exec(path);
+    if (
+      typeMatch &&
+      (method === "PUT" || method === "DELETE") &&
+      this.sources?.ownsType(typeMatch[1])
+    )
+      return json({ error: "Enabled library entry types cannot be edited in the world" }, 409);
     if (typeMatch && method === "PUT") {
       const decoded = Schema.decodeUnknownResult(EntryType)(body);
       if (decoded._tag === "Failure") return json({ error: "Invalid entry type" }, 400);
@@ -812,6 +986,8 @@ export class WorldCompendium {
         input.id === undefined
           ? this.newEntryId(input.typeId, input.name, this.takenIds())
           : this.resolveId(input.id);
+      if (isEntryId(id) && parseEntryId(id)?.source !== WORLD_SOURCE)
+        return json({ error: "Use the library override editor for this entry" }, 409);
       const existing = sql
         .exec<{ type_id: string }>("SELECT type_id FROM compendium_entries WHERE id = ?", id)
         .toArray()[0];
@@ -820,8 +996,11 @@ export class WorldCompendium {
         return json({ error: "An entry cannot move between types" }, 400);
       if (
         input.id === undefined &&
-        sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM compendium_entries").one().n >=
-          compendiumLimits.entries
+        sql
+          .exec<{ n: number }>(
+            "SELECT COUNT(*) AS n FROM compendium_entries WHERE id GLOB 'world/*' OR id NOT LIKE '%/%'",
+          )
+          .one().n >= compendiumLimits.entries
       )
         return json({ error: "A world can have at most 10000 entries" }, 400);
       const entry: CompendiumEntry = {
@@ -829,6 +1008,15 @@ export class WorldCompendium {
         id,
         updatedAt: nowIso(),
         rev: this.revision() + 1,
+        licence: parse<CompendiumEntry["licence"]>(
+          sql
+            .exec<{ licence: string | null }>(
+              "SELECT licence FROM compendium_entries WHERE id = ?",
+              id,
+            )
+            .toArray()[0]?.licence ?? null,
+          undefined,
+        ),
       };
       const error = entryError(entry, type);
       if (error) return json({ error }, 400);
@@ -842,10 +1030,15 @@ export class WorldCompendium {
     const entryMatch = /^compendium\/entries\/(.+)$/.exec(path);
     if (entryMatch && method === "DELETE") {
       const id = this.resolveId(decodeURIComponent(entryMatch[1]));
+      if (isEntryId(id) && parseEntryId(id)?.source !== WORLD_SOURCE)
+        return json({ error: "Use the library blocklist for this entry" }, 409);
+      const previous = sql
+        .exec<{ visibility: string }>("SELECT visibility FROM compendium_entries WHERE id = ?", id)
+        .toArray()[0];
       const rev = this.transactionSync(() => {
         const revision = this.bump();
         sql.exec("DELETE FROM compendium_entries WHERE id = ?", id);
-        this.tombstone(id, revision);
+        this.tombstone(id, revision, previous?.visibility === "public");
         return revision;
       });
       this.updated(rev);
@@ -855,6 +1048,23 @@ export class WorldCompendium {
       const decoded = Schema.decodeUnknownResult(CompendiumPack)(body);
       if (decoded._tag === "Failure") return json({ error: "Invalid compendium pack" }, 400);
       const pack = decoded.success;
+      for (const item of pack.entries) {
+        const previous = sql
+          .exec<{ licence: string | null }>(
+            "SELECT licence FROM compendium_entries WHERE id = ?",
+            item.id,
+          )
+          .toArray()[0];
+        const rights = parse<CompendiumEntry["licence"]>(previous?.licence ?? null, undefined);
+        if (rights && JSON.stringify(rights) !== JSON.stringify(item.licence))
+          return json(
+            { error: "Import must preserve the existing entry licence and attribution" },
+            400,
+          );
+      }
+      for (const type of pack.types)
+        if (this.sources?.ownsType(type.id))
+          return json({ error: "Import cannot replace enabled library entry types" }, 409);
       const error = packError(pack, types);
       if (error) return json({ error }, 400);
       const typeMap = new Map([...types, ...pack.types].map((type) => [type.id, type]));
@@ -862,7 +1072,9 @@ export class WorldCompendium {
         return json({ error: "A world can have at most 50 entry types" }, 400);
       const existing = new Map(
         sql
-          .exec<{ id: string; type_id: string }>("SELECT id, type_id FROM compendium_entries")
+          .exec<{ id: string; type_id: string }>(
+            "SELECT id, type_id FROM compendium_entries WHERE id GLOB 'world/*' OR id NOT LIKE '%/%'",
+          )
           .toArray()
           .map((row) => [row.id, row.type_id]),
       );
@@ -873,6 +1085,14 @@ export class WorldCompendium {
       let created = 0;
       for (const item of pack.entries) {
         let id = item.id;
+        if (isEntryId(id) && parseEntryId(id)?.source !== WORLD_SOURCE)
+          return json(
+            {
+              error:
+                "Library entries must be restored through their enabled library and override editor",
+            },
+            400,
+          );
         if (pack.version === 1) {
           id = this.resolveId(item.id);
           if (id === item.id && !existing.has(id)) {
@@ -883,6 +1103,24 @@ export class WorldCompendium {
         const parts = parseEntryId(id);
         if (!parts || parts.source !== WORLD_SOURCE || parts.typeId !== item.typeId)
           return json({ error: "Entry id must be world/<type>/<slug> and match its type" }, 400);
+        const rights = parse<CompendiumEntry["licence"]>(
+          sql
+            .exec<{ licence: string | null }>(
+              "SELECT licence FROM compendium_entries WHERE id = ?",
+              id,
+            )
+            .toArray()[0]?.licence ?? null,
+          undefined,
+        );
+        if (rights && JSON.stringify(rights) !== JSON.stringify(item.licence))
+          return json(
+            { error: "Import must preserve the existing entry licence and attribution" },
+            400,
+          );
+        if (item.licence) {
+          const issue = licenceError(item.licence);
+          if (issue) return json({ error: issue }, 400);
+        }
         if (existing.has(id) && existing.get(id) !== item.typeId)
           return json({ error: "An entry cannot move between types" }, 400);
         if (importedIds.has(id)) return json({ error: "Pack contains duplicate entry ids" }, 400);
