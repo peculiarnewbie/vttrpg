@@ -1,12 +1,12 @@
 // @vitest-environment node
 import * as Schema from "effect/Schema";
-import { build, stop } from "esbuild";
-import { Miniflare, convertV4MiniflareOptions } from "miniflare";
+import { startTabletop, type Tabletop } from "../test/miniflare";
 import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { BoardSnapshot, SceneList, normalizeBoard } from "../domain/board";
 
-let mf: Miniflare;
+let tabletop: Tabletop;
+let mf: Tabletop["mf"];
 const legacy: BoardSnapshot = {
   revision: 17,
   document: {
@@ -27,14 +27,9 @@ const legacy: BoardSnapshot = {
 };
 
 beforeAll(async () => {
-  const bundle = await build({
-    entryPoints: ["src/worker.ts"],
-    bundle: true,
-    write: false,
-    format: "esm",
-    platform: "browser",
-    external: ["cloudflare:workers", "node:*"],
-    target: "es2022",
+  tabletop = await startTabletop({
+    name: "board-migration",
+    bindings: false,
     plugins: [
       {
         name: "legacy-board-fixture",
@@ -60,21 +55,10 @@ beforeAll(async () => {
       },
     ],
   });
-  mf = new Miniflare(
-    convertV4MiniflareOptions({
-      name: "board-migration",
-      modules: true,
-      script: bundle.outputFiles[0].text,
-      compatibilityDate: "2026-03-22",
-      compatibilityFlags: ["nodejs_compat"],
-      durableObjects: { WORLDS: { className: "WorldDO", useSQLite: true } },
-    }),
-  );
-  await mf.ready;
+  mf = tabletop.mf;
 }, 30000);
 afterAll(async () => {
-  await mf?.dispose();
-  await stop();
+  await tabletop?.dispose();
 });
 
 it("migrates an existing board losslessly into one active scene and preserves its revision", async () => {

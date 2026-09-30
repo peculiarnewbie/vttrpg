@@ -1,22 +1,16 @@
 // @vitest-environment node
 import * as Schema from "effect/Schema";
-import { build, stop } from "esbuild";
-import { Miniflare, convertV4MiniflareOptions } from "miniflare";
+import { startTabletop, type Tabletop, type CallOptions } from "../test/miniflare";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { readFile } from "node:fs/promises";
 import { BoardSnapshot, SceneList, normalizeBoard, emptyBoard } from "../domain/board";
-import { ServerFrame, type ClientFrame } from "../domain/schemas";
+import type { ServerFrame } from "../domain/schemas";
 
-let mf: Miniflare;
+let tabletop: Tabletop;
+let mf: Tabletop["mf"];
 let cookie = "";
 let worldId = "";
 let playerCookie = "";
-const call = (path: string, options: { method?: string; body?: unknown; cookie?: string } = {}) =>
-  mf.dispatchFetch(`https://tabletop.test/api${path}`, {
-    method: options.method ?? "GET",
-    headers: { cookie: options.cookie ?? cookie, "content-type": "application/json" },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-  });
+const call = (path: string, options: CallOptions = {}) => tabletop.call(path, options);
 const expectedBoard = (snapshot: BoardSnapshot) => ({
   ...snapshot,
   document: normalizeBoard(snapshot.document),
@@ -42,39 +36,11 @@ const board = {
 } satisfies BoardSnapshot;
 
 beforeAll(async () => {
-  const bundle = await build({
-    entryPoints: ["src/worker.ts"],
-    bundle: true,
-    write: false,
-    format: "esm",
-    platform: "browser",
-    external: ["cloudflare:workers", "node:*"],
-    target: "es2022",
+  tabletop = await startTabletop({
+    cookie: () => cookie,
   });
-  mf = new Miniflare(
-    convertV4MiniflareOptions({
-      name: "tabletop",
-      modules: true,
-      script: bundle.outputFiles[0].text,
-      compatibilityDate: "2026-03-22",
-      compatibilityFlags: ["nodejs_compat"],
-      durableObjects: { WORLDS: { className: "WorldDO", useSQLite: true } },
-      d1Databases: ["DB"],
-      r2Buckets: ["BUCKET"],
-    }),
-  );
-  const db = await mf.getD1Database("DB");
-  const migration = await readFile("src/migrations/0001_initial.sql", "utf8");
-  for (const sql of migration
-    .split(";")
-    .map((part) => part.trim())
-    .filter(Boolean))
-    await db.prepare(sql).run();
-  const signin = await call("/auth/google", {
-    method: "POST",
-    body: { email: "dm@example.test", displayName: "DM" },
-  });
-  cookie = signin.headers.get("set-cookie")!.split(";")[0];
+  mf = tabletop.mf;
+  cookie = await tabletop.signin("dm@example.test", "DM");
 }, 30000);
 beforeEach(async () => {
   const world = await call("/worlds", { method: "POST", body: { name: "Board test" } });
@@ -84,41 +50,22 @@ beforeEach(async () => {
     body: { displayName: "Player", role: "player", kind: "invite", email: "player@example.test" },
   });
   expect(membership.status).toBe(201);
-  const player = await call("/auth/google", {
-    method: "POST",
-    body: { email: "player@example.test", displayName: "Player" },
-  });
-  playerCookie = player.headers.get("set-cookie")!.split(";")[0];
+  playerCookie = await tabletop.signin("player@example.test", "Player");
 }, 30000);
 afterAll(async () => {
-  await mf?.dispose();
-  await stop();
+  await tabletop?.dispose();
 });
 
 describe("published board through real Worker, D1, R2, and SQLite DO", () => {
   it("relays authenticated cursors, respects toggles, validates coordinates, and clears disconnected tabs", async () => {
     const connect = async (authCookie: string) => {
-      const response = await mf.dispatchFetch(`https://tabletop.test/api/worlds/${worldId}/ws`, {
-        headers: { cookie: authCookie, Upgrade: "websocket" },
+      const { response, socket, frames, send, sync } = await tabletop.connect({
+        worldId,
+        cookie: authCookie,
+        barrierNoteId: "cursor-test-barrier",
       });
       expect(response.status).toBe(101);
-      const socket = response.webSocket;
-      if (!socket) throw new Error("Missing websocket");
-      const frames: ServerFrame[] = [];
-      socket.addEventListener("message", (event) =>
-        frames.push(Schema.decodeUnknownSync(ServerFrame)(JSON.parse(String(event.data)))),
-      );
-      socket.accept();
       await expect.poll(() => frames.some((frame) => frame.type === "board")).toBe(true);
-      const send = (frame: ClientFrame) => socket.send(JSON.stringify(frame));
-      // A reply on the same ordered socket is a barrier for preceding messages.
-      const sync = async () => {
-        const count = frames.filter((frame) => frame.type === "presence").length;
-        send({ type: "note.saved", noteId: "cursor-test-barrier" });
-        await expect
-          .poll(() => frames.filter((frame) => frame.type === "presence").length)
-          .toBeGreaterThan(count);
-      };
       return { socket, frames, send, sync };
     };
     const dm = await connect(cookie);
@@ -182,15 +129,7 @@ describe("published board through real Worker, D1, R2, and SQLite DO", () => {
   });
   it("relays focus only from the DM to other connections without persisting it", async () => {
     const connect = async (authCookie: string) => {
-      const response = await mf.dispatchFetch(`https://tabletop.test/api/worlds/${worldId}/ws`, {
-        headers: { cookie: authCookie, Upgrade: "websocket" },
-      });
-      const socket = response.webSocket!;
-      const frames: ServerFrame[] = [];
-      socket.addEventListener("message", (event) =>
-        frames.push(Schema.decodeUnknownSync(ServerFrame)(JSON.parse(String(event.data)))),
-      );
-      socket.accept();
+      const { socket, frames } = await tabletop.connect({ worldId, cookie: authCookie });
       await expect.poll(() => frames.some((frame) => frame.type === "board")).toBe(true);
       return { socket, frames };
     };
@@ -347,14 +286,12 @@ describe("published board through real Worker, D1, R2, and SQLite DO", () => {
   });
   it("sends the current board on connection and broadcasts only published snapshots", async () => {
     await call(`/worlds/${worldId}/board`, { method: "PUT", body: board });
-    const response = await mf.dispatchFetch(`https://tabletop.test/api/worlds/${worldId}/ws`, {
-      headers: { cookie: playerCookie, Upgrade: "websocket" },
+    const { response, socket, frames } = await tabletop.connect({
+      worldId,
+      cookie: playerCookie,
+      decodeFrame: (data) => data as ServerFrame,
     });
     expect(response.status).toBe(101);
-    const socket = response.webSocket!;
-    const frames: { type: string; board?: { revision: number } }[] = [];
-    socket.addEventListener("message", (event) => frames.push(JSON.parse(String(event.data))));
-    socket.accept();
     await expect
       .poll(() => frames.find((frame) => frame.type === "board")?.board?.revision)
       .toBe(1);
@@ -435,24 +372,12 @@ describe("private scenes", () => {
   });
   it("never exposes prep scenes or hidden content in HTTP, bootstrap, or realtime", async () => {
     const connect = async (authCookie: string) => {
-      const response = await mf.dispatchFetch(`https://tabletop.test/api/worlds/${worldId}/ws`, {
-        headers: { cookie: authCookie, Upgrade: "websocket" },
+      const { socket, frames, sync } = await tabletop.connect({
+        worldId,
+        cookie: authCookie,
+        barrierNoteId: "scene-barrier",
       });
-      const socket = response.webSocket;
-      if (!socket) throw new Error("Missing websocket");
-      const frames: ServerFrame[] = [];
-      socket.addEventListener("message", (event) =>
-        frames.push(Schema.decodeUnknownSync(ServerFrame)(JSON.parse(String(event.data)))),
-      );
-      socket.accept();
       await expect.poll(() => frames.some((frame) => frame.type === "board")).toBe(true);
-      const sync = async () => {
-        const count = frames.filter((frame) => frame.type === "presence").length;
-        socket.send(JSON.stringify({ type: "note.saved", noteId: "scene-barrier" }));
-        await expect
-          .poll(() => frames.filter((frame) => frame.type === "presence").length)
-          .toBeGreaterThan(count);
-      };
       return { socket, frames, sync };
     };
     const dm = await connect(cookie);
