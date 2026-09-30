@@ -11,6 +11,7 @@ import {
   type CompendiumEntry,
   type EntryType,
   type IndexRow,
+  type PackEntry,
   compendiumLimits,
 } from "../domain/compendium";
 import { entryError } from "../domain/compendium-rules";
@@ -22,7 +23,7 @@ import {
   applyOverride,
   overrideError,
 } from "../domain/overrides";
-import { inheritLicence } from "../domain/licence";
+import { inheritLicence, licenceError } from "../domain/licence";
 import {
   decodeIndex,
   decodeBodies,
@@ -31,7 +32,12 @@ import {
   type SnapshotManifest,
   type SnapshotFile,
 } from "../domain/snapshot";
-import type { WorldCompendium, CompendiumSources } from "./world-compendium";
+import {
+  CompendiumImportError,
+  type WorldCompendium,
+  type CompendiumSources,
+  type PreparedSourceImport,
+} from "./world-compendium";
 import { nowIso } from "./crypto";
 
 type Options = {
@@ -575,6 +581,121 @@ export class WorldSources implements CompendiumSources {
       if (entry) entries.push(entry);
     }
     return entries;
+  }
+  /** Fetch and validate without mutations; apply runs inside the caller's SQLite transaction. */
+  async prepareImport(entries: readonly PackEntry[]): Promise<PreparedSourceImport> {
+    this.requireAvailable();
+    const prepared: {
+      sourceId: string;
+      sourceVersion: number;
+      sourceRev: number;
+      override: EntryOverride;
+    }[] = [];
+    for (const item of entries) {
+      const id = parseEntryId(item.id);
+      if (!id || id.source === WORLD_SOURCE || id.typeId !== item.typeId)
+        throw new CompendiumImportError(400, "Invalid library entry identity in pack");
+      if (
+        !Number.isSafeInteger(item.sourceVersion) ||
+        !Number.isSafeInteger(item.sourceRev) ||
+        (item.sourceVersion ?? 0) < 1 ||
+        (item.sourceRev ?? 0) < 1
+      )
+        throw new CompendiumImportError(
+          400,
+          "Library pack entries require sourceVersion and sourceRev",
+        );
+      const source = this.source(id.source);
+      const row = this.raw(item.id);
+      if (!source || !row || source.version !== item.sourceVersion || row.rev !== item.sourceRev)
+        throw new CompendiumImportError(
+          409,
+          "Enable the pack's library version and review changed entries before importing",
+        );
+      const base = await this.base(item.id);
+      if (!base || base.sourceVersion !== item.sourceVersion || base.sourceRev !== item.sourceRev)
+        throw new CompendiumImportError(
+          409,
+          "Library changed while importing; retry after reviewing its version",
+        );
+      const licence = item.licence;
+      if (licence) {
+        const issue = licenceError(licence);
+        if (issue) throw new CompendiumImportError(400, issue);
+      }
+      const previous = this.override(item.id);
+      const rights = inheritLicence(base.licence!, previous?.licence);
+      if (
+        !licence ||
+        licence.id !== rights.id ||
+        licence.name !== rights.name ||
+        licence.url !== rights.url ||
+        (rights.shareAlike && !licence.shareAlike) ||
+        !licence.attribution.includes(rights.attribution)
+      )
+        throw new CompendiumImportError(
+          400,
+          "Import must preserve the library licence, share-alike and source attribution",
+        );
+      if (base.visibility === "dm" && item.visibility === "public")
+        throw new CompendiumImportError(400, "Import cannot reveal a DM-only library entry");
+      const fields = Object.fromEntries(
+        Object.entries(item.fields).filter(
+          ([key, value]) => JSON.stringify(base.fields[key]) !== JSON.stringify(value),
+        ),
+      );
+      const removeFields = Object.keys(base.fields).filter(
+        (key) => !Object.hasOwn(item.fields, key),
+      );
+      const override: EntryOverride = {
+        entryId: item.id,
+        baseRev: item.sourceRev!,
+        updatedAt: nowIso(),
+        licence: inheritLicence(rights, licence),
+        patch: {
+          ...(item.name === base.name ? {} : { name: item.name }),
+          ...(JSON.stringify(item.tags) === JSON.stringify(base.tags) ? {} : { tags: item.tags }),
+          ...(item.body === base.body ? {} : { body: item.body }),
+          ...(Object.keys(fields).length ? { fields } : {}),
+          ...(removeFields.length ? { removeFields } : {}),
+          ...(item.visibility === base.visibility ? {} : { visibility: item.visibility }),
+        },
+      };
+      const issue = overrideError(override.patch);
+      if (issue) throw new CompendiumImportError(400, issue);
+      const type = this.manifest(source).types.find((type) => type.id === item.typeId)!;
+      const error = entryError({ ...applyOverride(base, override), id: undefined }, type);
+      if (error) throw new CompendiumImportError(400, error);
+      prepared.push({
+        sourceId: id.source,
+        sourceVersion: item.sourceVersion!,
+        sourceRev: item.sourceRev!,
+        override,
+      });
+    }
+    return {
+      apply: () => {
+        // Check every source before writing any override; the enclosing transaction also rolls back locals.
+        for (const item of prepared) {
+          if (
+            this.source(item.sourceId)?.version !== item.sourceVersion ||
+            this.raw(item.override.entryId)?.rev !== item.sourceRev
+          )
+            throw new CompendiumImportError(
+              409,
+              "Library changed while importing; retry after reviewing its version",
+            );
+        }
+        for (const item of prepared)
+          this.sql.exec(
+            "INSERT INTO entry_overrides (entry_id, override_json) VALUES (?, ?) ON CONFLICT(entry_id) DO UPDATE SET override_json=excluded.override_json",
+            item.override.entryId,
+            JSON.stringify(item.override),
+          );
+        for (const sourceId of new Set(prepared.map((item) => item.sourceId)))
+          this.refresh(sourceId, this.manifest(this.source(sourceId)!).types);
+      },
+    };
   }
   private async saveOverride(id: string, body: unknown): Promise<EntryOverride> {
     const decoded = Schema.decodeUnknownResult(SaveOverrideInput, { onExcessProperty: "error" })(

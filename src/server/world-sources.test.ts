@@ -252,9 +252,7 @@ it("applies overrides to bodies and index facets, retains share-alike, and canno
     await (await worldCall("compendium/export")).json(),
   );
   expect(pack.entries).toMatchObject([{ id: sword.id, licence, body: "Our table's text" }]);
-  expect(
-    (await worldCall("compendium/import", { method: "POST", body: pack })).status,
-  ).toBeGreaterThanOrEqual(400);
+  expect((await worldCall("compendium/import", { method: "POST", body: pack })).status).toBe(200);
 });
 
 it("checks visibility after cache hits, hides aliases, tombstones previously public rows, and remembers blocks across disable/enable", async () => {
@@ -427,3 +425,207 @@ it("atomically ingests ten thousand rows, keeps search bounded, and clears a sou
   expect(after.deletes).toHaveLength(9_900);
   expect((await index()).upserts.map((row) => row.name)).toEqual(["Local item"]);
 }, 120000);
+
+it("roundtrips mixed world content and licensed library overrides in the same world and another enabled world", async () => {
+  const [sword] = await save([input("Sword")]);
+  await publish();
+  await enable();
+  const local = Schema.decodeUnknownSync(CompendiumEntry)(
+    await (
+      await worldCall("compendium/entries", { method: "POST", body: input("Local item") })
+    ).json(),
+  );
+  expect(
+    (
+      await worldCall(overridePath(sword.id), {
+        method: "PUT",
+        body: { baseRev: sword.rev, patch: { name: "Table sword", removeFields: ["cost"] } },
+      })
+    ).status,
+  ).toBe(200);
+  const pack = Schema.decodeUnknownSync(CompendiumPack)(
+    await (await worldCall("compendium/export")).json(),
+  );
+  const exportedSource = pack.entries.find((entry) => entry.id === sword.id)!;
+  expect(exportedSource).toMatchObject({
+    id: sword.id,
+    sourceVersion: 1,
+    sourceRev: sword.rev,
+    licence,
+    fields: {},
+  });
+  await worldCall(overridePath(sword.id), { method: "DELETE" });
+  await worldCall("compendium/entries", {
+    method: "POST",
+    body: { ...input("Changed local"), id: local.id },
+  });
+  expect((await worldCall("compendium/import", { method: "POST", body: pack })).status).toBe(200);
+  const restored = await bodies([local.id, sword.id], cookie);
+  expect(restored.entries.find((entry) => entry.id === local.id)?.name).toBe("Local item");
+  expect(restored.entries.find((entry) => entry.id === sword.id)).toMatchObject({
+    name: "Table sword",
+    fields: {},
+    licence,
+    sourceVersion: 1,
+    sourceRev: sword.rev,
+  });
+  const currentIndex = await index(0, cookie);
+  for (const entry of restored.entries)
+    expect(entry.rev).toBe(currentIndex.upserts.find((row) => row.id === entry.id)?.rev);
+  const override = Schema.decodeUnknownSync(EntryOverride)(
+    await (await worldCall(overridePath(sword.id))).json(),
+  );
+  expect(override.patch).toEqual({ name: "Table sword", removeFields: ["cost"] });
+  const db = await storage();
+  expect(
+    await db.exec("SELECT body, fields FROM compendium_entries WHERE id = ?", sword.id),
+  ).toEqual([{ body: "", fields: "{}" }]);
+
+  const destination = Schema.decodeUnknownSync(Schema.Struct({ id: Schema.String }))(
+    await (
+      await tabletop.call("/worlds", { method: "POST", body: { name: "Import destination" } })
+    ).json(),
+  );
+  const destinationCall = (path: string, options: CallOptions = {}) =>
+    tabletop.call(`/worlds/${destination.id}/${path}`, options);
+  expect((await destinationCall("compendium/import", { method: "POST", body: pack })).status).toBe(
+    409,
+  );
+  expect(
+    (await destinationCall(`libraries/${sourceId}`, { method: "PUT", body: { version: 1 } }))
+      .status,
+  ).toBe(200);
+  expect((await destinationCall("compendium/import", { method: "POST", body: pack })).status).toBe(
+    200,
+  );
+  const copied = Schema.decodeUnknownSync(EntryBodies)(
+    await (
+      await destinationCall("compendium/bodies", {
+        method: "POST",
+        body: { ids: [local.id, sword.id] },
+      })
+    ).json(),
+  );
+  expect(copied.entries.find((entry) => entry.id === sword.id)).toMatchObject({
+    id: sword.id,
+    name: "Table sword",
+    licence,
+    fields: {},
+  });
+  expect(copied.entries.find((entry) => entry.id === local.id)?.name).toBe("Local item");
+});
+
+it("preflights a mixed pack without changing local entries or overrides when source provenance, fields or rights are invalid", async () => {
+  const [sword, hidden] = await save([input("Sword"), input("Hidden", "dm")]);
+  await publish();
+  await enable();
+  await worldCall(overridePath(sword.id), {
+    method: "PUT",
+    body: { baseRev: sword.rev, patch: { name: "Table sword" } },
+  });
+  const pack = Schema.decodeUnknownSync(CompendiumPack)(
+    await (await worldCall("compendium/export")).json(),
+  );
+  const source = pack.entries.find((entry) => entry.id === sword.id)!;
+  const hiddenBody = (await bodies([hidden.id], cookie)).entries[0];
+  const local = { ...input("Imported local"), id: "world/item/imported-local" };
+  const cases = [
+    { entry: { ...source, sourceRev: source.sourceRev! + 1 }, status: 409 },
+    { entry: { ...source, sourceVersion: source.sourceVersion! + 1 }, status: 409 },
+    { entry: { ...source, sourceRev: undefined }, status: 400 },
+    { entry: { ...source, sourceVersion: undefined }, status: 400 },
+    { entry: { ...source, licence: undefined }, status: 400 },
+    { entry: { ...source, licence: { ...licence, shareAlike: false } }, status: 400 },
+    { entry: { ...source, licence: { ...licence, attribution: "Missing authors" } }, status: 400 },
+    { entry: { ...source, licence: { ...licence, id: "CC0" } }, status: 400 },
+    { entry: { ...source, licence: { ...licence, url: "javascript:alert(1)" } }, status: 400 },
+    {
+      entry: {
+        ...source,
+        licence: { ...licence, attribution: `${licence.attribution}${"x".repeat(8_000)}` },
+      },
+      status: 400,
+    },
+    { entry: { ...source, fields: { unknown: 10 } }, status: 400 },
+    { entry: { ...hiddenBody, visibility: "public" }, status: 400 },
+  ];
+  const peer = await tabletop.connect({ worldId, cookie });
+  try {
+    await peer.sync();
+    for (const fixture of cases) {
+      const before = await index(0, cookie);
+      const updates = peer.frames.filter((frame) => frame.type === "compendium.updated").length;
+      const response = await worldCall("compendium/import", {
+        method: "POST",
+        body: { ...pack, entries: [local, fixture.entry] },
+      });
+      expect(response.status).toBe(fixture.status);
+      expect(await index(0, cookie)).toEqual(before);
+      expect((await bodies([local.id], cookie)).missing).toEqual([local.id]);
+      expect((await bodies([sword.id], cookie)).entries[0].name).toBe("Table sword");
+      await peer.sync();
+      expect(peer.frames.filter((frame) => frame.type === "compendium.updated").length).toBe(
+        updates,
+      );
+    }
+    expect(
+      (
+        await worldCall("compendium/import", {
+          method: "POST",
+          body: {
+            ...pack,
+            types: [{ ...type, fields: [], filters: [] }],
+            entries: [local, source],
+          },
+        })
+      ).status,
+    ).toBe(409);
+    expect((await bodies([local.id], cookie)).missing).toEqual([local.id]);
+  } finally {
+    peer.socket.close();
+  }
+});
+
+it("rolls back prepared overrides and index revisions when writing a local entry fails inside the import transaction", async () => {
+  const [sword] = await save([input("Sword")]);
+  await publish();
+  await enable();
+  await worldCall(overridePath(sword.id), {
+    method: "PUT",
+    body: { baseRev: sword.rev, patch: { name: "Previous table name" } },
+  });
+  const pack = Schema.decodeUnknownSync(CompendiumPack)(
+    await (await worldCall("compendium/export")).json(),
+  );
+  const source = pack.entries.find((entry) => entry.id === sword.id)!;
+  const before = await index(0, cookie);
+  const beforeOverride = await (await worldCall(overridePath(sword.id))).json();
+  const db = await storage();
+  await db.exec(
+    "CREATE TRIGGER reject_import_fixture BEFORE INSERT ON compendium_entries WHEN new.id = 'world/item/imported' BEGIN SELECT RAISE(ABORT, 'import fixture'); END",
+  );
+  try {
+    expect(
+      (
+        await worldCall("compendium/import", {
+          method: "POST",
+          body: {
+            ...pack,
+            entries: [
+              { ...input("Imported"), id: "world/item/imported" },
+              { ...source, name: "Attempted new name" },
+            ],
+          },
+        })
+      ).status,
+    ).toBe(503);
+    expect(await index(0, cookie)).toEqual(before);
+    expect(await (await worldCall(overridePath(sword.id))).json()).toEqual(beforeOverride);
+    expect((await bodies(["world/item/imported"], cookie)).missing).toEqual([
+      "world/item/imported",
+    ]);
+    expect((await bodies([sword.id], cookie)).entries[0].name).toBe("Previous table name");
+  } finally {
+    await db.exec("DROP TRIGGER reject_import_fixture");
+  }
+});

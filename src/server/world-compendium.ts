@@ -9,6 +9,7 @@ import {
   compendiumLimits,
   type EntryBodies,
   type IndexDelta,
+  type PackEntry,
 } from "../domain/compendium";
 import { entryFacets } from "../domain/entry-facets";
 import { entryError, packError, typeError } from "../domain/compendium-rules";
@@ -70,6 +71,13 @@ const parse = <T>(value: string | null, fallback: T): T => {
     return fallback;
   }
 };
+const sameType = (left: EntryType | undefined, right: EntryType): boolean => {
+  const canonical = (_key: string, value: unknown): unknown =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)))
+      : value;
+  return JSON.stringify(left, canonical) === JSON.stringify(right, canonical);
+};
 const toIndex = (row: CompendiumIndexRow): IndexRow[] => {
   const decoded = Schema.decodeUnknownResult(IndexRow)({
     id: row.id,
@@ -129,6 +137,17 @@ export interface CompendiumSources {
   resolve(id: string, role: string): Promise<CompendiumEntry | undefined>;
   ownsType(id: string): boolean;
   exportEntries(): Promise<CompendiumEntry[]>;
+  prepareImport(entries: readonly PackEntry[]): Promise<PreparedSourceImport>;
+}
+
+export type PreparedSourceImport = { apply: () => void };
+export class CompendiumImportError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 export class WorldCompendium {
@@ -1048,6 +1067,24 @@ export class WorldCompendium {
       const decoded = Schema.decodeUnknownResult(CompendiumPack)(body);
       if (decoded._tag === "Failure") return json({ error: "Invalid compendium pack" }, 400);
       const pack = decoded.success;
+      const expectedRevision = this.revision();
+      if (new TextEncoder().encode(JSON.stringify(pack)).byteLength > compendiumLimits.packBytes)
+        return json({ error: "Pack JSON must be at most 4 MB" }, 400);
+      if (pack.entries.length > compendiumLimits.entries)
+        return json({ error: "A pack can have at most 10000 entries" }, 400);
+      if (new Set(pack.entries.map((item) => item.id)).size !== pack.entries.length)
+        return json({ error: "Pack contains duplicate entry ids" }, 400);
+      const sourceEntries = pack.entries.filter(
+        (item) => isEntryId(item.id) && parseEntryId(item.id)?.source !== WORLD_SOURCE,
+      );
+      const localEntries = pack.entries.filter(
+        (item) => !isEntryId(item.id) || parseEntryId(item.id)?.source === WORLD_SOURCE,
+      );
+      if (sourceEntries.length && (pack.version !== 2 || !this.sources?.available))
+        return json(
+          { error: "Enable the pack's libraries before importing version 2 library entries" },
+          409,
+        );
       for (const item of pack.entries) {
         const previous = sql
           .exec<{ licence: string | null }>(
@@ -1062,10 +1099,12 @@ export class WorldCompendium {
             400,
           );
       }
-      for (const type of pack.types)
-        if (this.sources?.ownsType(type.id))
+      for (const type of pack.types) {
+        const existingType = types.find((candidate) => candidate.id === type.id);
+        if (this.sources?.ownsType(type.id) && !sameType(existingType, type))
           return json({ error: "Import cannot replace enabled library entry types" }, 409);
-      const error = packError(pack, types);
+      }
+      const error = packError({ ...pack, entries: localEntries }, types);
       if (error) return json({ error }, 400);
       const typeMap = new Map([...types, ...pack.types].map((type) => [type.id, type]));
       if (typeMap.size > compendiumLimits.types)
@@ -1083,16 +1122,8 @@ export class WorldCompendium {
       const entries: CompendiumEntry[] = [];
       const importedIds = new Set<string>();
       let created = 0;
-      for (const item of pack.entries) {
+      for (const item of localEntries) {
         let id = item.id;
-        if (isEntryId(id) && parseEntryId(id)?.source !== WORLD_SOURCE)
-          return json(
-            {
-              error:
-                "Library entries must be restored through their enabled library and override editor",
-            },
-            400,
-          );
         if (pack.version === 1) {
           id = this.resolveId(item.id);
           if (id === item.id && !existing.has(id)) {
@@ -1136,24 +1167,40 @@ export class WorldCompendium {
       }
       if (existing.size + created > compendiumLimits.entries)
         return json({ error: "A world can have at most 10000 entries" }, 400);
-      const rev = this.transactionSync(() => {
-        const revision = this.bump();
-        for (const type of pack.types) {
-          const previous = types.find((candidate) => candidate.id === type.id);
-          this.writeCompendiumType(type);
-          if (
-            JSON.stringify(previous?.filters) !== JSON.stringify(type.filters) ||
-            JSON.stringify(previous?.fields) !== JSON.stringify(type.fields)
-          )
-            this.recomputeFacets(type, revision);
-        }
-        for (const entry of entries) this.writeCompendiumEntry(entry, typeMap.get(entry.typeId));
-        for (const [oldId, newId] of aliases)
-          sql.exec("INSERT INTO compendium_aliases (old_id, new_id) VALUES (?, ?)", oldId, newId);
-        return revision;
-      });
-      this.updated(rev);
-      return json({ types: pack.types.length, created, updated: pack.entries.length - created });
+      let prepared: PreparedSourceImport | undefined;
+      try {
+        if (sourceEntries.length) prepared = await this.sources!.prepareImport(sourceEntries);
+        const rev = this.transactionSync(() => {
+          if (this.revision() !== expectedRevision)
+            throw new CompendiumImportError(
+              409,
+              "Compendium changed while importing; retry the import",
+            );
+          prepared?.apply();
+          const revision = this.bump();
+          for (const type of pack.types) {
+            if (this.sources?.ownsType(type.id)) continue;
+            const previous = types.find((candidate) => candidate.id === type.id);
+            this.writeCompendiumType(type);
+            if (
+              JSON.stringify(previous?.filters) !== JSON.stringify(type.filters) ||
+              JSON.stringify(previous?.fields) !== JSON.stringify(type.fields)
+            )
+              this.recomputeFacets(type, revision);
+          }
+          for (const entry of entries)
+            this.writeCompendiumEntry({ ...entry, rev: revision }, typeMap.get(entry.typeId));
+          for (const [oldId, newId] of aliases)
+            sql.exec("INSERT INTO compendium_aliases (old_id, new_id) VALUES (?, ?)", oldId, newId);
+          return revision;
+        });
+        this.updated(rev);
+        return json({ types: pack.types.length, created, updated: pack.entries.length - created });
+      } catch (error) {
+        if (error instanceof CompendiumImportError)
+          return json({ error: error.message }, error.status);
+        return json({ error: "Compendium import is temporarily unavailable" }, 503);
+      }
     }
     return json({ error: "Not found" }, 404);
   }
