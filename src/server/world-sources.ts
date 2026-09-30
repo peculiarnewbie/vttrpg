@@ -522,7 +522,7 @@ export class WorldSources implements CompendiumSources {
         entry.name !== indexed.name ||
         entry.updatedAt !== indexed.updatedAt ||
         JSON.stringify(entry.tags) !== JSON.stringify(indexed.tags) ||
-        entryError(entry, type)
+        entryError({ ...entry, id: undefined }, type)
       )
         throw new SourceError(503, "Invalid library body entry");
       ids.add(entry.id);
@@ -600,7 +600,7 @@ export class WorldSources implements CompendiumSources {
     };
     const source = this.source(parseEntryId(id)!.source)!;
     const type = this.manifest(source).types.find((type) => type.id === base.typeId)!;
-    const error = entryError(applyOverride(base, override), type);
+    const error = entryError({ ...applyOverride(base, override), id: undefined }, type);
     if (error) throw new SourceError(400, error);
     const rev = this.transactionSync(() => {
       this.sql.exec(

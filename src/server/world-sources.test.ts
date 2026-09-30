@@ -319,13 +319,21 @@ it("rejects ordinary mutation of corpus IDs and conflicting types before an atom
       .status,
   ).toBe(409);
   expect(
-    (await worldCall("compendium/types/item", { method: "PUT", body: { ...type, fields: [] } }))
-      .status,
+    (
+      await worldCall("compendium/types/item", {
+        method: "PUT",
+        body: { ...type, fields: [], filters: [] },
+      })
+    ).status,
   ).toBe(409);
   await worldCall(`libraries/${sourceId}`, { method: "DELETE" });
   expect(
-    (await worldCall("compendium/types/item", { method: "PUT", body: { ...type, fields: [] } }))
-      .status,
+    (
+      await worldCall("compendium/types/item", {
+        method: "PUT",
+        body: { ...type, fields: [], filters: [] },
+      })
+    ).status,
   ).toBe(200);
   expect((await enable()).status).toBe(409);
   expect((await index()).upserts).toEqual([]);
