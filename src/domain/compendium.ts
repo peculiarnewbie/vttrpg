@@ -180,6 +180,8 @@ export const PackEntry = Schema.Struct({
   fields: Schema.Record(Schema.String, CharacterValue),
   visibility: EntryVisibility,
   licence: Schema.optional(Licence),
+  sourceVersion: Schema.optional(Schema.Int),
+  sourceRev: Schema.optional(Schema.Int),
 });
 export type PackEntry = typeof PackEntry.Type;
 
