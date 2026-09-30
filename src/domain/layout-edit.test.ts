@@ -5,6 +5,7 @@ import {
   allBlocks,
   blockTypes,
   duplicateBlock,
+  derivedKeys,
   findBlock,
   insertBlock,
   layoutKeys,
@@ -136,5 +137,15 @@ describe("layout edits", () => {
     expect(layoutKeys(bastionlandClassic)).toEqual(
       expect.arrayContaining(["vig", "gd", "armour", "property", "seer", "ability", "fatigue"]),
     );
+  });
+
+  it("lists derived keys separately from stored visibility-condition keys", () => {
+    const layout = {
+      ...bastionlandClassic,
+      derived: [{ key: "vig_mod", label: "Vigour mod", expr: "@vig - 10" }],
+    };
+    expect(derivedKeys(layout)).toEqual(["vig_mod"]);
+    expect(layoutKeys(layout)).not.toContain("vig_mod");
+    expect(derivedKeys(bastionlandClassic)).toEqual([]);
   });
 });
