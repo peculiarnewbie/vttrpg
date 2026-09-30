@@ -12,7 +12,13 @@ import { entryId, parseEntryId, slugify, uniqueSlug } from "../../../src/domain/
 import { typeError } from "../../../src/domain/compendium-rules";
 import { Registry } from "./registry";
 import { publishSnapshot } from "./publish";
-import { safeId, validateBatch, validateSource, validateSourceEntry } from "./validation";
+import {
+  safeId,
+  validateBatch,
+  validateSource,
+  validateSourceEntry,
+  validatePublishedEntrySize,
+} from "./validation";
 import type { CorpusEnv } from "./entrypoint";
 
 const DraftContext = Schema.Struct({ source: CorpusSource, types: Schema.Array(EntryType) });
@@ -124,6 +130,7 @@ export class SourceDO extends DurableObject<CorpusEnv> {
           updatedAt: new Date().toISOString(),
           rev: revision + entries.length + 1,
         };
+        validatePublishedEntrySize(entry, source.licence);
         reserved.add(id);
         entries.push(entry);
       }

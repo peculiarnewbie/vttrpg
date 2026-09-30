@@ -8,13 +8,15 @@ import {
   DeleteEntriesCall,
   ManifestCall,
 } from "../../../src/domain/corpus-rpc";
-import type { EntryType, SaveEntryInput } from "../../../src/domain/compendium";
+import type { CompendiumEntry, EntryType, SaveEntryInput } from "../../../src/domain/compendium";
+import { encodeBodies, decodeBodies } from "../../../src/domain/snapshot";
 import {
   decodeCall,
   safeId,
   validateBatch,
   validateSourceEntry,
   validateSystem,
+  validatePublishedEntrySize,
 } from "./validation";
 
 const type: EntryType = {
@@ -86,5 +88,34 @@ describe("corpus RPC validation", () => {
     expect(() => validateSystem({ id: "game", name: "Game", entryTypes: [type, type] })).toThrow(
       "unique",
     );
+  });
+
+  it("rejects combined body/licence bytes and reserves maximum publication metadata", async () => {
+    const licence = {
+      id: "CC0-1.0",
+      name: "CC0 1.0",
+      attribution: "a".repeat(8000),
+      shareAlike: false,
+    };
+    const saved: CompendiumEntry = {
+      ...entry,
+      id: "book/spell/lantern",
+      body: "é".repeat(3750),
+      updatedAt: "2026-09-30T00:00:00.000Z",
+      rev: 1,
+    };
+    expect(() => validateSourceEntry("book", saved, type)).not.toThrow();
+    expect(() => validatePublishedEntrySize(saved, licence)).not.toThrow();
+    const published = {
+      ...saved,
+      rev: Number.MAX_SAFE_INTEGER,
+      licence,
+      sourceVersion: 2147483647,
+      sourceRev: Number.MAX_SAFE_INTEGER,
+    };
+    expect((await decodeBodies(await encodeBodies([published])))[0]).toEqual(published);
+    const oversized = { ...saved, body: "x".repeat(10000) };
+    expect(() => validateSourceEntry("book", oversized, type)).not.toThrow();
+    expect(() => validatePublishedEntrySize(oversized, licence)).toThrow("including licence");
   });
 });
