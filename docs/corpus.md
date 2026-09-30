@@ -78,8 +78,9 @@ Browser ──► ttrpg (table Worker)                    ttrpg-corpus (content 
   gzipped at 20,000 entries) and **body chunks** per type. Published versions
   never change, so browsers and the edge cache them indefinitely. Sources with
   DM-only entries publish a separate DM index that only DMs are served.
-- **D1** holds the registry: systems, sources, versions, licences, which world
-  enables which source.
+- **D1** holds the registry: systems, sources, versions, licences. Which sources
+  a world enables (and whether it follows or pins each) lives only in that
+  world's Durable Object.
 - Worlds **pull**: on connect a world compares its enabled source versions with
   the corpus and follows or pins by setting. The corpus never needs to know
   worlds exist.
@@ -143,6 +144,7 @@ importer reads files people supply (their own homebrew); the app never fetches
 
 1. **World compendium at scale** — slug ids, index/body split, revision-based
    sync, debounced WebSocket search, id-based links. Useful immediately.
+   _Done (1.0 plan phase 2)._
 2. **Corpus Worker** — systems and sources, SourceDO, publishing to R2, the D1
    registry, enabling sources per world, overrides, the WorldDO search index.
 3. **D&D-shaped types and the compendium page** — new field kinds,

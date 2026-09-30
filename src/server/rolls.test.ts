@@ -1,70 +1,34 @@
 // @vitest-environment node
 import * as Schema from "effect/Schema";
-import { build, stop } from "esbuild";
-import { Miniflare, convertV4MiniflareOptions } from "miniflare";
+import { startTabletop, type Tabletop, type CallOptions } from "../test/miniflare";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { readFile } from "node:fs/promises";
 import {
   Character,
   MessagePage,
   SheetTemplate,
-  ServerFrame,
   type ClientFrame,
   type RollResult,
 } from "../domain/schemas";
 import type { SheetLayout } from "../domain/sheet-layout";
 import { parseNotation } from "../domain/dice-notation";
 
-let mf: Miniflare;
+let tabletop: Tabletop;
+let mf: Tabletop["mf"];
 let cookie = "";
 let worldId = "";
 let playerCookie = "";
 let otherCookie = "";
 const closeSockets: (() => void)[] = [];
-const call = (path: string, options: { method?: string; body?: unknown; cookie?: string } = {}) =>
-  mf.dispatchFetch(`https://tabletop.test/api${path}`, {
-    method: options.method ?? "GET",
-    headers: { cookie: options.cookie ?? cookie, "content-type": "application/json" },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-  });
-const signin = async (email: string, displayName: string) => {
-  const response = await call("/auth/google", { method: "POST", body: { email, displayName } });
-  const session = response.headers.get("set-cookie");
-  if (!session) throw new Error("Missing session cookie");
-  return session.split(";")[0];
-};
+const call = (path: string, options: CallOptions = {}) => tabletop.call(path, options);
+const signin = (email: string, displayName: string) => tabletop.signin(email, displayName);
 
 beforeAll(async () => {
-  const bundle = await build({
-    entryPoints: ["src/worker.ts"],
-    bundle: true,
-    write: false,
-    format: "esm",
-    platform: "browser",
-    external: ["cloudflare:workers", "node:*"],
-    target: "es2022",
+  tabletop = await startTabletop({
+    cookie: () => cookie,
+    unsafeInspectDurableObjects: true,
   });
-  mf = new Miniflare(
-    convertV4MiniflareOptions({
-      name: "tabletop",
-      unsafeInspectDurableObjects: true,
-      modules: true,
-      script: bundle.outputFiles[0].text,
-      compatibilityDate: "2026-03-22",
-      compatibilityFlags: ["nodejs_compat"],
-      durableObjects: { WORLDS: { className: "WorldDO", useSQLite: true } },
-      d1Databases: ["DB"],
-      r2Buckets: ["BUCKET"],
-    }),
-  );
-  const db = await mf.getD1Database("DB");
-  const migration = await readFile("src/migrations/0001_initial.sql", "utf8");
-  for (const sql of migration
-    .split(";")
-    .map((part) => part.trim())
-    .filter(Boolean))
-    await db.prepare(sql).run();
-  cookie = await signin("roll-dm@example.test", "DM");
+  mf = tabletop.mf;
+  cookie = await tabletop.signin("roll-dm@example.test", "DM");
 }, 30000);
 
 beforeEach(async () => {
@@ -90,8 +54,7 @@ afterEach(() => {
   for (const close of closeSockets.splice(0)) close();
 });
 afterAll(async () => {
-  await mf?.dispose();
-  await stop();
+  await tabletop?.dispose();
 });
 
 const layout: SheetLayout = {
@@ -147,18 +110,9 @@ const characters = async () =>
 const history = async () =>
   Schema.decodeUnknownSync(MessagePage)(await (await call(`/worlds/${worldId}/messages`)).json());
 const connect = async (authCookie: string) => {
-  const response = await mf.dispatchFetch(`https://tabletop.test/api/worlds/${worldId}/ws`, {
-    headers: { cookie: authCookie, Upgrade: "websocket" },
-  });
-  const socket = response.webSocket;
-  if (!socket) throw new Error("Missing websocket");
-  const frames: ServerFrame[] = [];
-  socket.addEventListener("message", (event) =>
-    frames.push(Schema.decodeUnknownSync(ServerFrame)(JSON.parse(String(event.data)))),
-  );
-  socket.accept();
+  const { socket, frames, send } = await tabletop.connect({ worldId, cookie: authCookie });
   await expect.poll(() => frames.some((frame) => frame.type === "hello")).toBe(true);
-  const peer = { socket, frames, send: (frame: ClientFrame) => socket.send(JSON.stringify(frame)) };
+  const peer = { socket, frames, send };
   closeSockets.push(() => socket.close());
   return peer;
 };

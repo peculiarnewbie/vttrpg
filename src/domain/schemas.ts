@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 import { SheetLayout } from "./sheet-layout";
+import { IndexRow } from "./compendium-index";
 import { BoardSnapshot, BoardFocusRect, BoardAssetId, SceneList } from "./board";
 
 export type Infer<S> = Schema.Schema.Type<S>;
@@ -381,14 +382,31 @@ export const ClientFrame = Schema.Union([
     variant: Schema.NullOr(Schema.String),
   }),
   Schema.Struct({ type: Schema.Literals(["note.saved"]), noteId: Schema.String }),
+  /**
+   * Search the compendium this member can see. Clients debounce typing, skip
+   * queries under 2 characters, and drop replies whose requestId is stale.
+   */
+  Schema.Struct({
+    type: Schema.Literal("search"),
+    requestId: Schema.String.check(Schema.isMaxLength(64)),
+    query: Schema.String.check(Schema.isMaxLength(120)),
+    typeIds: Schema.optional(Schema.Array(Schema.String)),
+    limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+  }),
 ]);
 export type ClientFrame = Infer<typeof ClientFrame>;
 
 export const ServerFrame = Schema.Union([
   BoardFocus,
   Schema.Struct({ type: Schema.Literal("notes.updated") }),
-  /** The compendium changed; clients refetch GET /compendium (it is filtered per member). */
-  Schema.Struct({ type: Schema.Literal("compendium.updated") }),
+  /** The compendium changed; clients fetch GET compendium/index?since=<their rev>. */
+  Schema.Struct({ type: Schema.Literal("compendium.updated"), rev: Schema.optional(Schema.Int) }),
+  /** Best matches first; only entries the member can see. */
+  Schema.Struct({
+    type: Schema.Literal("search.result"),
+    requestId: Schema.String,
+    results: Schema.Array(IndexRow),
+  }),
   Schema.Struct({ type: Schema.Literal("cursor"), cursor: LiveCursor }),
   Schema.Struct({
     type: Schema.Literal("board"),
@@ -415,6 +433,8 @@ export const ServerFrame = Schema.Union([
     type: Schema.Literals(["error"]),
     message: Schema.String,
     code: Schema.optional(Schema.String),
+    /** Set when the error answers a request (a search). */
+    requestId: Schema.optional(Schema.String),
   }),
 ]);
 export type ServerFrame = Infer<typeof ServerFrame>;

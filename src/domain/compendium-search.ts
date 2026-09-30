@@ -3,8 +3,11 @@ import type { CompendiumEntry } from "./compendium";
 const normalize = (text: string) => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 
 type SearchOptions = { typeId?: string; tag?: string };
+type SearchEntry = Pick<CompendiumEntry, "id" | "name" | "tags" | "typeId"> & {
+  readonly body?: string;
+};
 
-export const indexEntries = (entries: readonly CompendiumEntry[]) =>
+export const indexEntries = <T extends SearchEntry>(entries: readonly T[]) =>
   [...entries]
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((entry) => {
@@ -14,18 +17,18 @@ export const indexEntries = (entries: readonly CompendiumEntry[]) =>
         name,
         words: name.split(/[^\p{L}\p{N}]+/u),
         tags: entry.tags.map(normalize),
-        body: normalize(entry.body),
+        body: normalize(entry.body ?? ""),
       };
     });
 
-export const searchIndex = (
-  index: ReturnType<typeof indexEntries>,
+export const searchIndex = <T extends SearchEntry>(
+  index: ReturnType<typeof indexEntries<T>>,
   query: string,
   opts: SearchOptions = {},
-): CompendiumEntry[] => {
+): T[] => {
   const needle = normalize(query.trim());
   const tag = opts.tag === undefined ? undefined : normalize(opts.tag);
-  const ranked: CompendiumEntry[][] = [[], [], [], [], []];
+  const ranked: T[][] = [[], [], [], [], []];
   for (const item of index) {
     if (opts.typeId !== undefined && item.entry.typeId !== opts.typeId) continue;
     if (tag !== undefined && !item.tags.includes(tag)) continue;
@@ -46,8 +49,8 @@ export const searchIndex = (
   return ranked.flat();
 };
 
-export const searchEntries = (
-  entries: readonly CompendiumEntry[],
+export const searchEntries = <T extends SearchEntry>(
+  entries: readonly T[],
   query: string,
   opts: SearchOptions = {},
 ) => searchIndex(indexEntries(entries), query, opts);

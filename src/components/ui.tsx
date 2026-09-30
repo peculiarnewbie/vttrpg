@@ -124,12 +124,21 @@ export function Modal(props: {
   onClose: () => void;
   children: JSX.Element;
 }) {
+  const titleId = createUniqueId();
   return (
     <Show when={props.when}>
       <div {...sx(styles.modalOverlay)} onClick={props.onClose}>
-        <div {...sx(styles.modal)} onClick={(event) => event.stopPropagation()}>
+        <div
+          {...sx(styles.modal)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          onClick={(event) => event.stopPropagation()}
+        >
           <div {...sx(styles.row)}>
-            <h3 {...sx(styles.h3)}>{props.title}</h3>
+            <h3 id={titleId} {...sx(styles.h3)}>
+              {props.title}
+            </h3>
             <div {...sx(styles.spacer)} />
             <Button variant="ghost" small onClick={props.onClose}>
               Close

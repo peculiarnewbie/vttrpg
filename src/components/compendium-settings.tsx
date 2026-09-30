@@ -322,7 +322,7 @@ export function CompendiumSettings(props: {
   const [notice, setNotice] = createSignal("");
   const types = () => props.compendium.types();
   const exists = (id: string) => types().some((type) => type.id === id);
-  const counts = (typeId: string) => props.compendium.entriesOfType(typeId).length;
+  const counts = (typeId: string) => props.compendium.rowsOfType(typeId).length;
 
   // Entry types the world's sheet templates refer to that the compendium lacks.
   const missing = () => {

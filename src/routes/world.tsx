@@ -9,6 +9,7 @@ import { CharacterSheets } from "../components/character-sheets";
 import type { SheetRoll } from "../components/sheet-blocks";
 import { CompendiumPanel, EntryCard } from "../components/compendium";
 import { createCompendium } from "../client/compendium";
+import { formatRefLink } from "../domain/entry-links";
 import { Chat } from "../components/chat";
 import { DiceLanes } from "../components/dice-lanes";
 import { NotesPanel } from "../components/notes";
@@ -21,6 +22,7 @@ import { styles } from "../components/styles.stylex";
 import { showDiceTotals, setShowDiceTotals } from "../client/dice-display";
 import {
   Badge,
+  EmptyState,
   ErrorBanner,
   Menu,
   MenuItem,
@@ -583,9 +585,12 @@ export default function WorldPage() {
                         compendium={compendium}
                         onRoll={(label, dice) => rollLabelled(dice, label)}
                         onSetup={() => navigate(`/worlds/${params.id}/settings?section=compendium`)}
+                        search={(query) =>
+                          controller ? controller.search(query) : Promise.resolve([])
+                        }
                         onShare={(entry) =>
                           sendChat({
-                            content: `[[${entry.name}]]`,
+                            content: formatRefLink(entry.id, entry.name),
                             kind: "ic",
                             visibility: "public",
                             recipientMemberIds: [],
@@ -601,11 +606,20 @@ export default function WorldPage() {
         </Show>
       </div>
       <Modal
-        when={!!openEntry() && !!compendium.entry(openEntry()!)}
-        title={compendium.typeById(compendium.entry(openEntry()!)?.typeId ?? "")?.name ?? "Entry"}
+        when={!!openEntry()}
+        title={compendium.typeById(compendium.row(openEntry()!)?.typeId ?? "")?.name ?? "Entry"}
         onClose={() => setOpenEntry(null)}
       >
-        <Show when={compendium.entry(openEntry() ?? "")}>
+        <Show
+          when={compendium.entry(openEntry() ?? "")}
+          fallback={
+            <EmptyState>
+              {compendium.missing(openEntry() ?? "")
+                ? "That entry isn't in the compendium any more."
+                : "Loading…"}
+            </EmptyState>
+          }
+        >
           {(entry) => (
             <Show when={compendium.typeById(entry().typeId)}>
               {(type) => (
@@ -613,7 +627,7 @@ export default function WorldPage() {
                   entry={entry()}
                   type={type()}
                   onRoll={(label, dice) => rollLabelled(dice, label)}
-                  entries={compendium.entries()}
+                  compendium={compendium}
                   onOpenEntry={setOpenEntry}
                 />
               )}

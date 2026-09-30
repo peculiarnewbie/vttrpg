@@ -6,7 +6,7 @@ const compendium: Compendium = {
   types: [{ id: "item", name: "Item", fields: [{ key: "cost", label: "Cost", kind: "number" }] }],
   entries: [
     {
-      id: "ent_rope",
+      id: "world/item/rope",
       typeId: "item",
       name: "Rope",
       tags: ["gear"],
@@ -14,22 +14,23 @@ const compendium: Compendium = {
       fields: { cost: 2 },
       visibility: "dm",
       updatedAt: "now",
+      rev: 7,
     },
   ],
 };
 
-it("exports pretty, portable packs retaining entry identity and visibility without timestamps", () => {
+it("exports version 2 packs retaining entry identity and visibility without timestamps or revisions", () => {
   const text = exportPack(compendium, "Our world");
   expect(text).toContain('\n  "format"');
   const pack = JSON.parse(text);
   expect(pack).toEqual({
     format: "ttrpg-pack",
-    version: 1,
+    version: 2,
     name: "Our world",
     types: compendium.types,
     entries: [
       {
-        id: "ent_rope",
+        id: "world/item/rope",
         typeId: "item",
         name: "Rope",
         tags: ["gear"],
@@ -41,6 +42,7 @@ it("exports pretty, portable packs retaining entry identity and visibility witho
   });
   expect(parsePack(text)).toEqual({ ok: true, pack });
   expect(compendium.entries[0].updatedAt).toBe("now");
+  expect(compendium.entries[0].rev).toBe(7);
   expect(parsePack(exportPack({ types: [], entries: [] }, "Empty")).ok).toBe(true);
 });
 
@@ -53,7 +55,7 @@ it("reports bad JSON, wrong format, unsupported versions and invalid nested data
     });
   }
   const pack = JSON.parse(exportPack(compendium, "Test"));
-  for (const version of [2, "1", undefined]) {
+  for (const version of [0, 3, "1", "2", undefined]) {
     expect(parsePack(JSON.stringify({ ...pack, version }))).toEqual({
       ok: false,
       error: "Unsupported pack version",
@@ -72,6 +74,16 @@ it("reports bad JSON, wrong format, unsupported versions and invalid nested data
       error: "Invalid compendium pack data",
     });
   }
+});
+
+it("accepts both pack versions, preserving legacy ids for import aliases", () => {
+  const pack = JSON.parse(exportPack(compendium, "Gear"));
+  for (const version of [1, 2]) {
+    const versioned = { ...pack, version };
+    expect(parsePack(JSON.stringify(versioned))).toEqual({ ok: true, pack: versioned });
+  }
+  const legacy = { ...pack, version: 1, entries: [{ ...pack.entries[0], id: "ent_rope" }] };
+  expect(parsePack(JSON.stringify(legacy))).toEqual({ ok: true, pack: legacy });
 });
 
 it("measures the raw UTF-8 pack size before parsing, accepting the exact limit", () => {

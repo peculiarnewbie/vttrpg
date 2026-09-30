@@ -11,12 +11,13 @@ import type {
 } from "../domain/compendium";
 import { entryError } from "../domain/compendium-rules";
 import { indexEntries, searchIndex } from "../domain/compendium-search";
-import { findEntryByName } from "../domain/entry-links";
+import type { CompendiumStore } from "../client/compendium-store";
+import { createSearch, type SearchRequest } from "../client/search";
 import type { CharacterValue } from "../domain/schemas";
 import type { LayoutBlock, ListRow, SheetLayout, SheetValues } from "../domain/sheet-layout";
 import { colors, fonts, radii, skin } from "../theme/tokens.stylex";
 import { sx } from "../theme/sx";
-import { ListEditor, SheetBlocks, type CompendiumLookup } from "./sheet-blocks";
+import { ListEditor, SheetBlocks } from "./sheet-blocks";
 import { styles } from "./styles.stylex";
 import { Badge, Button, EmptyState, ErrorBanner, Field, Input, Textarea } from "./ui";
 
@@ -26,12 +27,13 @@ import { Badge, Button, EmptyState, ErrorBanner, Field, Input, Textarea } from "
  * sheet renderer, so an entry's fields look like the sheet they end up on.
  */
 
-/** The reactive compendium the world page keeps (src/client/compendium.ts). */
-export type CompendiumStore = CompendiumLookup & {
-  types: () => readonly EntryType[];
-  entries: () => readonly CompendiumEntry[];
-  refresh: () => unknown;
-};
+export type { CompendiumStore };
+
+/** The entry a link points at, if this member can see it: by id for `[[ref:…]]`, else by name. */
+export const linkedRow = (
+  store: Pick<CompendiumStore, "row" | "rowByName"> | undefined,
+  link: { name: string; id?: string },
+) => (store ? (link.id ? store.row(link.id) : store.rowByName(link.name)) : undefined);
 
 const filled = (value: CharacterValue | undefined) =>
   value !== undefined && value !== "" && !(Array.isArray(value) && value.length === 0);
@@ -82,11 +84,10 @@ export function EntryCard(props: {
   type: EntryType;
   onRoll?: (label: string, dice: string) => void;
   /** For `[[Entry]]` links in the description. */
-  entries?: readonly CompendiumEntry[];
+  compendium?: Pick<CompendiumStore, "row" | "rowByName">;
   onOpenEntry?: (entryId: string) => void;
 }) {
-  const link = (name: string) =>
-    props.entries ? findEntryByName(props.entries, name)?.id : undefined;
+  const link = (link: { name: string; id?: string }) => linkedRow(props.compendium, link)?.id;
   const open = (event: MouseEvent) => {
     const target = (event.target as Element).closest<HTMLElement>("[data-entry-id]");
     if (target?.dataset.entryId) props.onOpenEntry?.(target.dataset.entryId);
@@ -309,6 +310,8 @@ export function CompendiumPanel(props: {
   onSetup?: () => void;
   /** Post a link to the entry in chat. */
   onShare?: (entry: CompendiumEntry) => void;
+  /** Server search, which also finds words in entries' text (the index only has names and tags). */
+  search?: SearchRequest;
 }) {
   const [query, setQuery] = createSignal("");
   const [typeFilter, setTypeFilter] = createSignal<string | null>(null);
@@ -322,14 +325,23 @@ export function CompendiumPanel(props: {
     if (props.onFocus) props.onFocus(id);
     else setLocalFocus(id);
   };
-  const index = createMemo(() => indexEntries(props.compendium.entries()));
-  const results = () => searchIndex(index(), query(), { typeId: typeFilter() ?? undefined });
+  const index = createMemo(() => indexEntries(props.compendium.rows()));
+  const remote = props.search ? createSearch({ request: props.search }) : undefined;
+  // Names and tags match instantly from the index; the server adds matches in text.
+  const results = () => {
+    const local = searchIndex(index(), query(), { typeId: typeFilter() ?? undefined });
+    const seen = new Set(local.map((row) => row.id));
+    const more = (remote?.results() ?? []).filter(
+      (row) => !seen.has(row.id) && (!typeFilter() || row.typeId === typeFilter()),
+    );
+    return [...local, ...more];
+  };
   const selected = () => (focus() ? props.compendium.entry(focus()!) : undefined);
   const typeName = (typeId: string) => props.compendium.typeById(typeId)?.name ?? typeId;
 
   const setVisibility = async (entry: CompendiumEntry, visibility: EntryVisibility) => {
     try {
-      const { updatedAt: _, ...input } = entry;
+      const { updatedAt: _, rev: __, ...input } = entry;
       await api.saveEntry(props.worldId, { ...input, visibility });
       props.compendium.refresh();
     } catch (err) {
@@ -446,7 +458,13 @@ export function CompendiumPanel(props: {
             </Show>
             <Show
               when={selected() && props.compendium.typeById(selected()!.typeId) && selected()}
-              fallback={<EmptyState>That entry isn't in the compendium any more.</EmptyState>}
+              fallback={
+                <EmptyState>
+                  {props.compendium.missing(focus()!)
+                    ? "That entry isn't in the compendium any more."
+                    : "Loading…"}
+                </EmptyState>
+              }
             >
               {(entry) => (
                 <>
@@ -459,7 +477,7 @@ export function CompendiumPanel(props: {
                     entry={entry()}
                     type={props.compendium.typeById(entry().typeId)!}
                     onRoll={props.onRoll}
-                    entries={props.compendium.entries()}
+                    compendium={props.compendium}
                     onOpenEntry={setFocus}
                   />
                 </>
@@ -493,7 +511,10 @@ export function CompendiumPanel(props: {
             aria-label="Search the compendium"
             placeholder="Search names, tags, text…"
             value={query()}
-            onInput={(event) => setQuery(event.currentTarget.value)}
+            onInput={(event) => {
+              setQuery(event.currentTarget.value);
+              remote?.setQuery(event.currentTarget.value);
+            }}
           />
           <Show when={props.compendium.types().length > 1}>
             <div {...sx(c.chips)} role="group" aria-label="Filter by type">
@@ -535,7 +556,7 @@ export function CompendiumPanel(props: {
             </For>
             <Show when={!results().length}>
               <EmptyState>
-                {props.compendium.entries().length
+                {props.compendium.rows().length
                   ? "No entries match."
                   : props.isDm
                     ? "No entries yet. Use New… to write one, or import a pack in World settings."

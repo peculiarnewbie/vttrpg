@@ -28,7 +28,7 @@ it("escapes HTML and attributes and rejects unsafe link protocols", () => {
 });
 
 it("links [[entries]] the reader can open and leaves the rest as text", () => {
-  const html = renderNoteMarkdown("Ask [[Example Knight]] about [[<Secret>]].", (name) =>
+  const html = renderNoteMarkdown("Ask [[Example Knight]] about [[<Secret>]].", ({ name }) =>
     name === "Example Knight" ? 'ent_"1' : undefined,
   );
   expect(html).toBe(
@@ -36,5 +36,40 @@ it("links [[entries]] the reader can open and leaves the rest as text", () => {
   );
   expect(renderNoteMarkdown("[[Plain]]")).toBe(
     '<p><span class="ttrpg-entry-missing">Plain</span></p>',
+  );
+});
+
+it("resolves references by id and displays escaped labels for visible and missing entries", () => {
+  const seen: { name: string; id?: string }[] = [];
+  const html = renderNoteMarkdown(
+    "[[ref:world/spell/shield|<Old Shield>]] and [[ref:world/item/shield|Shield]]",
+    (link) => {
+      seen.push(link);
+      return link.id === "world/spell/shield" ? link.id : undefined;
+    },
+  );
+  expect(seen).toEqual([
+    { name: "<Old Shield>", id: "world/spell/shield" },
+    { name: "Shield", id: "world/item/shield" },
+  ]);
+  expect(html).toBe(
+    '<p><button type="button" class="ttrpg-entry-link" data-entry-id="world/spell/shield">&lt;Old Shield&gt;</button> and <span class="ttrpg-entry-missing">Shield</span></p>',
+  );
+  expect(renderNoteMarkdown("[[ref:world/spell/shield|Shield]]")).toContain(
+    'class="ttrpg-entry-missing">Shield',
+  );
+});
+
+it("resolves malformed references as name links and handles long ids", () => {
+  expect(
+    renderNoteMarkdown("[[ref:ent_abc|Shield]]", ({ name, id }) => {
+      expect(name).toBe("ent_abc|Shield");
+      expect(id).toBeUndefined();
+      return "legacy";
+    }),
+  ).toContain('data-entry-id="legacy">ent_abc|Shield');
+  const id = Array(3).fill("x".repeat(60)).join("/");
+  expect(renderNoteMarkdown(`[[ref:${id}|Long]]`, (link) => link.id)).toContain(
+    `data-entry-id="${id}">Long`,
   );
 });

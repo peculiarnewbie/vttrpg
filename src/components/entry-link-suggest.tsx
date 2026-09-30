@@ -1,6 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 import { For, Show, createSignal } from "solid-js";
-import type { CompendiumEntry } from "../domain/compendium";
+import type { IndexRow } from "../domain/compendium";
 import { searchEntries } from "../domain/compendium-search";
 import { insertLink, linkQueryAt } from "../domain/entry-links";
 import { colors, fonts, skin } from "../theme/tokens.stylex";
@@ -8,10 +8,10 @@ import { sx } from "../theme/sx";
 
 /*
  * Typing `[[` in a textarea suggests compendium entries; picking one writes
- * `[[Entry name]]`. The textarea's wrapper needs `position: relative`.
+ * `[[ref:<id>|Entry name]]`, which survives renames. The textarea's wrapper needs `position: relative`.
  */
 export function createLinkSuggest(options: {
-  entries: () => readonly CompendiumEntry[];
+  entries: () => readonly IndexRow[];
   typeName?: (typeId: string) => string | undefined;
   setText: (text: string) => void;
 }) {
@@ -28,7 +28,7 @@ export function createLinkSuggest(options: {
     setQuery(found && options.entries().length ? found : null);
     setActive(0);
   };
-  const pick = (entry: CompendiumEntry) => {
+  const pick = (entry: IndexRow) => {
     const current = query();
     if (!current || !field) return;
     const next = insertLink(
@@ -36,6 +36,7 @@ export function createLinkSuggest(options: {
       field.selectionStart ?? field.value.length,
       current.start,
       entry.name,
+      entry.id,
     );
     options.setText(next.text);
     setQuery(null);
