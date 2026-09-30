@@ -127,6 +127,18 @@ and can be converted; their formulas and roll modifiers stay in effect. On the
 sheet, **Edit** makes fields, lists, and plain stats editable in place, saving
 each value as you leave it. Layouts are prototyped at `/lab/systems`.
 
+### Shared sheets, tracks and slots
+
+- A layout marked **Shared sheet** makes sheets that belong to the table — a
+  Blades crew, a Stonetop steading, a ship. Every member can edit them and roll
+  with them; the DM can **Lock** one so only they can change it.
+- Trackers can show as a **progress** track (ten boxes of four ticks, the score
+  beside it), as can list columns — a Starforged vow per row. Lists also take
+  **select** columns with fixed choices.
+- In the slots style, a list can take each row's size from a number column, so
+  Cairn's bulky items fill two slots; the sheet counts what's used and never
+  refuses an item.
+
 ### Dice and derived values
 
 Rolls anywhere on a sheet — the rolls block, a stat or tracker label with a roll,
@@ -184,6 +196,16 @@ over the world's WebSocket finds words in entries' text as well.
   entries and inserts `[[ref:<id>|Name]]`, which survives renames; a hand-typed
   `[[Entry name]]` still links by name. Readers who can see the entry open its
   card, everyone else sees the plain name. Entry cards can be shared in chat.
+- **Field kinds** beyond text, numbers, dice, tags and lists: one or several of a
+  set of choices (a spell's school, a monster's senses), references to other
+  entries (a class's features), **actions** with a roll each (a monster's
+  attacks — click to roll), **progression** rows by level (a class table; an
+  entry block's progression style shows the rows up to the character's level
+  and offers to add a level's rows to a list), and **oracle** tables (roll the
+  table's dice and chat shows the row it landed on). Types can declare
+  **filters** (level, school, has concentration…); their values ride along in
+  the index. Descriptions, notes and chat take inline rolls:
+  `[[r:2d6+1|Damage]]`.
 - Any block can be shown only while a value is empty or filled ("Only show when"),
   e.g. Bastionland's hand-typed Ability shows only until a Knight is linked.
 
