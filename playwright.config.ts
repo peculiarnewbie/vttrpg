@@ -7,7 +7,7 @@ const port = Number(process.env.E2E_PORT ?? 8791);
 /*
  * Browser specs against `pnpm dev:all` (both Workers + local storage).
  * Every spec runs once per theme, since each theme lays sheets out differently.
- * `pnpm dev` rebuilds the client first, so a running dev server on this port
+ * `pnpm dev:all` rebuilds the client first, so a running dev server on this port
  * is reused as is — restart it after changing client code.
  */
 export default defineConfig<Options>({
