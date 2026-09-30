@@ -15,5 +15,12 @@
     "skipLibCheck": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["src", "worker-configuration.d.ts", "vite.config.ts", "drizzle.config.ts"]
+  "include": [
+    "src",
+    "e2e",
+    "worker-configuration.d.ts",
+    "vite.config.ts",
+    "drizzle.config.ts",
+    "playwright.config.ts"
+  ]
 }

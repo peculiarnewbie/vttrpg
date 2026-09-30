@@ -31,6 +31,7 @@ import {
   type SheetValues,
 } from "../domain/sheet-layout";
 import { layoutLimitsError } from "../domain/template-io";
+import { layoutProblems } from "../domain/sheet-refs";
 import { moveIndex } from "../client/sortable";
 import { DropLine, SortHandle, createSortable } from "./sortable";
 import { colors, fonts, radii, skin } from "../theme/tokens.stylex";
@@ -249,6 +250,20 @@ const e = stylex.create({
   json: { minHeight: "360px", fontFamily: fonts.mono, fontSize: "12px" },
   error: { color: colors.danger, fontSize: "12px" },
   hint: { fontSize: "12px", color: colors.textMuted },
+  problems: {
+    margin: 0,
+    paddingBlock: "6px",
+    paddingInline: "22px 8px",
+    ...hair,
+    borderColor: colors.warning,
+    borderRadius: radii.sm,
+    backgroundColor: colors.surface,
+    color: colors.text,
+    fontSize: "12px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "2px",
+  },
   check: { display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "12px" },
 });
 
@@ -278,6 +293,9 @@ type Column = {
   kind?: "text" | "number" | "select";
   options?: readonly string[];
   width?: string;
+  placeholder?: string;
+  /** Clearing it keeps an empty string instead of removing the property. */
+  required?: boolean;
 };
 
 /** A compact table of inputs for a block's items, with add and remove. */
@@ -302,7 +320,13 @@ function ItemRows<T extends Record<string, unknown>>(props: {
         if (kind === "number") {
           if (raw.trim() === "") delete next[key];
           else next[key] = Math.trunc(Number(raw));
-        } else if (raw === "" && key !== "label" && key !== "key") delete next[key];
+        } else if (
+          raw === "" &&
+          key !== "label" &&
+          key !== "key" &&
+          !props.columns.find((column) => column.key === key)?.required
+        )
+          delete next[key];
         else next[key] = raw;
         return next as T;
       }),
@@ -339,6 +363,7 @@ function ItemRows<T extends Record<string, unknown>>(props: {
                         {...sx(styles.input, e.small)}
                         aria-label={`${props.title} ${index + 1} ${column.label}`}
                         type={column.kind === "number" ? "number" : "text"}
+                        placeholder={column.placeholder}
                         value={String(
                           (props.items[index] as Record<string, unknown>)[column.key] ?? "",
                         )}
@@ -573,6 +598,7 @@ function Inspector(props: {
                   options: TrackerDisplay.literals,
                   width: "70px",
                 },
+                { key: "roll", label: "Roll", placeholder: "(@key)d6khz", width: "80px" },
               ]}
               onChange={(items) => patch({ items })}
               make={() => ({
@@ -593,6 +619,12 @@ function Inspector(props: {
                 { key: "label", label: "Label", width: "minmax(0, 1.6fr)" },
                 { key: "key", label: "Key" },
                 { key: "max", label: "Bar max", kind: "number", width: "60px" },
+                {
+                  key: "roll",
+                  label: "Roll on click",
+                  placeholder: "1d20 + @key",
+                  width: "minmax(0, 1.4fr)",
+                },
               ]}
               onChange={(items) => patch({ items })}
               make={() => ({ key: `stat_${Date.now() % 10000}`, label: "Stat" })}
@@ -665,10 +697,25 @@ function Inspector(props: {
                       options: ListColumnKind.literals,
                       width: "80px",
                     },
+                    {
+                      key: "expr",
+                      label: "Formula (derived)",
+                      placeholder: "@row.qty * 2",
+                      width: "minmax(0, 1.2fr)",
+                    },
                   ]}
                   onChange={(columns) => patch({ columns })}
                   make={() => ({ key: `col_${Date.now() % 10000}`, label: "Column", kind: "text" })}
                 />
+                <label {...sx(e.field)}>
+                  Each row rolls (optional)
+                  <input
+                    {...sx(styles.input, e.small)}
+                    placeholder="1d20 + @row.bonus"
+                    value={list().roll ?? ""}
+                    onInput={(event) => patch({ roll: event.currentTarget.value || undefined })}
+                  />
+                </label>
                 {entryTypeSelect(
                   "Add rows from the compendium",
                   list().source?.entryType ?? "",
@@ -821,8 +868,13 @@ function Inspector(props: {
               title="Rolls"
               items={(block() as Extract<LayoutBlock, { type: "rolls" }>).items}
               columns={[
-                { key: "label", label: "Label", width: "minmax(0, 1.6fr)" },
-                { key: "dice", label: "Dice", width: "80px" },
+                { key: "label", label: "Label", width: "minmax(0, 1fr)" },
+                {
+                  key: "dice",
+                  label: "Dice",
+                  placeholder: "1d20 + @key",
+                  width: "minmax(0, 1.4fr)",
+                },
               ]}
               onChange={(items) => patch({ items })}
               make={() => ({ label: "Roll", dice: "d20" })}
@@ -846,6 +898,10 @@ export function LayoutEditor(props: {
   const [json, setJson] = createSignal<string | null>(null);
   const [jsonError, setJsonError] = createSignal("");
   const [values, setValues] = createSignal<SheetValues>({});
+  const problems = () => [
+    ...(layoutLimitsError(props.layout) ? [layoutLimitsError(props.layout)!] : []),
+    ...layoutProblems(props.layout),
+  ];
   const page = () =>
     props.layout.pages.find((item) => item.id === pageId()) ?? props.layout.pages[0];
   const block = () => {
@@ -1338,6 +1394,34 @@ export function LayoutEditor(props: {
                 }
               />
             )}
+          </Show>
+          <ItemRows
+            title="Derived values"
+            items={props.layout.derived ?? []}
+            columns={[
+              { key: "label", label: "Label", width: "minmax(0, 1fr)" },
+              { key: "key", label: "Key", width: "minmax(0, 0.8fr)" },
+              {
+                key: "expr",
+                label: "Formula",
+                placeholder: "floor((@str - 10) / 2)",
+                required: true,
+                width: "minmax(0, 1.8fr)",
+              },
+            ]}
+            onChange={(derived) =>
+              props.onChange({ ...props.layout, derived: derived.length ? derived : undefined })
+            }
+            make={() => ({ key: `value_${Date.now() % 10000}`, label: "Value", expr: "0" })}
+          />
+          <span {...sx(e.hint)}>
+            Numbers computed from other values, shown wherever a stat or field uses the key and
+            usable as @key in rolls. They're never stored: change the values they come from.
+          </span>
+          <Show when={problems().length}>
+            <ul {...sx(e.problems)} aria-label="Layout problems">
+              <For each={problems()}>{(problem) => <li>{problem}</li>}</For>
+            </ul>
           </Show>
         </div>
         <div {...sx(e.column)}>

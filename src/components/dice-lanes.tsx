@@ -5,7 +5,7 @@ import { Show, For, createEffect, createSignal, onCleanup, onSettled } from "sol
 import type { ChatMessage, RollResult } from "../domain/schemas";
 
 import { showDiceTotals } from "../client/dice-display";
-import { styles } from "./styles.stylex";
+import { RollView, rollGroups, rolledDiceCount } from "./roll-view";
 import { sx } from "../theme/sx";
 
 const PALETTE = [
@@ -34,10 +34,17 @@ const colorFor = (memberId: string) => {
   return color;
 };
 
+/** Every group's dice, thrown as they came up. Big pools skip the throw and just show. */
 const predeterminedNotation = (roll: RollResult) =>
-  roll.dice
-    .map((group) => `${group.results.length}d${group.sides}@${group.results.join(",")}`)
-    .join("+");
+  rolledDiceCount(roll) > MAX_THROWN
+    ? ""
+    : rollGroups(roll)
+        .flatMap((group) => group.dice)
+        .filter((die) => die.results.length > 0)
+        .map((die) => `${die.results.length}d${die.sides}@${die.results.join(",")}`)
+        .join("+");
+
+const MAX_THROWN = 20;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -117,9 +124,10 @@ function DiceLane(props: {
     setResult(null);
     try {
       const isReady = await waitReady();
-      if (isReady && box && message.roll) {
+      const thrown = message.roll ? predeterminedNotation(message.roll) : "";
+      if (isReady && box && thrown) {
         try {
-          await box.roll(predeterminedNotation(message.roll));
+          await box.roll(thrown);
         } catch {
           // reveal anyway
         }
@@ -176,26 +184,7 @@ function DiceLane(props: {
       <Show when={result()}>
         {(roll) => (
           <div class="ttrpg-dice-total ttrpg-dice-lane-total">
-            <div {...sx(styles.rollResult)}>
-              <div {...sx(styles.rowWrap)}>
-                <For each={roll().dice}>
-                  {(die) => (
-                    <For each={die.results}>
-                      {(value) => (
-                        <span {...sx(styles.die)}>
-                          <span>{value}</span>
-                          <sub {...sx(styles.dieLabel)}>d{die.sides}</sub>
-                        </span>
-                      )}
-                    </For>
-                  )}
-                </For>
-              </div>
-              <Show when={showDiceTotals()}>
-                <span class="ttrpg-dice-total-label">Total {roll().total}</span>
-              </Show>
-              <span class="ttrpg-dice-total-label">{roll().notation}</span>
-            </div>
+            <RollView roll={roll()} showTotal={showDiceTotals()} />
           </div>
         )}
       </Show>
