@@ -29,6 +29,7 @@ compendiums is in [docs/corpus.md](docs/corpus.md).
 ```bash
 pnpm install
 pnpm dev      # migrates local D1, builds, then runs Wrangler dev
+pnpm dev:all  # includes the corpus Worker and local libraries
 pnpm check    # lint + format + typecheck
 pnpm test
 ```
@@ -208,6 +209,29 @@ over the world's WebSocket finds words in entries' text as well.
   `[[r:2d6+1|Damage]]`.
 - Any block can be shown only while a value is empty or filled ("Only show when"),
   e.g. Bastionland's hand-typed Ability shows only until a Knight is linked.
+
+## Libraries
+
+DMs enable published libraries in **World settings → Libraries**. Each world
+pins a library version; **Check for updates** shows added, changed, and removed
+entry IDs before **Apply update**. A per-library **Follow latest** option adopts
+new versions when the world reconnects or checks for updates. Copied sheet rows
+still require their owner's choice to update.
+
+Library entries appear alongside world entries in search and on sheets. Their
+text and fields load on demand from immutable R2 snapshots; DM-only entries
+stay hidden from players. DMs can make a **Table override**, reset those changes,
+or **Block in world** and restore an entry from Libraries. Overrides preserve
+the library's attribution and share-alike licence. Ordinary world entry edits
+never change a published library.
+
+Packs containing table overrides can be restored in a world with the same
+library versions enabled. Import checks source revisions and licences before
+committing any entries; a version mismatch requires resolving the library first.
+
+Libraries require the corpus service and the `corpus` feature flag. The app ships
+no copyrighted rules text or library art. Deployment order, resource names, and
+Workers Builds settings are in [docs/corpus-deployment.md](docs/corpus-deployment.md).
 
 ## Realtime protocol
 

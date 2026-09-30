@@ -10,6 +10,7 @@ import type {
   SaveEntryInput,
 } from "../domain/compendium";
 import { entryError } from "../domain/compendium-rules";
+import { parseEntryId, WORLD_SOURCE } from "../domain/entry-id";
 import { indexEntries, searchIndex } from "../domain/compendium-search";
 import type { CompendiumStore } from "../client/compendium-store";
 import { createSearch, type SearchRequest } from "../client/search";
@@ -34,6 +35,48 @@ import { Badge, Button, EmptyState, ErrorBanner, Field, Input, Textarea } from "
  */
 
 export type { CompendiumStore };
+
+const libraryEntry = (entry: CompendiumEntry) => {
+  const id = parseEntryId(entry.id);
+  return !!id && id.source !== WORLD_SOURCE;
+};
+
+/** Only changed values become patches; untouched source values keep following the library. */
+const saveTableOverride = async (
+  worldId: string,
+  entry: CompendiumEntry,
+  input: SaveEntryInput,
+) => {
+  const previous = await api.entryOverride(worldId, entry.id);
+  const prior = previous?.patch ?? {};
+  const fields = { ...prior.fields };
+  const removed = new Set(prior.removeFields ?? []);
+  for (const key of new Set([...Object.keys(entry.fields), ...Object.keys(input.fields)])) {
+    if (JSON.stringify(entry.fields[key]) === JSON.stringify(input.fields[key])) continue;
+    if (input.fields[key] === undefined) {
+      delete fields[key];
+      removed.add(key);
+    } else {
+      fields[key] = input.fields[key];
+      removed.delete(key);
+    }
+  }
+  await api.saveEntryOverride(worldId, entry.id, {
+    baseRev: entry.sourceRev ?? entry.rev ?? 0,
+    patch: {
+      ...prior,
+      ...(input.name !== entry.name ? { name: input.name } : {}),
+      ...(input.body !== entry.body ? { body: input.body } : {}),
+      ...(input.visibility !== entry.visibility ? { visibility: input.visibility } : {}),
+      ...(JSON.stringify(input.tags) !== JSON.stringify(entry.tags) ? { tags: input.tags } : {}),
+      fields,
+      removeFields: [...removed],
+    },
+  });
+  const body = (await api.getEntryBodies(worldId, [entry.id])).entries[0];
+  if (!body) throw new ApiError("The library entry is no longer available");
+  return body;
+};
 
 /** The entry a link points at, if this member can see it: by id for `[[ref:…]]`, else by name. */
 export const linkedRow = (
@@ -222,6 +265,13 @@ export function EntryCard(props: {
           innerHTML={renderNoteMarkdown(props.entry.body, link)}
           onClick={open}
         />
+      </Show>
+      <Show when={props.entry.licence}>
+        {(licence) => (
+          <small {...sx(styles.muted)}>
+            {licence().name} · {licence().attribution}
+          </small>
+        )}
       </Show>
     </article>
   );
@@ -439,6 +489,7 @@ function EntryEditor(props: {
   const [preview, setPreview] = createSignal(false);
   const [error, setError] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+  const override = () => !!props.entry && libraryEntry(props.entry);
   const patch = (partial: Partial<SaveEntryInput>) => setDraft({ ...draft(), ...partial });
   const setField = (key: string, value: CharacterValue | undefined) => {
     const fields = { ...draft().fields };
@@ -448,11 +499,15 @@ function EntryEditor(props: {
   };
   const save = async () => {
     const input = { ...draft(), name: draft().name.trim(), tags: splitTags(tagText()) };
-    const problem = entryError(input, props.type);
+    const problem = entryError(override() ? { ...input, id: undefined } : input, props.type);
     if (problem) return setError(problem);
     setBusy(true);
     try {
-      props.onSaved(await api.saveEntry(props.worldId, input));
+      props.onSaved(
+        override() && props.entry
+          ? await saveTableOverride(props.worldId, props.entry, input)
+          : await api.saveEntry(props.worldId, input),
+      );
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not save the entry");
     } finally {
@@ -463,13 +518,15 @@ function EntryEditor(props: {
     <fieldset
       {...sx(c.editor)}
       disabled={busy()}
-      aria-label={`${props.entry ? "Edit" : "New"} ${props.type.name}`}
+      aria-label={`${override() ? "Table override" : props.entry ? "Edit" : "New"} ${props.type.name}`}
     >
       <div {...sx(styles.row)}>
         <h3 {...sx(styles.h3)}>
-          {props.entry
-            ? `Edit ${props.type.name.toLowerCase()}`
-            : `New ${props.type.name.toLowerCase()}`}
+          {override()
+            ? `Table override · ${props.type.name.toLowerCase()}`
+            : props.entry
+              ? `Edit ${props.type.name.toLowerCase()}`
+              : `New ${props.type.name.toLowerCase()}`}
         </h3>
         <div {...sx(styles.spacer)} />
         <Button small onClick={props.onCancel}>
@@ -480,6 +537,11 @@ function EntryEditor(props: {
         </Button>
       </div>
       <ErrorBanner message={error()} />
+      <Show when={override()}>
+        <p {...sx(styles.muted)}>
+          Changes apply in this world. The library's attribution and licence stay with the entry.
+        </p>
+      </Show>
       <Field label="Name">
         <Input value={draft().name} onInput={(name) => patch({ name })} />
       </Field>
@@ -492,7 +554,9 @@ function EntryEditor(props: {
               patch({ visibility: event.currentTarget.value as EntryVisibility })
             }
           >
-            <option value="public">Everyone</option>
+            <option value="public" disabled={override() && props.entry?.visibility === "dm"}>
+              Everyone
+            </option>
             <option value="dm">DM only</option>
           </select>
         </Field>
@@ -578,7 +642,9 @@ export function CompendiumPanel(props: {
   const setVisibility = async (entry: CompendiumEntry, visibility: EntryVisibility) => {
     try {
       const { updatedAt: _, rev: __, ...input } = entry;
-      await api.saveEntry(props.worldId, { ...input, visibility });
+      if (libraryEntry(entry))
+        await saveTableOverride(props.worldId, entry, { ...input, visibility });
+      else await api.saveEntry(props.worldId, { ...input, visibility });
       props.compendium.refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not update the entry");
@@ -591,6 +657,17 @@ export function CompendiumPanel(props: {
       props.compendium.refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not delete the entry");
+    }
+  };
+  const sourceAction = async (entry: CompendiumEntry, block: boolean) => {
+    try {
+      if (block) {
+        await api.blockEntry(props.worldId, entry.id, true);
+        setFocus(null);
+      } else await api.deleteEntryOverride(props.worldId, entry.id);
+      await props.compendium.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update the library entry");
     }
   };
 
@@ -656,24 +733,46 @@ export function CompendiumPanel(props: {
               <Show when={props.isDm && selected()}>
                 {(entry) => (
                   <>
-                    <Button
-                      small
-                      variant="ghost"
-                      onClick={() =>
-                        void setVisibility(entry(), entry().visibility === "dm" ? "public" : "dm")
-                      }
-                    >
-                      {entry().visibility === "dm" ? "Reveal to players" : "Hide from players"}
-                    </Button>
+                    <Show when={!libraryEntry(entry()) || entry().visibility === "public"}>
+                      <Button
+                        small
+                        variant="ghost"
+                        onClick={() =>
+                          void setVisibility(entry(), entry().visibility === "dm" ? "public" : "dm")
+                        }
+                      >
+                        {entry().visibility === "dm" ? "Reveal to players" : "Hide from players"}
+                      </Button>
+                    </Show>
                     <Button
                       small
                       onClick={() => setEditing({ typeId: entry().typeId, entryId: entry().id })}
                     >
-                      Edit
+                      {libraryEntry(entry()) ? "Table override" : "Edit"}
                     </Button>
-                    <Button small variant="danger" onClick={() => setConfirmDelete(true)}>
-                      Delete
-                    </Button>
+                    <Show
+                      when={libraryEntry(entry())}
+                      fallback={
+                        <Button small variant="danger" onClick={() => setConfirmDelete(true)}>
+                          Delete
+                        </Button>
+                      }
+                    >
+                      <Button
+                        small
+                        variant="ghost"
+                        onClick={() => void sourceAction(entry(), false)}
+                      >
+                        Reset table changes
+                      </Button>
+                      <Button
+                        small
+                        variant="danger"
+                        onClick={() => void sourceAction(entry(), true)}
+                      >
+                        Block in this world
+                      </Button>
+                    </Show>
                   </>
                 )}
               </Show>

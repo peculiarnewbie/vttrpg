@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import type { AuthUser } from "../domain/schemas";
+import type { CorpusApi } from "../domain/corpus-rpc";
 
 export class D1 extends Context.Service<D1, D1Database>()("ttrpg/D1") {}
 
@@ -14,6 +15,12 @@ export class WorldNamespace extends Context.Service<WorldNamespace, DurableObjec
 export class CurrentUser extends Context.Service<CurrentUser, AuthUser | null>()(
   "ttrpg/CurrentUser",
 ) {}
+
+export class CorpusBinding extends Context.Service<CorpusBinding, CorpusApi | null>()(
+  "ttrpg/Corpus",
+) {}
+
+export class Features extends Context.Service<Features, { corpus: boolean }>()("ttrpg/Features") {}
 
 export class Unauthorized extends Data.TaggedError("Unauthorized")<{ message: string }> {}
 export class Forbidden extends Data.TaggedError("Forbidden")<{ message: string }> {}

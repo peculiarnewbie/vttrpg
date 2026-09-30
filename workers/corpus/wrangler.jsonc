@@ -11,8 +11,7 @@
     {
       "binding": "CORPUS_DB",
       "database_name": "ttrpg-corpus",
-      // Replace with the dashboard-created database id before deploying.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "9b2b03c6-2f2a-4865-817d-b5e0ab439b0a",
       "migrations_dir": "migrations",
     },
   ],
@@ -29,7 +28,7 @@
         {
           "binding": "CORPUS_DB",
           "database_name": "ttrpg-corpus-preview",
-          "database_id": "00000000-0000-0000-0000-000000000000",
+          "database_id": "02c86251-9eff-446e-ac94-a8cf31e39a9d",
           "migrations_dir": "migrations",
         },
       ],

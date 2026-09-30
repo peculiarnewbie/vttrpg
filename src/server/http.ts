@@ -1,4 +1,7 @@
 import { canEditCharacter } from "./world-do";
+import { CorpusRoutes } from "./corpus-http";
+import { EnableSourceInput } from "../domain/corpus-rpc";
+import { SaveOverrideInput } from "../domain/overrides";
 import { canSeeNote } from "../domain/note-permissions";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -44,6 +47,7 @@ import {
   BadRequest,
   Bucket,
   CurrentUser,
+  Features,
   D1,
   Forbidden,
   NotFound,
@@ -307,6 +311,7 @@ const WorldBootstrap = HttpRouter.route(
       const owner = yield* repo.findUserById(db, world.owner_user_id);
       return json({
         world: worldSummary(world, member, owner?.display_name ?? user.displayName),
+        features: yield* Features,
         member,
         members: members.map(repo.toWorldMember),
         board: state.board,
@@ -1011,20 +1016,25 @@ const compendiumRoute = (
   method: "GET" | "PUT" | "POST" | "DELETE",
   suffix: string,
   schema?: Schema.ConstraintDecoder<unknown>,
+  category: "compendium" | "libraries" = "compendium",
 ) =>
   HttpRouter.route(
     method,
-    `/api/worlds/:id/compendium${suffix}`,
+    `/api/worlds/:id/${category}${suffix}`,
     route(
       Effect.gen(function* () {
         const { member, stub, world } = yield* loadWorld(
-          (method === "GET" && (suffix === "" || suffix === "/index")) ||
-            (method === "POST" && suffix === "/bodies")
+          category === "compendium" &&
+            ((method === "GET" && (suffix === "" || suffix === "/index")) ||
+              (method === "POST" && suffix === "/bodies"))
             ? undefined
             : ["dm"],
         );
         const params = yield* HttpRouter.params;
-        const path = `compendium${suffix.replace(":typeId", encodeURIComponent(params.typeId ?? "")).replace(":entryId", encodeURIComponent(params.entryId ?? ""))}`;
+        const path = `${category}${suffix
+          .replace(":typeId", encodeURIComponent(params.typeId ?? ""))
+          .replace(":entryId", encodeURIComponent(params.entryId ?? ""))
+          .replace(":sourceId", encodeURIComponent(params.sourceId ?? ""))}`;
         const request = yield* HttpServerRequest.HttpServerRequest;
         const query = suffix === "/index" ? new URL(request.url, "http://localhost").search : "";
         let body: string | undefined;
@@ -1043,7 +1053,10 @@ const compendiumRoute = (
           } catch {
             return yield* Effect.fail(new BadRequest({ message: "Invalid JSON body" }));
           }
-          const decoded = Schema.decodeUnknownResult(schema)(parsed);
+          const decoded = Schema.decodeUnknownResult(
+            schema,
+            suffix.startsWith("/overrides") ? { onExcessProperty: "error" } : undefined,
+          )(parsed);
           if (decoded._tag === "Failure")
             return yield* Effect.fail(new BadRequest({ message: "Invalid compendium data" }));
           body = JSON.stringify(decoded.success);
@@ -1058,6 +1071,7 @@ const compendiumRoute = (
                 "x-ttrpg-member-name": member.displayName,
                 "x-ttrpg-role": member.role,
                 "x-ttrpg-world-name": encodeURIComponent(world.name),
+                "x-ttrpg-corpus-account-id": world.owner_user_id,
               },
               ...(body === undefined ? {} : { body }),
             }),
@@ -1080,9 +1094,20 @@ const CompendiumRoutes = [
   compendiumRoute("DELETE", "/entries/:entryId"),
   compendiumRoute("GET", "/export"),
   compendiumRoute("POST", "/import", CompendiumPack),
+  compendiumRoute("GET", "/overrides/:entryId"),
+  compendiumRoute("PUT", "/overrides/:entryId", SaveOverrideInput),
+  compendiumRoute("DELETE", "/overrides/:entryId"),
+  compendiumRoute("PUT", "/blocked/:entryId"),
+  compendiumRoute("DELETE", "/blocked/:entryId"),
+  compendiumRoute("GET", "", undefined, "libraries"),
+  compendiumRoute("GET", "/blocked", undefined, "libraries"),
+  compendiumRoute("PUT", "/:sourceId", EnableSourceInput, "libraries"),
+  compendiumRoute("DELETE", "/:sourceId", undefined, "libraries"),
+  compendiumRoute("POST", "/check", undefined, "libraries"),
 ];
 
 export const Api = HttpRouter.addAll([
+  ...CorpusRoutes,
   ...CompendiumRoutes,
   Me,
   GoogleDev,

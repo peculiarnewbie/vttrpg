@@ -1080,6 +1080,20 @@ export class WorldCompendium {
       const localEntries = pack.entries.filter(
         (item) => !isEntryId(item.id) || parseEntryId(item.id)?.source === WORLD_SOURCE,
       );
+      for (const item of sourceEntries) {
+        if (
+          parseEntryId(item.id)?.typeId !== item.typeId ||
+          !Number.isSafeInteger(item.sourceVersion) ||
+          !Number.isSafeInteger(item.sourceRev) ||
+          (item.sourceVersion ?? 0) < 1 ||
+          (item.sourceRev ?? 0) < 1 ||
+          !item.licence
+        )
+          return json(
+            { error: "Library pack entries require valid identity, provenance and licence" },
+            400,
+          );
+      }
       if (sourceEntries.length && (pack.version !== 2 || !this.sources?.available))
         return json(
           { error: "Enable the pack's libraries before importing version 2 library entries" },

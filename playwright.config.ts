@@ -5,7 +5,7 @@ type Options = { theme: "rulebook" | "zine" | "fantasy" };
 const port = Number(process.env.E2E_PORT ?? 8791);
 
 /*
- * Browser specs against `pnpm dev` (Worker + Durable Objects + local D1).
+ * Browser specs against `pnpm dev:all` (both Workers + local storage).
  * Every spec runs once per theme, since each theme lays sheets out differently.
  * `pnpm dev` rebuilds the client first, so a running dev server on this port
  * is reused as is — restart it after changing client code.
@@ -28,7 +28,7 @@ export default defineConfig<Options>({
     use: { theme },
   })),
   webServer: {
-    command: `pnpm dev --port ${port}`,
+    command: `pnpm dev:all --port ${port}`,
     url: `http://localhost:${port}/api/me`,
     reuseExistingServer: true,
     timeout: 240_000,

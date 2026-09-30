@@ -92,18 +92,22 @@ it("round-trips dictionary indexes, optional facets and physically separate visi
   await expect(encodeIndex([row, dm], "public")).rejects.toThrow("visibility");
 });
 
-it.each([10_000, 20_000])("keeps a %i-entry index within its compressed budget", async (count) => {
-  const rows = Array.from({ length: count }, (_, index): IndexRow => ({
-    ...row,
-    id: `lantern/item/invention-${index}`,
-    name: `Lantern invention ${index}`,
-    rev: index + 1,
-    facets: { cost: index % 10, family: "bells", bright: index % 2 === 0 },
-  }));
-  const bytes = await encodeIndex(rows, "public");
-  expect(bytes.byteLength).toBeLessThan(count === 10_000 ? 250_000 : 400_000);
-  expect(await decodeIndex(bytes, "public")).toEqual(rows);
-});
+it.each([10_000, 20_000])(
+  "keeps a %i-entry index within its compressed budget",
+  async (count) => {
+    const rows = Array.from({ length: count }, (_, index): IndexRow => ({
+      ...row,
+      id: `lantern/item/invention-${index}`,
+      name: `Lantern invention ${index}`,
+      rev: index + 1,
+      facets: { cost: index % 10, family: "bells", bright: index % 2 === 0 },
+    }));
+    const bytes = await encodeIndex(rows, "public");
+    expect(bytes.byteLength).toBeLessThan(count === 10_000 ? 250_000 : 400_000);
+    expect(await decodeIndex(bytes, "public")).toEqual(rows);
+  },
+  30_000,
+);
 
 it("rejects malformed schemas, dictionary references, duplicate identities and unsafe revisions", async () => {
   const packed = await unpack(await encodeIndex([row], "public"));

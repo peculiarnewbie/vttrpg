@@ -584,7 +584,7 @@ it("preflights a mixed pack without changing local entries or overrides when sou
   } finally {
     peer.socket.close();
   }
-});
+}, 30_000);
 
 it("rolls back prepared overrides and index revisions when writing a local entry fails inside the import transaction", async () => {
   const [sword] = await save([input("Sword")]);

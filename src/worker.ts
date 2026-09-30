@@ -4,7 +4,15 @@ import * as Layer from "effect/Layer";
 import { HttpRouter } from "effect/unstable/http";
 import { getMembership, getSessionUser, getWorld, toAuthUser, toWorldMember } from "./server/db";
 import { Api, SESSION_COOKIE_NAME } from "./server/http";
-import { Bucket, CurrentUser, D1, WorldNamespace } from "./server/services";
+import {
+  Bucket,
+  CurrentUser,
+  D1,
+  WorldNamespace,
+  CorpusBinding,
+  Features,
+} from "./server/services";
+import { corpusEnabled, type CorpusBindings } from "./server/corpus-env";
 import { WorldDO } from "./server/world-do";
 
 export { WorldDO };
@@ -41,6 +49,7 @@ const handleWebSocket = async (request: Request, env: Env, worldId: string) => {
   headers.set("x-ttrpg-member-id", member.id);
   headers.set("x-ttrpg-member-name", member.displayName);
   headers.set("x-ttrpg-role", member.role);
+  headers.set("x-ttrpg-corpus-account-id", world.owner_user_id);
   headers.delete("Cookie");
 
   const stub = env.WORLDS.getByName(world.do_name);
@@ -48,7 +57,7 @@ const handleWebSocket = async (request: Request, env: Env, worldId: string) => {
 };
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env & CorpusBindings): Promise<Response> {
     const url = new URL(request.url);
 
     if (url.pathname.startsWith("/api/")) {
@@ -63,6 +72,8 @@ export default {
         Context.add(Bucket, env.BUCKET),
         Context.add(WorldNamespace, env.WORLDS),
         Context.add(CurrentUser, user),
+        Context.add(CorpusBinding, corpusEnabled(env) ? env.CORPUS! : null),
+        Context.add(Features, { corpus: corpusEnabled(env) }),
       );
       return handler(request, context);
     }
@@ -73,4 +84,4 @@ export default {
     }
     return assetResponse;
   },
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler<Env & CorpusBindings>;

@@ -83,6 +83,7 @@ export async function startTabletop(options: TabletopOptions = {}) {
   const name = options.name ?? "tabletop";
   const mf = new Miniflare(
     convertV4MiniflareOptions({
+      unsafeInspectDurableObjects: options.unsafeInspectDurableObjects,
       workers: [
         {
           name,
@@ -91,7 +92,6 @@ export async function startTabletop(options: TabletopOptions = {}) {
           compatibilityDate: "2026-03-22",
           compatibilityFlags: ["nodejs_compat"],
           durableObjects: { WORLDS: { className: "WorldDO", useSQLite: true } },
-          ...(options.unsafeInspectDurableObjects ? { unsafeInspectDurableObjects: true } : {}),
           ...(bindings ? { d1Databases: ["DB"], r2Buckets: ["BUCKET"] } : {}),
           ...(options.corpus
             ? {
@@ -153,7 +153,7 @@ export async function startTabletop(options: TabletopOptions = {}) {
     if (!session) throw new Error("Missing session cookie");
     return session.split(";")[0];
   };
-  // Suites keep their own initial-frame waits and assertions.
+  // Consume the initial presence before using later presence replies as barriers.
   const connect = async ({
     worldId,
     cookie,
@@ -177,6 +177,7 @@ export async function startTabletop(options: TabletopOptions = {}) {
       frames.push(decodeFrame(JSON.parse(String(event.data)))),
     );
     socket.accept();
+    await expect.poll(() => frames.some((frame) => frame.type === "presence")).toBe(true);
     const send = (frame: ClientFrame) => socket.send(JSON.stringify(frame));
     // A reply on the same ordered socket is a barrier for preceding messages.
     const sync = async () => {
