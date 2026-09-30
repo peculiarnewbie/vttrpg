@@ -5,8 +5,11 @@ import { createNoteAutosave, type NoteSaveStatus } from "../client/note-autosave
 import { renderNoteMarkdown } from "../client/note-markdown";
 import { For, Show, createSignal, createEffect, onCleanup, onSettled } from "solid-js";
 import { api, ApiError } from "../client/api";
+import { findEntryByName } from "../domain/entry-links";
+import type { CompendiumStore } from "./compendium";
+import { createLinkSuggest } from "./entry-link-suggest";
 import type { Note, NoteSummary, Visibility, WorldMember } from "../domain/schemas";
-import { Badge, Button, EmptyState, ErrorBanner, Field, Input, Textarea } from "./ui";
+import { Badge, Button, EmptyState, ErrorBanner, Field, Input } from "./ui";
 import { styles } from "./styles.stylex";
 import { sx } from "../theme/sx";
 
@@ -16,6 +19,9 @@ export function NotesPanel(props: {
   members: WorldMember[];
   notes: NoteSummary[];
   onNotes: (notes: NoteSummary[]) => void;
+  /** For `[[Entry]]` links in notes and suggestions while writing. */
+  compendium?: CompendiumStore;
+  onOpenEntry?: (entryId: string) => void;
 }) {
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
   const [ownerId, setOwnerId] = createSignal<string | null>(null);
@@ -30,6 +36,20 @@ export function NotesPanel(props: {
   let loadVersion = 0;
   let editVersion = 0;
 
+  const entryLink = (name: string) =>
+    props.compendium ? findEntryByName(props.compendium.entries(), name)?.id : undefined;
+  const openLink = (event: MouseEvent) => {
+    const link = (event.target as Element).closest<HTMLElement>("[data-entry-id]");
+    if (link?.dataset.entryId) props.onOpenEntry?.(link.dataset.entryId);
+  };
+  const suggest = createLinkSuggest({
+    entries: () => props.compendium?.entries() ?? [],
+    typeName: (typeId) => props.compendium?.typeById(typeId)?.name,
+    setText: (text) => {
+      setContent(text);
+      changed();
+    },
+  });
   const isOwner = () => ownerId() === props.me.id;
   const canEdit = () => isOwner() || props.me.role === "dm" || editableByAll();
   const memberName = (memberId: string | null) =>
@@ -258,7 +278,8 @@ export function NotesPanel(props: {
                   <h3 {...sx(styles.h3)}>{title()}</h3>
                   <div
                     class={`ttrpg-note-markdown ${sx(noteStyles.markdown).class}`}
-                    innerHTML={renderNoteMarkdown(content() || "Empty note.")}
+                    innerHTML={renderNoteMarkdown(content() || "Empty note.", entryLink)}
+                    onClick={openLink}
                   />
                 </>
               }
@@ -308,18 +329,27 @@ export function NotesPanel(props: {
                   fallback={
                     <div
                       class={`ttrpg-note-markdown ${sx(noteStyles.markdown).class}`}
-                      innerHTML={renderNoteMarkdown(content() || "Empty note.")}
+                      innerHTML={renderNoteMarkdown(content() || "Empty note.", entryLink)}
+                      onClick={openLink}
                     />
                   }
                 >
-                  <Textarea
-                    value={content()}
-                    onInput={(value) => {
-                      setContent(value);
-                      changed();
-                    }}
-                    placeholder="Write anything..."
-                  />
+                  <div {...sx(noteStyles.field)}>
+                    <textarea
+                      {...sx(styles.textarea)}
+                      ref={suggest.ref}
+                      value={content()}
+                      placeholder="Write anything… [[ links a compendium entry."
+                      onInput={(event) => {
+                        setContent(event.currentTarget.value);
+                        changed();
+                        suggest.onInput();
+                      }}
+                      onKeyDown={(event) => suggest.onKeyDown(event)}
+                      onBlur={() => suggest.close()}
+                    />
+                    <suggest.Popover />
+                  </div>
                 </Show>
               </fieldset>
             </Show>
@@ -332,6 +362,7 @@ export function NotesPanel(props: {
 
 const noteStyles = stylex.create({
   list: { maxHeight: 160, overflowY: "auto" },
+  field: { position: "relative", display: "flex", flexDirection: "column" },
   editor: { borderWidth: 0, margin: 0, padding: 0, minWidth: 0 },
   markdown: {
     "--note-display": fonts.display,

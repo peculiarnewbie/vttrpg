@@ -93,7 +93,14 @@ export const bastionlandClassic: SheetLayout = {
           blocks: [
             bastionKnight,
             bastionBonds,
-            { id: "ability", type: "text", key: "ability", label: "Ability" },
+            // Typed by hand until a Knight is linked, which then shows its own Ability.
+            {
+              id: "ability",
+              type: "text",
+              key: "ability",
+              label: "Ability",
+              when: { key: "knight", is: "empty" },
+            },
           ],
         },
         {

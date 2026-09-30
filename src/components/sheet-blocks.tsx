@@ -10,6 +10,7 @@ import {
   onSettled,
 } from "solid-js";
 import {
+  blockShown,
   blockVariants,
   gridMode,
   resolveSpan,
@@ -37,6 +38,8 @@ import {
 import { searchEntries } from "../domain/compendium-search";
 import { colors, fonts, radii, skin } from "../theme/tokens.stylex";
 import { useTheme } from "../theme/theme-context";
+import { moveIndex } from "../client/sortable";
+import { DropLine, SortHandle, createSortable } from "./sortable";
 import { sx } from "../theme/sx";
 
 /*
@@ -336,6 +339,8 @@ const s = stylex.create({
   },
   maxInput: { width: "64px" },
   editRow: { display: "flex", alignItems: "center", gap: "3px" },
+  sortTable: { position: "relative" },
+  sortCell: { display: "flex", alignItems: "center", paddingBlock: 0 },
   rowButton: {
     flexShrink: 0,
     width: "20px",
@@ -1112,6 +1117,7 @@ export function ListEditor(props: {
     Object.fromEntries(props.block.columns.map((column) => [column.key, emptyCell(column)]));
   const template = () =>
     [
+      "14px",
       ...props.block.columns.map((column) =>
         column.kind === "check"
           ? "auto"
@@ -1123,9 +1129,18 @@ export function ListEditor(props: {
     ].join(" ");
   const label = (column: ListColumn, index: number) =>
     `${props.block.title ?? props.block.key} row ${index + 1} ${column.label || column.key}`;
+  const sortable = createSortable({
+    count: () => props.rows.length,
+    onMove: (from, to) => save(moveIndex(props.rows, from, to)),
+  });
   return (
     <>
-      <div {...sx(s.table)} style={{ "grid-template-columns": template() }}>
+      <div
+        {...sx(s.table, s.sortTable)}
+        style={{ "grid-template-columns": template() }}
+        ref={sortable.container}
+      >
+        <span {...sx(s.th)} />
         <For each={props.block.columns}>
           {(column) => <span {...sx(s.label, s.th)}>{column.label}</span>}
         </For>
@@ -1133,6 +1148,13 @@ export function ListEditor(props: {
         <For each={props.rows.map((_, i) => i)}>
           {(index) => (
             <>
+              <span {...sx(s.td, s.sortCell)} {...sortable.item(index)}>
+                <SortHandle
+                  sortable={sortable}
+                  index={index}
+                  label={`${props.block.title ?? props.block.key} row ${index + 1}`}
+                />
+              </span>
               <For each={props.block.columns}>
                 {(column) => {
                   const value = () => props.rows[index]?.[column.key];
@@ -1194,6 +1216,7 @@ export function ListEditor(props: {
             </>
           )}
         </For>
+        <DropLine sortable={sortable} />
       </div>
       <button {...sx(s.addRow)} onClick={() => save([...props.rows, blank()])}>
         + Add {props.block.title ? props.block.title.toLowerCase() : "row"}
@@ -1786,34 +1809,42 @@ function Group(props: { block: GroupBlock; ctx: Ctx }) {
       <Show when={props.block.title}>{(title) => <Heading text={title()} />}</Show>
       <For each={props.block.blocks}>
         {(child) => (
-          <div {...sx(s.blockCol, props.ctx.customize && s.editable)}>
-            <Show when={props.ctx.customize}>
-              <EditBar block={child} ctx={props.ctx} nested />
-            </Show>
-            <Leaf block={child} ctx={props.ctx} />
-          </div>
+          <Show when={shown(child, props.ctx)}>
+            <div {...sx(s.blockCol, props.ctx.customize && s.editable)}>
+              <Show when={props.ctx.customize}>
+                <EditBar block={child} ctx={props.ctx} nested />
+              </Show>
+              <Leaf block={child} ctx={props.ctx} />
+            </div>
+          </Show>
         )}
       </For>
     </div>
   );
 }
 
+/** Conditional blocks hide on the sheet but stay reachable while editing or styling. */
+const shown = (block: LayoutBlock, ctx: Ctx) =>
+  ctx.editing || ctx.customize || blockShown(block, ctx.values);
+
 function BlockCell(props: { block: LayoutBlock; ctx: Ctx }) {
   return (
-    <div
-      {...sx(s.blockCol, props.ctx.customize && s.editable)}
-      style={{ "grid-column": `span ${resolveSpan(props.block, props.ctx.mode)}` }}
-    >
-      <Show when={props.ctx.customize}>
-        <EditBar block={props.block} ctx={props.ctx} />
-      </Show>
-      <Show
-        when={props.block.type === "group" && (props.block as GroupBlock)}
-        fallback={<Leaf block={props.block as LeafBlock} ctx={props.ctx} />}
+    <Show when={shown(props.block, props.ctx)}>
+      <div
+        {...sx(s.blockCol, props.ctx.customize && s.editable)}
+        style={{ "grid-column": `span ${resolveSpan(props.block, props.ctx.mode)}` }}
       >
-        {(group) => <Group block={group()} ctx={props.ctx} />}
-      </Show>
-    </div>
+        <Show when={props.ctx.customize}>
+          <EditBar block={props.block} ctx={props.ctx} />
+        </Show>
+        <Show
+          when={props.block.type === "group" && (props.block as GroupBlock)}
+          fallback={<Leaf block={props.block as LeafBlock} ctx={props.ctx} />}
+        >
+          {(group) => <Group block={group()} ctx={props.ctx} />}
+        </Show>
+      </div>
+    </Show>
   );
 }
 

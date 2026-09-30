@@ -175,3 +175,20 @@ a {
   content: var(--note-ornament);
   margin-right: 0.4em;
 }
+
+/* [[Entry]] links rendered inside markdown (notes, entry descriptions). */
+.ttrpg-entry-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.ttrpg-entry-link:hover {
+  text-decoration-style: solid;
+}

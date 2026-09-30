@@ -722,6 +722,7 @@ export const styles = stylex.create({
     paddingTop: space.x3,
   },
   composerRow: { display: "flex", gap: space.x2, alignItems: "flex-end" },
+  composerField: { position: "relative", display: "flex", flexDirection: "column" },
   composerInput: {
     fontSize: fontSize.body,
     flex: 1,

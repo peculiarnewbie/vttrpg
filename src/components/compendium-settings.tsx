@@ -16,7 +16,9 @@ import type { SheetTemplate } from "../domain/schemas";
 import { ListColumnKind, type ListColumn } from "../domain/sheet-layout";
 import { colors, fonts, skin } from "../theme/tokens.stylex";
 import { sx } from "../theme/sx";
+import { moveIndex } from "../client/sortable";
 import type { CompendiumStore } from "./compendium";
+import { DropLine, SortHandle, createSortable } from "./sortable";
 import { styles } from "./styles.stylex";
 import { Button, ErrorBanner, Field, Input } from "./ui";
 
@@ -49,12 +51,24 @@ function ColumnsEditor(props: {
     props.onChange(
       props.columns.map((column, i) => (i === index ? { ...column, ...patch } : column)),
     );
+  const sortable = createSortable({
+    count: () => props.columns.length,
+    onMove: (from, to) => props.onChange(moveIndex(props.columns, from, to)),
+  });
   return (
-    <div {...sx(t.columns)}>
+    <div {...sx(t.columns)} ref={sortable.container}>
       <span {...sx(t.small)}>Columns</span>
       <For each={props.columns.map((_, i) => i)}>
         {(index) => (
-          <div {...sx(t.columnRow)}>
+          <div
+            {...sx(t.columnRow, sortable.dragging() === index && t.dragging)}
+            {...sortable.item(index)}
+          >
+            <SortHandle
+              sortable={sortable}
+              index={index}
+              label={`${props.label} column ${index + 1}`}
+            />
             <input
               {...sx(styles.input, t.compact)}
               aria-label={`${props.label} column ${index + 1} label`}
@@ -101,6 +115,7 @@ function ColumnsEditor(props: {
           </div>
         )}
       </For>
+      <DropLine sortable={sortable} />
       <button
         {...sx(t.add)}
         onClick={() => props.onChange([...props.columns, { key: "", label: "", kind: "text" }])}
@@ -127,6 +142,10 @@ function TypeEditor(props: {
     patch({
       fields: draft().fields.map((field, i) => (i === index ? { ...field, ...partial } : field)),
     });
+  const sortable = createSortable({
+    count: () => draft().fields.length,
+    onMove: (from, to) => patch({ fields: moveIndex(draft().fields, from, to) }),
+  });
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
     setError("");
@@ -179,8 +198,9 @@ function TypeEditor(props: {
           </Show>
         </Field>
       </div>
-      <div {...sx(t.fields)}>
+      <div {...sx(t.fields)} ref={sortable.container}>
         <div {...sx(t.fieldHead)}>
+          <span />
           <span>Field</span>
           <span>Key</span>
           <span>Kind</span>
@@ -190,8 +210,16 @@ function TypeEditor(props: {
           {(index) => {
             const field = () => draft().fields[index];
             return (
-              <div {...sx(t.fieldBlock)}>
+              <div
+                {...sx(t.fieldBlock, sortable.dragging() === index && t.dragging)}
+                {...sortable.item(index)}
+              >
                 <div {...sx(t.fieldRow)}>
+                  <SortHandle
+                    sortable={sortable}
+                    index={index}
+                    label={field()?.label || `field ${index + 1}`}
+                  />
                   <input
                     {...sx(styles.input, t.compact)}
                     aria-label={`Field ${index + 1} label`}
@@ -251,6 +279,7 @@ function TypeEditor(props: {
             );
           }}
         </For>
+        <DropLine sortable={sortable} />
         <button
           {...sx(t.add)}
           onClick={() =>
@@ -544,10 +573,11 @@ const t = stylex.create({
   },
   triple: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "8px" },
   id: { fontFamily: fonts.mono, fontSize: "12px", paddingBlock: "6px" },
-  fields: { display: "flex", flexDirection: "column", gap: "4px" },
+  fields: { position: "relative", display: "flex", flexDirection: "column", gap: "4px" },
+  dragging: { opacity: 0.4 },
   fieldHead: {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1.4fr) minmax(0, 1.2fr) 22px",
+    gridTemplateColumns: "16px minmax(0, 2fr) minmax(0, 1.4fr) minmax(0, 1.2fr) 22px",
     gap: "6px",
     fontSize: "11px",
     color: colors.textMuted,
@@ -555,11 +585,12 @@ const t = stylex.create({
   fieldBlock: { display: "flex", flexDirection: "column", gap: "4px" },
   fieldRow: {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1.4fr) minmax(0, 1.2fr) 22px",
+    gridTemplateColumns: "16px minmax(0, 2fr) minmax(0, 1.4fr) minmax(0, 1.2fr) 22px",
     gap: "6px",
     alignItems: "center",
   },
   columns: {
+    position: "relative",
     display: "flex",
     flexDirection: "column",
     gap: "4px",
@@ -571,7 +602,7 @@ const t = stylex.create({
   },
   columnRow: {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1.4fr) minmax(0, 1fr) 22px",
+    gridTemplateColumns: "16px minmax(0, 2fr) minmax(0, 1.4fr) minmax(0, 1fr) 22px",
     gap: "6px",
     alignItems: "center",
   },

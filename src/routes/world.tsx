@@ -502,6 +502,8 @@ export default function WorldPage() {
                     onLoadMore={() => void loadMore()}
                     onSend={sendChat}
                     onRollDice={rollDice}
+                    compendium={compendium}
+                    onOpenEntry={setOpenEntry}
                   />
                 </section>
                 <aside
@@ -565,6 +567,8 @@ export default function WorldPage() {
                         members={members()}
                         notes={notes()}
                         onNotes={setNotes}
+                        compendium={compendium}
+                        onOpenEntry={setOpenEntry}
                       />
                     </div>
                     <Show when={tab() === "compendium"}>
@@ -574,6 +578,14 @@ export default function WorldPage() {
                         compendium={compendium}
                         onRoll={(label, dice) => rollLabelled(dice, label)}
                         onSetup={() => navigate(`/worlds/${params.id}/settings?section=compendium`)}
+                        onShare={(entry) =>
+                          sendChat({
+                            content: `[[${entry.name}]]`,
+                            kind: "ic",
+                            visibility: "public",
+                            recipientMemberIds: [],
+                          })
+                        }
                       />
                     </Show>
                   </div>
@@ -596,6 +608,8 @@ export default function WorldPage() {
                   entry={entry()}
                   type={type()}
                   onRoll={(label, dice) => rollLabelled(dice, label)}
+                  entries={compendium.entries()}
+                  onOpenEntry={setOpenEntry}
                 />
               )}
             </Show>

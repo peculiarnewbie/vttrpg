@@ -9,6 +9,7 @@ import {
   duplicateBlock,
   findBlock,
   insertBlock,
+  layoutKeys,
   type BlockDestination,
   moveBlock,
   moveBlockTo,
@@ -30,6 +31,8 @@ import {
   type SheetValues,
 } from "../domain/sheet-layout";
 import { layoutLimitsError } from "../domain/template-io";
+import { moveIndex } from "../client/sortable";
+import { DropLine, SortHandle, createSortable } from "./sortable";
 import { colors, fonts, radii, skin } from "../theme/tokens.stylex";
 import { sx } from "../theme/sx";
 import { SheetBlocks } from "./sheet-blocks";
@@ -224,7 +227,8 @@ const e = stylex.create({
   },
   pair: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px" },
   field: { display: "flex", flexDirection: "column", gap: "2px", minWidth: 0, fontSize: "11px" },
-  items: { display: "grid", gap: "4px", alignItems: "center" },
+  items: { position: "relative", display: "grid", gap: "4px", alignItems: "center" },
+  handleCell: { display: "flex", alignItems: "center", alignSelf: "stretch" },
   itemHead: { fontSize: "10px", color: colors.textMuted },
   small: {
     height: "26px",
@@ -285,7 +289,11 @@ function ItemRows<T extends Record<string, unknown>>(props: {
   make: () => T;
 }) {
   const template = () =>
-    [...props.columns.map((c) => c.width ?? "minmax(0, 1fr)"), "22px"].join(" ");
+    ["16px", ...props.columns.map((c) => c.width ?? "minmax(0, 1fr)"), "22px"].join(" ");
+  const sortable = createSortable({
+    count: () => props.items.length,
+    onMove: (from, to) => props.onChange(moveIndex(props.items, from, to)),
+  });
   const set = (index: number, key: string, raw: string, kind?: string) =>
     props.onChange(
       props.items.map((item, i) => {
@@ -302,7 +310,12 @@ function ItemRows<T extends Record<string, unknown>>(props: {
   return (
     <div {...sx(e.column)}>
       <span {...sx(e.itemHead)}>{props.title}</span>
-      <div {...sx(e.items)} style={{ "grid-template-columns": template() }}>
+      <div
+        {...sx(e.items)}
+        style={{ "grid-template-columns": template() }}
+        ref={sortable.container}
+      >
+        <span />
         <For each={props.columns}>
           {(column) => <span {...sx(e.itemHead)}>{column.label}</span>}
         </For>
@@ -310,6 +323,13 @@ function ItemRows<T extends Record<string, unknown>>(props: {
         <For each={props.items.map((_, i) => i)}>
           {(index) => (
             <>
+              <span {...sx(e.handleCell)} {...sortable.item(index)}>
+                <SortHandle
+                  sortable={sortable}
+                  index={index}
+                  label={`${props.title} ${index + 1}`}
+                />
+              </span>
               <For each={props.columns}>
                 {(column) => (
                   <Show
@@ -355,6 +375,7 @@ function ItemRows<T extends Record<string, unknown>>(props: {
             </>
           )}
         </For>
+        <DropLine sortable={sortable} />
       </div>
       <button
         {...sx(styles.button, styles.buttonSmall)}
@@ -386,6 +407,8 @@ function Inspector(props: {
   entryTypes: readonly EntryType[];
   /** The layout's lists, for an entry block's "fill" targets. */
   lists: readonly { key: string; title?: string }[];
+  /** Every value key in the layout, for "only show when". */
+  keys: readonly string[];
 }) {
   const b = () => props.block;
   const patch = (partial: Record<string, unknown>) =>
@@ -466,6 +489,41 @@ function Inspector(props: {
           </select>
         </label>
       </Show>
+      <div {...sx(e.pair)}>
+        <label {...sx(e.field)}>
+          Only show when
+          <select
+            {...sx(styles.select, e.small)}
+            value={b().when?.key ?? ""}
+            onChange={(event) => {
+              const key = event.currentTarget.value;
+              patch({ when: key ? { key, is: b().when?.is ?? "empty" } : undefined });
+            }}
+          >
+            <option value="">Always shown</option>
+            <For each={props.keys}>{(key) => <option value={key}>{key}</option>}</For>
+          </select>
+        </label>
+        <Show when={b().when}>
+          {(when) => (
+            <label {...sx(e.field)}>
+              is
+              <select
+                {...sx(styles.select, e.small)}
+                value={when().is}
+                onChange={(event) =>
+                  patch({
+                    when: { key: when().key, is: event.currentTarget.value as "empty" | "filled" },
+                  })
+                }
+              >
+                <option value="empty">empty</option>
+                <option value="filled">filled in</option>
+              </select>
+            </label>
+          )}
+        </Show>
+      </div>
       <Switch>
         <Match when={b().type === "heading" && b()}>
           {(block) => (
@@ -1270,6 +1328,9 @@ export function LayoutEditor(props: {
                 entryTypes={props.entryTypes ?? []}
                 lists={allBlocks(props.layout).flatMap((item) =>
                   item.type === "list" ? [{ key: item.key, title: item.title }] : [],
+                )}
+                keys={[...new Set(layoutKeys(props.layout))].filter(
+                  (key) => (current() as { key?: string }).key !== key,
                 )}
                 onUngroup={() => ungroup(current().id)}
                 onChange={(next) =>

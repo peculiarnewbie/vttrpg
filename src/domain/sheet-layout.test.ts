@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 import {
   SheetLayout,
+  blockShown,
   gridMode,
   resolveSpan,
   resolveTrackerDisplay,
@@ -67,5 +68,23 @@ describe("sheet layouts", () => {
       pages: [{ id: "p", title: "P", blocks: [{ id: "b", type: "heading", text: "H", span: 7 }] }],
     };
     expect(Schema.decodeUnknownResult(SheetLayout)(bad)._tag).toBe("Failure");
+  });
+});
+
+describe("block conditions", () => {
+  const block = { when: { key: "knight", is: "empty" as const } };
+  it("shows blocks without a condition", () => {
+    expect(blockShown({}, {})).toBe(true);
+  });
+  it("treats blank strings, empty lists, and false as empty", () => {
+    for (const value of [undefined, "", "  ", [], false])
+      expect(blockShown(block, { knight: value })).toBe(true);
+    for (const value of ["ent_1", 0, 3, ["a"], true])
+      expect(blockShown(block, { knight: value })).toBe(false);
+  });
+  it("inverts for filled", () => {
+    const filled = { when: { key: "class", is: "filled" as const } };
+    expect(blockShown(filled, { class: "Wizard" })).toBe(true);
+    expect(blockShown(filled, {})).toBe(false);
   });
 });

@@ -3,6 +3,9 @@ import { For, Show, createEffect, createSignal } from "solid-js";
 import { showDiceTotals } from "../client/dice-display";
 import { api } from "../client/api";
 import { parseRollCommand } from "../domain/dice";
+import { findEntryByName, splitEntryLinks } from "../domain/entry-links";
+import type { CompendiumStore } from "./compendium";
+import { createLinkSuggest } from "./entry-link-suggest";
 import type { ChatMessage, Visibility, WorldMember } from "../domain/schemas";
 import { Avatar, Button } from "./ui";
 import { styles } from "./styles.stylex";
@@ -51,7 +54,45 @@ export function DiceView(props: { message: ChatMessage }) {
   );
 }
 
-function MessageCard(props: { message: ChatMessage; me: WorldMember; worldId: string }) {
+/** Message text with `[[Entry]]` links the reader can open; others stay as plain names. */
+function MessageText(props: {
+  content: string;
+  compendium?: CompendiumStore;
+  onOpenEntry?: (entryId: string) => void;
+}) {
+  return (
+    <For each={splitEntryLinks(props.content)}>
+      {(part) => (
+        <Show when={part.kind === "link" && part} fallback={(part as { text: string }).text}>
+          {(link) => (
+            <Show
+              when={props.compendium && findEntryByName(props.compendium.entries(), link().name)}
+              fallback={link().name}
+            >
+              {(entry) => (
+                <button
+                  type="button"
+                  class="ttrpg-entry-link"
+                  onClick={() => props.onOpenEntry?.(entry().id)}
+                >
+                  {entry().name}
+                </button>
+              )}
+            </Show>
+          )}
+        </Show>
+      )}
+    </For>
+  );
+}
+
+function MessageCard(props: {
+  message: ChatMessage;
+  me: WorldMember;
+  worldId: string;
+  compendium?: CompendiumStore;
+  onOpenEntry?: (entryId: string) => void;
+}) {
   const message = props.message;
   const avatarSrc = () =>
     message.authorAvatarKey && message.characterId
@@ -92,7 +133,11 @@ function MessageCard(props: { message: ChatMessage; me: WorldMember; worldId: st
             </Show>
           </div>
           <div {...sx(styles.messageBody, message.kind === "ooc" && styles.messageQuiet)}>
-            {message.content}
+            <MessageText
+              content={message.content}
+              compendium={props.compendium}
+              onOpenEntry={props.onOpenEntry}
+            />
           </div>
           <DiceView message={message} />
         </div>
@@ -118,6 +163,9 @@ export function Chat(props: {
     recipientMemberIds: string[];
   }) => void;
   onRollDice: (notation: string, visibility: Visibility, recipientMemberIds: string[]) => void;
+  /** For `[[Entry]]` links in messages and suggestions while typing. */
+  compendium?: CompendiumStore;
+  onOpenEntry?: (entryId: string) => void;
 }) {
   let scrollRef: HTMLDivElement | undefined;
   let pendingPreserve: number | null = null;
@@ -216,6 +264,12 @@ export function Chat(props: {
     setText("");
   };
 
+  const suggest = createLinkSuggest({
+    entries: () => props.compendium?.entries() ?? [],
+    typeName: (typeId) => props.compendium?.typeById(typeId)?.name,
+    setText,
+  });
+
   const otherMembers = () => props.members.filter((member) => member.id !== props.me.id);
   const pendingCount = () => Object.values(pending()).reduce((total, count) => total + count, 0);
   const pendingNotation = () =>
@@ -284,6 +338,8 @@ export function Chat(props: {
                   message={props.messages[item.index]}
                   me={props.me}
                   worldId={props.worldId}
+                  compendium={props.compendium}
+                  onOpenEntry={props.onOpenEntry}
                 />
               </div>
             )}
@@ -366,18 +422,27 @@ export function Chat(props: {
             </Button>
           </div>
         </Show>
-        <textarea
-          {...sx(styles.input, styles.composerInput, restricted() && styles.chatAudienceInput)}
-          value={text()}
-          placeholder="Speak, describe, or /roll 2d6 …"
-          onInput={(event) => setText(event.currentTarget.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              submit(event);
-            }
-          }}
-        />
+        <div {...sx(styles.composerField)}>
+          <textarea
+            {...sx(styles.input, styles.composerInput, restricted() && styles.chatAudienceInput)}
+            ref={suggest.ref}
+            value={text()}
+            placeholder="Speak, describe, [[link an entry]], or /roll 2d6 …"
+            onInput={(event) => {
+              setText(event.currentTarget.value);
+              suggest.onInput();
+            }}
+            onBlur={() => suggest.close()}
+            onKeyDown={(event) => {
+              if (suggest.onKeyDown(event)) return;
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                submit(event);
+              }
+            }}
+          />
+          <suggest.Popover above />
+        </div>
         <div {...sx(styles.composerControls)}>
           <Button
             small

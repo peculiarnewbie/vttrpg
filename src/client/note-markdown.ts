@@ -14,17 +14,27 @@ const escapeHtml = (text: string) =>
     }
   });
 
-function inline(text: string): string {
-  const pattern = /`([^`]+)`|\*\*([^*]+)\*\*|\*([^*]+)\*|\[([^\]]+)\]\(([^\s)]+)\)/g;
+/** Resolves `[[Entry name]]` to an entry id the reader may open, or undefined. */
+export type EntryLinkResolver = (name: string) => string | undefined;
+
+function inline(text: string, entryLink?: EntryLinkResolver): string {
+  const pattern =
+    /\[\[([^[\]\n]{1,120})\]\]|`([^`]+)`|\*\*([^*]+)\*\*|\*([^*]+)\*|\[([^\]]+)\]\(([^\s)]+)\)/g;
   let result = "";
   let offset = 0;
   for (const match of text.matchAll(pattern)) {
     result += escapeHtml(text.slice(offset, match.index));
-    if (match[1] !== undefined) result += `<code>${escapeHtml(match[1])}</code>`;
-    else if (match[2] !== undefined) result += `<strong>${escapeHtml(match[2])}</strong>`;
-    else if (match[3] !== undefined) result += `<em>${escapeHtml(match[3])}</em>`;
-    else if (/^https?:\/\//i.test(match[5]) || /^mailto:/i.test(match[5])) {
-      result += `<a href="${escapeHtml(match[5])}" rel="noreferrer noopener">${escapeHtml(match[4])}</a>`;
+    if (match[1] !== undefined) {
+      const name = match[1].trim();
+      const id = entryLink?.(name);
+      result += id
+        ? `<button type="button" class="ttrpg-entry-link" data-entry-id="${escapeHtml(id)}">${escapeHtml(name)}</button>`
+        : `<span class="ttrpg-entry-missing">${escapeHtml(name)}</span>`;
+    } else if (match[2] !== undefined) result += `<code>${escapeHtml(match[2])}</code>`;
+    else if (match[3] !== undefined) result += `<strong>${escapeHtml(match[3])}</strong>`;
+    else if (match[4] !== undefined) result += `<em>${escapeHtml(match[4])}</em>`;
+    else if (/^https?:\/\//i.test(match[6]) || /^mailto:/i.test(match[6])) {
+      result += `<a href="${escapeHtml(match[6])}" rel="noreferrer noopener">${escapeHtml(match[5])}</a>`;
     } else result += escapeHtml(match[0]);
     offset = match.index + match[0].length;
   }
@@ -32,7 +42,7 @@ function inline(text: string): string {
 }
 
 // All user text is escaped; only the tags above and below can become HTML.
-export function renderNoteMarkdown(source: string): string {
+export function renderNoteMarkdown(source: string, entryLink?: EntryLinkResolver): string {
   const lines = source.replace(/\r\n?/g, "\n").split("\n");
   const output: string[] = [];
   let index = 0;
@@ -45,7 +55,7 @@ export function renderNoteMarkdown(source: string): string {
       output.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`);
     } else if (/^#{1,6} /.test(line)) {
       const level = line.indexOf(" ");
-      output.push(`<h${level}>${inline(line.slice(level + 1))}</h${level}>`);
+      output.push(`<h${level}>${inline(line.slice(level + 1), entryLink)}</h${level}>`);
     } else if (/^(?:[-*] |\d+\. )/.test(line)) {
       const ordered = /^\d/.test(line);
       const pattern = ordered ? /^\d+\. / : /^[-*] /;
@@ -53,7 +63,7 @@ export function renderNoteMarkdown(source: string): string {
       while (index < lines.length && pattern.test(lines[index])) items.push(lines[index++]);
       const tag = ordered ? "ol" : "ul";
       output.push(
-        `<${tag}>${items.map((item) => `<li>${inline(item.replace(pattern, ""))}</li>`).join("")}</${tag}>`,
+        `<${tag}>${items.map((item) => `<li>${inline(item.replace(pattern, ""), entryLink)}</li>`).join("")}</${tag}>`,
       );
     } else if (line.trim()) {
       const paragraph = [line];
@@ -63,7 +73,7 @@ export function renderNoteMarkdown(source: string): string {
         !/^(?:#|[-*] |\d+\. |```)/.test(lines[index])
       )
         paragraph.push(lines[index++]);
-      output.push(`<p>${paragraph.map(inline).join("<br>")}</p>`);
+      output.push(`<p>${paragraph.map((line) => inline(line, entryLink)).join("<br>")}</p>`);
     }
   }
   return output.join("\n");

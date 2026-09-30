@@ -36,12 +36,21 @@ export type BlockVariant<T extends BlockType> = (typeof blockVariants)[T][number
 
 const Span = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: GRID_COLUMNS }));
 
+/** Show a block only while a value is empty or filled (hidden blocks still show while editing). */
+export const BlockCondition = Schema.Struct({
+  key: Schema.String,
+  is: Schema.Literals(["empty", "filled"]),
+});
+export type BlockCondition = typeof BlockCondition.Type;
+
 const common = {
   id: Schema.String,
   /** Columns out of 6 in the side panel; defaults to the full row. */
   span: Schema.optional(Span),
   /** Columns out of 6 when the sheet is shown wide; defaults to `span`. */
   wide: Schema.optional(Span),
+  /** e.g. a free-text Ability only until a Knight is linked. */
+  when: Schema.optional(BlockCondition),
 };
 const variantOf = <T extends BlockType>(type: T) =>
   Schema.optional(Schema.Literals(blockVariants[type] as unknown as [string, ...string[]]));
@@ -237,6 +246,17 @@ export const resolveSpan = (block: { span?: number; wide?: number }, mode: GridM
     : mode === "wide"
       ? (block.wide ?? block.span ?? GRID_COLUMNS)
       : (block.span ?? GRID_COLUMNS);
+
+const filled = (value: SheetValues[string]) =>
+  typeof value === "string"
+    ? value.trim() !== ""
+    : Array.isArray(value)
+      ? value.length > 0
+      : value !== undefined && value !== false;
+
+/** Whether a block's `when` condition holds for these values (always true without one). */
+export const blockShown = (block: { when?: BlockCondition }, values: SheetValues) =>
+  !block.when || filled(values[block.when.key]) === (block.when.is === "filled");
 
 /** Every tracker item in a layout, groups included, in sheet order. */
 export const layoutTrackers = (layout: SheetLayout): TrackerItem[] =>
