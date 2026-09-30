@@ -3,6 +3,7 @@ import type { CompendiumEntry, EntryType } from "./compendium";
 import type { ListColumn } from "./sheet-layout";
 import {
   entryFieldsForDisplay,
+  revOf,
   rowFromEntry,
   rowsFromEntryList,
   sourceOf,
@@ -42,6 +43,27 @@ it("copies only matching columns, coerces numbers, uses the entry name and recor
   expect(sourceOf({})).toBeUndefined();
   expect(sourceOf({ _entry: 1 })).toBeUndefined();
   expect(sourceOf({ _entry: "" })).toBeUndefined();
+});
+
+it("records revisions on copies and nested list rows, ignoring derived columns", () => {
+  const withRev = {
+    ...entry,
+    rev: 7,
+    fields: { ...entry.fields, total: 99, property: [{ name: "Rope", total: 3, _rev: 1 }] },
+  };
+  const withDerived: ListColumn[] = [
+    ...columns,
+    { key: "total", label: "Total", kind: "derived", expr: "@row.shots + 1" },
+  ];
+  expect(rowFromEntry(withRev, withDerived)).toEqual({ ...rowFromEntry(entry, columns), _rev: 7 });
+  expect(rowsFromEntryList(withRev, "property", withDerived)).toEqual([
+    { name: "Rope", _entry: entry.id, _rev: 7 },
+  ]);
+  expect(revOf(rowFromEntry(withRev, withDerived))).toBe(7);
+  expect(revOf({ _rev: 0 })).toBe(0);
+  expect(revOf({})).toBeUndefined();
+  for (const _rev of ["7", true, ["7"], -1, 1.5, Infinity, NaN])
+    expect(revOf({ _rev })).toBeUndefined();
 });
 
 it("skips mismatches, blank numbers and non-finite numbers, keeping valid zero values", () => {

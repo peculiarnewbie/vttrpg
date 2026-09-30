@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import type { CompendiumEntry } from "./compendium";
+import type { CompendiumEntry, IndexRow } from "./compendium";
 import { indexEntries, searchEntries, searchIndex } from "./compendium-search";
 
 const entry = (id: string, name: string, tags: string[] = [], body = ""): CompendiumEntry => ({
@@ -62,9 +62,26 @@ it("combines type and exact normalized tag filters, with alphabetical ties and e
   expect(entries[0].id).toBe("z");
 });
 
-it("can reuse one index for a full world of 2000 entries", () => {
-  const index = indexEntries(Array.from({ length: 2000 }, (_, n) => entry(String(n), `Item ${n}`)));
-  expect(searchIndex(index, "Item 1999").map((entry) => entry.id)).toEqual(["1999"]);
+it("can reuse one index for a full world of 10000 entries", () => {
+  const index = indexEntries(
+    Array.from({ length: 10000 }, (_, n) => entry(String(n), `Item ${n}`)),
+  );
+  expect(searchIndex(index, "Item 9999").map((entry) => entry.id)).toEqual(["9999"]);
   expect(searchIndex(index, "missing")).toEqual([]);
-  expect(searchIndex(index, "")).toHaveLength(2000);
+  expect(searchIndex(index, "")).toHaveLength(10000);
+});
+
+it("searches index rows without bodies, preserving their type and ranking", () => {
+  const rows: IndexRow[] = [
+    entry("tag", "Knife", ["sword"]),
+    entry("word", "Silver sword"),
+    entry("prefix", "Swordfish"),
+    { ...entry("exact", "Sword"), typeId: "weapon" },
+  ].map(({ body: _body, fields: _fields, ...row }) => ({ ...row, rev: 1 }));
+  const found: IndexRow[] = searchEntries(rows, "sword");
+  expect(found.map((row) => row.id)).toEqual(["exact", "prefix", "word", "tag"]);
+  expect(searchIndex(indexEntries(rows), "sword", { typeId: "weapon" })).toEqual([rows[3]]);
+  expect(searchEntries(rows, "missing")).toEqual([]);
+  expect(found[0]).toBe(rows[3]);
+  expect(searchEntries(rows, "sword", { tag: "SWORD" })).toEqual([rows[0]]);
 });

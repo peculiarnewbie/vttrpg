@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { CompendiumEntry } from "./compendium";
-import { findEntryByName, insertLink, linkQueryAt, splitEntryLinks } from "./entry-links";
+import type { CompendiumEntry, IndexRow } from "./compendium";
+import {
+  findEntryByName,
+  formatRefLink,
+  insertLink,
+  linkQueryAt,
+  normalizeName,
+  splitEntryLinks,
+} from "./entry-links";
 
 const entry = (id: string, name: string): CompendiumEntry => ({
   id,
@@ -33,6 +40,43 @@ describe("entry links", () => {
     expect(findEntryByName(entries, "the example knight")?.id).toBe("a");
     expect(findEntryByName(entries, "Missing")).toBeUndefined();
     expect(findEntryByName(entries, "  ")).toBeUndefined();
+    const rows: IndexRow[] = entries.map(({ body: _body, fields: _fields, ...row }) => ({
+      ...row,
+      rev: 1,
+    }));
+    const found: IndexRow | undefined = findEntryByName(rows, "the example knight");
+    expect(found).toBe(rows[0]);
+    expect(normalizeName("  ÉXAMPLE  Knight ")).toBe("example knight");
+  });
+
+  it("splits id references and treats malformed references as names after ref:", () => {
+    expect(
+      splitEntryLinks("[[ref:world/spell/shield| Shield ]] [[ref:ent_abc|Old]] [[ref:bad]]"),
+    ).toEqual([
+      { kind: "ref", id: "world/spell/shield", label: "Shield" },
+      { kind: "text", text: " " },
+      { kind: "link", name: "ent_abc|Old" },
+      { kind: "text", text: " " },
+      { kind: "link", name: "bad" },
+    ]);
+    expect(splitEntryLinks("[[ref:world//shield|Shield]]")).toEqual([
+      { kind: "link", name: "world//shield|Shield" },
+    ]);
+  });
+
+  it("formats safe reference labels and supports ids longer than name links", () => {
+    expect(formatRefLink("world/spell/shield", "[Shield]| spell")).toBe(
+      "[[ref:world/spell/shield|Shield spell]]",
+    );
+    const id = Array(3).fill("x".repeat(60)).join("/");
+    const link = formatRefLink(id, "Shield");
+    expect(splitEntryLinks(link)).toEqual([{ kind: "ref", id, label: "Shield" }]);
+    expect(splitEntryLinks("[[" + "x".repeat(121) + "]]")).toEqual([
+      { kind: "text", text: "[[" + "x".repeat(121) + "]]" },
+    ]);
+    expect(splitEntryLinks(formatRefLink("world/item/empty", ""))).toEqual([
+      { kind: "ref", id: "world/item/empty", label: "" },
+    ]);
   });
 
   it("detects a link being typed and completes it", () => {
@@ -46,5 +90,10 @@ describe("entry links", () => {
     });
     // Closing brackets already typed after the caret are not doubled.
     expect(insertLink("[[Ex]]", 4, 0, "Example").text).toBe("[[Example]]");
+    const ref = formatRefLink("world/knight/example", "Example");
+    expect(insertLink("Meet [[Ex]] now", 9, 5, "Example", "world/knight/example")).toEqual({
+      text: "Meet " + ref + " now",
+      caret: 5 + ref.length,
+    });
   });
 });

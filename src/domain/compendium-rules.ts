@@ -5,6 +5,7 @@ import {
   type SaveEntryInput,
 } from "./compendium";
 import type { ListColumnKind } from "./sheet-layout";
+import { parseEntryId, WORLD_SOURCE } from "./entry-id";
 
 const slug = /^[a-z0-9][a-z0-9_-]{0,39}$/;
 const jsonBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
@@ -65,6 +66,11 @@ const matchesKind = (value: unknown, kind: ListColumnKind | "longtext"): boolean
 
 export const entryError = (entry: SaveEntryInput, type: EntryType): string | undefined => {
   if (entry.typeId !== type.id) return "Entry type does not match";
+  if (entry.id !== undefined) {
+    const parts = parseEntryId(entry.id);
+    if (!parts || parts.source !== WORLD_SOURCE || parts.typeId !== entry.typeId)
+      return "Entry id must be world/<type>/<slug> with the entry's own type";
+  }
   if (!entry.name.trim() || entry.name.trim().length > compendiumLimits.name)
     return "Entry name must be 1–120 characters";
   if (entry.tags.length > compendiumLimits.tags || entry.tags.some((tag) => tag.length > 40))
@@ -90,6 +96,11 @@ export const entryError = (entry: SaveEntryInput, type: EntryType): string | und
           if (typeof cell !== "string") return "Row _entry must be a string";
           continue;
         }
+        if (columnKey === "_rev") {
+          if (typeof cell !== "number" || !Number.isSafeInteger(cell) || cell < 0)
+            return "Row _rev must be a non-negative integer";
+          continue;
+        }
         const column = field.columns?.find((candidate) => candidate.key === columnKey);
         if (!column) return `Unknown column in ${field.label}: ${columnKey}`;
         if (!matchesKind(cell, column.kind)) return `Invalid value for column ${column.label}`;
@@ -105,7 +116,8 @@ export const packError = (
 ): string | undefined => {
   if (jsonBytes(pack) > compendiumLimits.packBytes) return "Pack JSON must be at most 4 MB";
   if (pack.types.length > compendiumLimits.types) return "A pack can have at most 50 entry types";
-  if (pack.entries.length > compendiumLimits.entries) return "A pack can have at most 2000 entries";
+  if (pack.entries.length > compendiumLimits.entries)
+    return `A pack can have at most ${compendiumLimits.entries} entries`;
   const types = new Map(existingTypes.map((type) => [type.id, type]));
   const typeIds = new Set<string>();
   for (const type of pack.types) {
@@ -122,7 +134,10 @@ export const packError = (
     entryIds.add(entry.id);
     const type = types.get(entry.typeId);
     if (!type) return `Unknown entry type: ${entry.typeId}`;
-    const error = entryError(entry, type);
+    if (jsonBytes(entry) > compendiumLimits.entryBytes) return "Entry JSON must be at most 16 KB";
+    // Legacy ids are import aliases, rather than ids a world writes today.
+    const { id: _id, ...input } = entry;
+    const error = entryError(pack.version === 1 ? input : entry, type);
     if (error) return error;
   }
   return undefined;
