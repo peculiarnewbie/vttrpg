@@ -3,8 +3,8 @@ import { For, Show, createEffect, createSignal } from "solid-js";
 import { showDiceTotals } from "../client/dice-display";
 import { api } from "../client/api";
 import { MAX_DICE, parseRollCommand } from "../domain/dice";
-import { findEntryByName, splitEntryLinks } from "../domain/entry-links";
-import type { CompendiumStore } from "./compendium";
+import { splitEntryLinks } from "../domain/entry-links";
+import { linkedRow, type CompendiumStore } from "./compendium";
 import { createLinkSuggest } from "./entry-link-suggest";
 import type { ChatMessage, Visibility, WorldMember } from "../domain/schemas";
 import { Avatar, Button } from "./ui";
@@ -32,23 +32,26 @@ function MessageText(props: {
   return (
     <For each={splitEntryLinks(props.content)}>
       {(part) => (
-        <Show when={part.kind === "link" && part} fallback={(part as { text: string }).text}>
-          {(link) => (
-            <Show
-              when={props.compendium && findEntryByName(props.compendium.entries(), link().name)}
-              fallback={link().name}
-            >
-              {(entry) => (
-                <button
-                  type="button"
-                  class="ttrpg-entry-link"
-                  onClick={() => props.onOpenEntry?.(entry().id)}
-                >
-                  {entry().name}
-                </button>
-              )}
-            </Show>
-          )}
+        <Show when={part.kind !== "text" && part} fallback={(part as { text: string }).text}>
+          {(link) => {
+            const target = () =>
+              link().kind === "ref"
+                ? { id: (link() as { id: string }).id, name: (link() as { label: string }).label }
+                : { name: (link() as { name: string }).name };
+            return (
+              <Show when={linkedRow(props.compendium, target())} fallback={target().name}>
+                {(row) => (
+                  <button
+                    type="button"
+                    class="ttrpg-entry-link"
+                    onClick={() => props.onOpenEntry?.(row().id)}
+                  >
+                    {row().name}
+                  </button>
+                )}
+              </Show>
+            );
+          }}
         </Show>
       )}
     </For>
@@ -234,7 +237,7 @@ export function Chat(props: {
   };
 
   const suggest = createLinkSuggest({
-    entries: () => props.compendium?.entries() ?? [],
+    entries: () => props.compendium?.rows() ?? [],
     typeName: (typeId) => props.compendium?.typeById(typeId)?.name,
     setText,
   });

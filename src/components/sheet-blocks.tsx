@@ -30,10 +30,13 @@ import {
   type TrackerItem,
   type VariantOverrides,
 } from "../domain/sheet-layout";
-import type { CompendiumEntry, EntryType } from "../domain/compendium";
+import type { CompendiumEntry, EntryType, IndexRow } from "../domain/compendium";
+import type { CompendiumStore } from "../client/compendium-store";
+import { applyRowUpdate, rowUpdate, type RowUpdate } from "../domain/entry-diff";
 import {
   entryFieldsForDisplay,
   rowFromEntry,
+  revOf,
   rowsFromEntryList,
   sourceOf,
 } from "../domain/compendium-rows";
@@ -528,6 +531,21 @@ const s = stylex.create({
     cursor: "pointer",
   },
   entryLinked: { fontWeight: "inherit" },
+  linkedCell: { display: "inline-flex", alignItems: "baseline", gap: "4px" },
+  updateBadge: {
+    padding: "0 3px",
+    ...hair,
+    borderColor: colors.accent,
+    borderRadius: skin.controlRadius,
+    backgroundColor: { default: colors.accentMuted, ":hover": colors.surfaceHover },
+    color: colors.accent,
+    fontSize: "11px",
+    lineHeight: 1.3,
+    cursor: "pointer",
+  },
+  review: { flexDirection: "column", alignItems: "stretch", marginTop: "4px" },
+  change: { display: "block" },
+  reviewActions: { display: "flex", gap: "6px" },
   entrySpacer: { flex: 1 },
   entryField: { display: "flex", flexDirection: "column", gap: "1px" },
   entryText: { fontFamily: fonts.body, whiteSpace: "pre-wrap", lineHeight: 1.35 },
@@ -651,12 +669,14 @@ export type RollRow = { key: string; index: number };
 /** The character a roll's `@refs` resolve against, on the server. */
 export type SheetRoll = { characterId: string; row?: RollRow };
 
-/** What the sheet reads from the world's compendium (src/client/compendium.ts provides it). */
-export type CompendiumLookup = {
-  entry: (id: string) => CompendiumEntry | undefined;
-  typeById: (id: string) => EntryType | undefined;
-  entriesOfType: (typeId: string) => readonly CompendiumEntry[];
-};
+/**
+ * What the sheet reads from the world's compendium (src/client/compendium.ts
+ * provides it): names and revisions from the index, fields when loaded.
+ */
+export type CompendiumLookup = Pick<
+  CompendiumStore,
+  "entry" | "missing" | "row" | "rowsOfType" | "typeById" | "load"
+>;
 
 const scalar = (value: SheetValues[string]) =>
   typeof value === "string" || typeof value === "number" ? value : "";
@@ -1351,8 +1371,49 @@ function List(props: { block: Extract<LeafBlock, { type: "list" }>; variant: str
   const linked = (index: number) => {
     const row = rows()[index];
     const id = row && sourceOf(row);
-    return id && props.ctx.onOpenEntry && props.ctx.compendium?.entry(id) ? id : undefined;
+    return id && props.ctx.onOpenEntry && props.ctx.compendium?.row(id) ? id : undefined;
   };
+  // The entry changed since the row was copied: offered, never applied on its own.
+  const stale = (index: number) => {
+    const row = rows()[index];
+    const id = row && sourceOf(row);
+    const copied = row && revOf(row);
+    const current = id ? props.ctx.compendium?.row(id)?.rev : undefined;
+    return !props.ctx.readOnly && copied !== undefined && current !== undefined && current > copied;
+  };
+  const [review, setReview] = createSignal<{
+    index: number;
+    entry: CompendiumEntry;
+    update: RowUpdate;
+  } | null>(null);
+  const openReview = async (index: number) => {
+    const id = sourceOf(rows()[index] ?? {});
+    const [entry] = id ? ((await props.ctx.compendium?.load([id])) ?? []) : [];
+    const row = rows()[index];
+    const update = entry && row ? rowUpdate(row, entry, props.block.columns) : undefined;
+    setReview(entry && update ? { index, entry, update } : null);
+  };
+  const settle = (apply: boolean) => {
+    const current = review();
+    if (!current) return;
+    props.ctx.onChange(
+      props.block.key,
+      rows().map((row, i) =>
+        i !== current.index
+          ? row
+          : apply
+            ? applyRowUpdate(row, current.entry, props.block.columns)
+            : { ...row, _rev: current.update.rev },
+      ),
+    );
+    setReview(null);
+  };
+  const cellText = (value: ListRow[string] | undefined) =>
+    value === undefined || value === ""
+      ? "—"
+      : Array.isArray(value)
+        ? value.join(", ")
+        : String(value);
   const cell = (index: number, column: ListColumn) => (
     <Show
       when={column === first && linked(index)}
@@ -1367,13 +1428,26 @@ function List(props: { block: Extract<LeafBlock, { type: "list" }>; variant: str
       }
     >
       {(id) => (
-        <button
-          {...sx(s.entryName, s.entryLinked)}
-          title="Open in the compendium"
-          onClick={() => props.ctx.onOpenEntry?.(id())}
-        >
-          {String(rows()[index]?.[column.key] ?? "")}
-        </button>
+        <span {...sx(s.linkedCell)}>
+          <button
+            {...sx(s.entryName, s.entryLinked)}
+            title="Open in the compendium"
+            onClick={() => props.ctx.onOpenEntry?.(id())}
+          >
+            {String(rows()[index]?.[column.key] ?? "")}
+          </button>
+          <Show when={stale(index)}>
+            <button
+              type="button"
+              {...sx(s.updateBadge)}
+              title="Changed in the compendium since it was added — review"
+              aria-label={`Review changes to ${String(rows()[index]?.[column.key] ?? "this row")}`}
+              onClick={() => void openReview(index)}
+            >
+              ↻
+            </button>
+          </Show>
+        </span>
       )}
     </Show>
   );
@@ -1465,18 +1539,52 @@ function List(props: { block: Extract<LeafBlock, { type: "list" }>; variant: str
           </div>
         </Match>
       </Switch>
+      <Show when={review()}>
+        {(current) => (
+          <div
+            {...sx(s.offer, s.review)}
+            role="dialog"
+            aria-label={`Changes to ${current().entry.name}`}
+          >
+            <span>
+              {current().entry.name} has changed in the compendium
+              {current().update.changes.length
+                ? ":"
+                : ", but not in the columns this sheet copies."}
+            </span>
+            <For each={current().update.changes}>
+              {(change) => (
+                <span {...sx(s.change)}>
+                  <span {...sx(s.label)}>{change.label}</span> <del>{cellText(change.from)}</del> →{" "}
+                  <ins>{cellText(change.to)}</ins>
+                </span>
+              )}
+            </For>
+            <span {...sx(s.reviewActions)}>
+              <button {...sx(s.addRow)} onClick={() => settle(true)}>
+                Update the row
+              </button>
+              <button {...sx(s.addRow)} onClick={() => settle(false)}>
+                Keep mine
+              </button>
+            </span>
+          </div>
+        )}
+      </Show>
       <Show when={source()}>
         {(typeId) => (
           <EntryPicker
             trigger="+ From compendium"
             label={props.ctx.compendium?.typeById(typeId())?.plural ?? "Entries"}
-            entries={props.ctx.compendium?.entriesOfType(typeId()) ?? []}
-            onPick={(entry) =>
-              props.ctx.onChange(props.block.key, [
-                ...rows(),
-                rowFromEntry(entry, props.block.columns),
-              ])
-            }
+            entries={props.ctx.compendium?.rowsOfType(typeId()) ?? []}
+            onPick={async (picked) => {
+              const [entry] = (await props.ctx.compendium?.load([picked.id])) ?? [];
+              if (entry)
+                props.ctx.onChange(props.block.key, [
+                  ...rows(),
+                  rowFromEntry(entry, props.block.columns),
+                ]);
+            }}
           />
         )}
       </Show>
@@ -1490,8 +1598,8 @@ function EntryPicker(props: {
   label: string;
   /** Open leftward from the button (it sits at the right edge of the block). */
   alignEnd?: boolean;
-  entries: readonly CompendiumEntry[];
-  onPick: (entry: CompendiumEntry) => void;
+  entries: readonly IndexRow[];
+  onPick: (entry: IndexRow) => void;
 }) {
   const [open, setOpen] = createSignal(false);
   const [query, setQuery] = createSignal("");
@@ -1625,6 +1733,7 @@ function EntryBlock(props: {
   ctx: Ctx;
 }) {
   const [offer, setOffer] = createSignal<CompendiumEntry | null>(null);
+  const row = () => (id() ? lookup()?.row(id()!) : undefined);
   const id = () => {
     const value = props.ctx.values[props.block.key];
     return typeof value === "string" && value ? value : undefined;
@@ -1640,9 +1749,11 @@ function EntryBlock(props: {
       const rows = list ? rowsFromEntryList(picked, fill.from, list.columns) : [];
       return rows.length ? [{ to: fill.to, title: list?.title ?? fill.to, rows }] : [];
     });
-  const pick = (picked: CompendiumEntry) => {
+  const pick = async (picked: IndexRow) => {
     props.ctx.onChange(props.block.key, picked.id);
-    setOffer(fills(picked).length ? picked : null);
+    setOffer(null);
+    const [entry] = (await lookup()?.load([picked.id])) ?? [];
+    if (entry && fills(entry).length) setOffer(entry);
   };
   const acceptOffer = () => {
     const picked = offer();
@@ -1661,7 +1772,7 @@ function EntryBlock(props: {
   };
   const name = () => (
     <Show
-      when={entry()}
+      when={row() ?? entry()}
       fallback={
         <span {...sx(s.entryMissing)}>{id() ? "Not in the compendium" : canPick() ? "" : "—"}</span>
       }
@@ -1680,11 +1791,11 @@ function EntryBlock(props: {
   const picker = () => (
     <Show when={canPick()}>
       <EntryPicker
-        trigger={entry() ? "Change" : `Choose ${label().toLowerCase()}…`}
+        trigger={row() ? "Change" : `Choose ${label().toLowerCase()}…`}
         alignEnd
         label={type()?.plural ?? type()?.name ?? label()}
-        entries={lookup()?.entriesOfType(props.block.entryType) ?? []}
-        onPick={pick}
+        entries={lookup()?.rowsOfType(props.block.entryType) ?? []}
+        onPick={(picked) => void pick(picked)}
       />
     </Show>
   );

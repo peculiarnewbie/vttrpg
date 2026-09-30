@@ -5,8 +5,7 @@ import { createNoteAutosave, type NoteSaveStatus } from "../client/note-autosave
 import { renderNoteMarkdown } from "../client/note-markdown";
 import { For, Show, createSignal, createEffect, onCleanup, onSettled } from "solid-js";
 import { api, ApiError } from "../client/api";
-import { findEntryByName } from "../domain/entry-links";
-import type { CompendiumStore } from "./compendium";
+import { linkedRow, type CompendiumStore } from "./compendium";
 import { createLinkSuggest } from "./entry-link-suggest";
 import type { Note, NoteSummary, Visibility, WorldMember } from "../domain/schemas";
 import { Badge, Button, EmptyState, ErrorBanner, Field, Input } from "./ui";
@@ -36,15 +35,13 @@ export function NotesPanel(props: {
   let loadVersion = 0;
   let editVersion = 0;
 
-  const entryLink = (link: { name: string; id?: string }) =>
-    link.id ??
-    (props.compendium ? findEntryByName(props.compendium.entries(), link.name)?.id : undefined);
+  const entryLink = (link: { name: string; id?: string }) => linkedRow(props.compendium, link)?.id;
   const openLink = (event: MouseEvent) => {
     const link = (event.target as Element).closest<HTMLElement>("[data-entry-id]");
     if (link?.dataset.entryId) props.onOpenEntry?.(link.dataset.entryId);
   };
   const suggest = createLinkSuggest({
-    entries: () => props.compendium?.entries() ?? [],
+    entries: () => props.compendium?.rows() ?? [],
     typeName: (typeId) => props.compendium?.typeById(typeId)?.name,
     setText: (text) => {
       setContent(text);

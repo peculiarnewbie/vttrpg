@@ -9,6 +9,7 @@ import {
 } from "../domain/compendium";
 import type { CompendiumStore } from "./compendium-store";
 import { api } from "./api";
+import { normalizeName } from "../domain/entry-links";
 
 /** Debounce bursts, then serialize fetches with at most one queued refresh. */
 export function createCompendiumRefresh<T>(options: {
@@ -65,26 +66,15 @@ export function createCompendiumRefresh<T>(options: {
   };
 }
 
-// TODO: use entry-links.normalizeName when the domain worker exports it.
-const normalizeName = (text: string) =>
-  text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
-
 type CompendiumDependencies = {
   index: (worldId: string, since: number) => Promise<IndexDelta>;
   bodies: (worldId: string, ids: readonly string[]) => Promise<EntryBodies>;
 };
 
-type CompatibleCompendiumStore = CompendiumStore & {
-  /** @deprecated Use rows() for browsing and entry(id) for bodies. */
-  entries: () => readonly CompendiumEntry[];
-  /** @deprecated Use rowsOfType() for browsing and entry(id) for bodies. */
-  entriesOfType: (typeId: string) => readonly CompendiumEntry[];
-};
-
 export function createCompendium(
   worldId: string,
   deps: CompendiumDependencies = { index: api.getCompendiumIndex, bodies: api.getEntryBodies },
-): CompatibleCompendiumStore {
+): CompendiumStore {
   const [version, setVersion] = createSignal(0);
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal<string>();
@@ -259,10 +249,6 @@ export function createCompendium(
     });
     onSettled(() => void refreshes.refresh());
   } else void refreshes.refresh();
-  const loaded = () => {
-    version();
-    return [...cache.values()];
-  };
   return {
     types: () => {
       version();
@@ -306,8 +292,6 @@ export function createCompendium(
       version();
       return rev;
     },
-    entries: loaded,
-    entriesOfType: (id) => loaded().filter((entry) => entry.typeId === id),
     loading,
     error,
     refresh: refreshes.refresh,

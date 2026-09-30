@@ -195,13 +195,7 @@ describe("compendium entry rules", () => {
 
   it("validates supplied world ids against their entry type", () => {
     expect(entryError({ ...entry, id: "world/item/sword" }, type)).toBeUndefined();
-    for (const id of [
-      "",
-      "ent_sword",
-      "srd52/item/sword",
-      "world/spell/sword",
-      "world/item/Bad",
-    ]) {
+    for (const id of ["", "ent_sword", "srd52/item/sword", "world/spell/sword", "world/item/Bad"]) {
       expect(entryError({ ...entry, id }, type)).toContain("Entry id");
     }
   });

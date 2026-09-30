@@ -251,7 +251,7 @@ it("batches reads in a microtask, shares pending loads, and serves cache hits re
   expect(loaded()).toEqual(body("a"));
   expect(h.bodies).toHaveBeenCalledExactlyOnceWith("world", ["a", "b"]);
   expect(await h.store.load(["a"])).toEqual([body("a")]);
-  expect(h.store.entriesOfType("item")).toHaveLength(2);
+  expect(h.store.entry("b")).toEqual(body("b"));
   expect(h.bodies).toHaveBeenCalledTimes(1);
   h.dispose();
 });
@@ -262,10 +262,10 @@ it("splits requests at 100 ids and resolves loads in input order even beyond the
   const ids = Array.from({ length: 501 }, (_, i) => String(i));
   expect((await h.store.load(ids)).map((entry) => entry.id)).toEqual(ids);
   expect(h.bodies.mock.calls.map((call) => call[1].length)).toEqual([100, 100, 100, 100, 100, 1]);
-  expect(h.store.entries()).toHaveLength(500);
+  expect(h.store.entry("500")).toBeDefined();
   expect(h.store.entry("0")).toBeUndefined();
   await h.store.load(["0"]);
-  expect(h.store.entries()).toHaveLength(500);
+  expect(h.store.entry("0")).toBeDefined();
   h.dispose();
 });
 
@@ -297,7 +297,7 @@ it("remembers misses and invalidates cached bodies and misses on index changes o
   await h.store.load(["a", "missing"]);
   h.index.mockResolvedValueOnce({ ...delta([], 3, false), deletes: ["a"] });
   await sync(h.store);
-  expect(h.store.entries().map((entry) => entry.id)).toEqual(["missing"]);
+  expect(h.store.entry("a")).toBeUndefined();
   h.dispose();
 });
 
@@ -312,7 +312,6 @@ it("caches aliases under both ids and invalidates both when the canonical entry 
   expect(await h.store.load(["ent_a"])).toEqual([body("world/item/a")]);
   expect(h.store.entry("ent_a")).toEqual(body("world/item/a"));
   expect(h.store.entry("world/item/a")).toEqual(body("world/item/a"));
-  expect(h.store.entries()).toHaveLength(1);
   expect(h.bodies).toHaveBeenCalledTimes(1);
   h.index.mockResolvedValueOnce(delta([row("world/item/a", 2)], 2, false));
   await sync(h.store);
@@ -462,7 +461,6 @@ it("does not restore a deleted entry from an alias first resolved by an in-fligh
     aliases: { ent_a: "world/item/a" },
   });
   expect(await loaded).toEqual([]);
-  expect(h.store.entries()).toEqual([]);
   h.dispose();
 });
 
