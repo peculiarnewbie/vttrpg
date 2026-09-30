@@ -2,7 +2,13 @@ import { canSeeNote } from "../domain/note-permissions";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { layoutLimitsError } from "../domain/template-io";
-import { CompendiumPack, EntryType, SaveEntryInput, compendiumLimits } from "../domain/compendium";
+import {
+  CompendiumPack,
+  EntryBodiesInput,
+  EntryType,
+  SaveEntryInput,
+  compendiumLimits,
+} from "../domain/compendium";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import type { HttpServerError } from "effect/unstable/http/HttpServerError";
 import {
@@ -979,13 +985,17 @@ const compendiumRoute = (
     route(
       Effect.gen(function* () {
         const { member, stub, world } = yield* loadWorld(
-          method === "GET" && !suffix ? undefined : ["dm"],
+          (method === "GET" && (suffix === "" || suffix === "/index")) ||
+            (method === "POST" && suffix === "/bodies")
+            ? undefined
+            : ["dm"],
         );
         const params = yield* HttpRouter.params;
         const path = `compendium${suffix.replace(":typeId", encodeURIComponent(params.typeId ?? "")).replace(":entryId", encodeURIComponent(params.entryId ?? ""))}`;
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const query = suffix === "/index" ? new URL(request.url, "http://localhost").search : "";
         let body: string | undefined;
         if (schema) {
-          const request = yield* HttpServerRequest.HttpServerRequest;
           const text = yield* request.text;
           if (
             suffix === "/import" &&
@@ -1007,7 +1017,7 @@ const compendiumRoute = (
         }
         const response = yield* Effect.promise(() =>
           stub.fetch(
-            new Request(`https://do/internal/${path}`, {
+            new Request(`https://do/internal/${path}${query}`, {
               method,
               headers: {
                 "content-type": "application/json",
@@ -1029,6 +1039,8 @@ const compendiumRoute = (
 
 const CompendiumRoutes = [
   compendiumRoute("GET", ""),
+  compendiumRoute("GET", "/index"),
+  compendiumRoute("POST", "/bodies", EntryBodiesInput),
   compendiumRoute("PUT", "/types/:typeId", EntryType),
   compendiumRoute("DELETE", "/types/:typeId"),
   compendiumRoute("POST", "/entries", SaveEntryInput),
