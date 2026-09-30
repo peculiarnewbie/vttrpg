@@ -182,27 +182,56 @@ export class WorldCompendium {
     sql.exec(
       "CREATE TABLE IF NOT EXISTS compendium_aliases (old_id TEXT PRIMARY KEY, new_id TEXT NOT NULL)",
     );
+    // Include the tie breakers so LIMIT can stop an ordered index walk without a sort.
+    sql.exec(
+      "CREATE INDEX IF NOT EXISTS compendium_entries_search_name ON compendium_entries(name_key, name, id)",
+    );
+    // One- and two-character tag substrings cannot use trigram MATCH. Keep their
+    // fallback scans off body pages and skip entries with no tags altogether.
+    sql.exec(
+      "CREATE INDEX IF NOT EXISTS compendium_entries_search_tags ON compendium_entries(tags_key) WHERE tags_key <> ''",
+    );
     const hadFts =
-      sql.exec("SELECT name FROM sqlite_master WHERE name = 'compendium_fts'").toArray().length > 0;
+      sql
+        .exec(
+          "SELECT name FROM sqlite_master WHERE name IN ('compendium_fts', 'compendium_tags_fts')",
+        )
+        .toArray().length === 2;
+    const upgradeFts = this.setting("compendium_fts_version") !== "3" || !hadFts;
     try {
-      sql.exec(
-        "CREATE VIRTUAL TABLE IF NOT EXISTS compendium_fts USING fts5(id UNINDEXED, text_key)",
-      );
+      this.transactionSync(() => {
+        if (upgradeFts) {
+          for (const trigger of ["insert", "delete", "update"])
+            sql.exec(`DROP TRIGGER IF EXISTS compendium_fts_${trigger}`);
+          sql.exec("DROP TABLE IF EXISTS compendium_fts");
+          sql.exec("DROP TABLE IF EXISTS compendium_tags_fts");
+        }
+        sql.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS compendium_fts USING
+          fts5(id UNINDEXED, name_words, tags_key, text_key, prefix = '2 3')`);
+        // Names and tags keep substring matching, including inside a word ("sword" → Longsword).
+        sql.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS compendium_tags_fts USING
+          fts5(name_key, tags_key, tokenize = 'trigram')`);
+        sql.exec(`CREATE TRIGGER IF NOT EXISTS compendium_fts_insert AFTER INSERT ON compendium_entries BEGIN
+          INSERT INTO compendium_fts (rowid, id, name_words, tags_key, text_key)
+            VALUES (new.rowid, new.id, new.name_words, new.tags_key, new.text_key);
+          INSERT INTO compendium_tags_fts (rowid, name_key, tags_key) VALUES (new.rowid, new.name_key, new.tags_key); END`);
+        sql.exec(`CREATE TRIGGER IF NOT EXISTS compendium_fts_delete AFTER DELETE ON compendium_entries BEGIN
+          DELETE FROM compendium_fts WHERE rowid = old.rowid;
+          DELETE FROM compendium_tags_fts WHERE rowid = old.rowid; END`);
+        sql.exec(`CREATE TRIGGER IF NOT EXISTS compendium_fts_update AFTER UPDATE OF id, name_key, name_words, tags_key, text_key ON compendium_entries BEGIN
+          DELETE FROM compendium_fts WHERE rowid = old.rowid;
+          INSERT INTO compendium_fts (rowid, id, name_words, tags_key, text_key)
+            VALUES (new.rowid, new.id, new.name_words, new.tags_key, new.text_key);
+          DELETE FROM compendium_tags_fts WHERE rowid = old.rowid;
+          INSERT INTO compendium_tags_fts (rowid, name_key, tags_key) VALUES (new.rowid, new.name_key, new.tags_key); END`);
+      });
       this.fts = true;
-      this.rebuildFts = !hadFts;
+      this.rebuildFts = upgradeFts;
     } catch {
       this.fts = false;
+      this.rebuildFts = false;
     }
     this.setting("compendium_search_engine", this.fts ? "fts5" : "like");
-    if (this.fts) {
-      sql.exec(`CREATE TRIGGER IF NOT EXISTS compendium_fts_insert AFTER INSERT ON compendium_entries BEGIN
-        INSERT INTO compendium_fts (rowid, id, text_key) VALUES (new.rowid, new.id, new.text_key); END`);
-      sql.exec(`CREATE TRIGGER IF NOT EXISTS compendium_fts_delete AFTER DELETE ON compendium_entries BEGIN
-        DELETE FROM compendium_fts WHERE rowid = old.rowid; END`);
-      sql.exec(`CREATE TRIGGER IF NOT EXISTS compendium_fts_update AFTER UPDATE OF id, text_key ON compendium_entries BEGIN
-        DELETE FROM compendium_fts WHERE rowid = old.rowid;
-        INSERT INTO compendium_fts (rowid, id, text_key) VALUES (new.rowid, new.id, new.text_key); END`);
-    }
   }
 
   private setting(key: string, value?: string): string | undefined {
@@ -327,8 +356,13 @@ export class WorldCompendium {
       this.transactionSync(() => {
         sql.exec("DELETE FROM compendium_fts");
         sql.exec(
-          "INSERT INTO compendium_fts (rowid, id, text_key) SELECT rowid, id, text_key FROM compendium_entries",
+          "INSERT INTO compendium_fts (rowid, id, name_words, tags_key, text_key) SELECT rowid, id, name_words, tags_key, text_key FROM compendium_entries",
         );
+        sql.exec("DELETE FROM compendium_tags_fts");
+        sql.exec(
+          "INSERT INTO compendium_tags_fts (rowid, name_key, tags_key) SELECT rowid, name_key, tags_key FROM compendium_entries",
+        );
+        this.setting("compendium_fts_version", "3");
       });
       this.rebuildFts = false;
     }
@@ -449,6 +483,12 @@ export class WorldCompendium {
     return { entries, missing, aliases };
   }
 
+  /**
+   * Accent/case insensitive. All query words must match within the name, tags or text.
+   * Rank exact name, name prefix, name word prefixes, tags, then text; ties by name.
+   * FTS names use token prefixes rather than infix substrings. Without FTS, LIKE/
+   * instr retains the legacy name substring tier below word prefixes.
+   */
   search(frame: Extract<ClientFrame, { type: "search" }>, role: string): IndexRow[] {
     const query = normalize(frame.query);
     const words = query.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
@@ -462,59 +502,122 @@ export class WorldCompendium {
       params.push(...frame.typeIds);
     }
     const filter = filters.length ? `${filters.join(" AND ")} AND ` : "";
+    const rows: IndexRow[] = [];
+    const append = (
+      match: string,
+      bindings: (string | number)[],
+      order = "name_key, name, id",
+      orderedIndex = this.fts,
+    ) => {
+      if (rows.length === limit) return;
+      const excluded = rows.map((row) => row.id);
+      rows.push(
+        ...this.sql
+          .exec<CompendiumIndexRow>(
+            `SELECT ${indexColumns} FROM compendium_entries ${orderedIndex ? "INDEXED BY compendium_entries_search_name" : ""}
+              WHERE ${filter}${excluded.length ? `id NOT IN (${excluded.map(() => "?").join(",")}) AND ` : ""}
+              (${match}) ORDER BY ${order} LIMIT ?`,
+            ...params,
+            ...excluded,
+            ...bindings,
+            limit - rows.length,
+          )
+          .toArray()
+          .flatMap(toIndex),
+      );
+    };
+    const prefixes = words.map((word) => `"${word}"*`).join(" AND ");
+    if (this.fts) {
+      // Small posting lists use rowid lookups and sort at most 128 candidates.
+      // Broad matches walk the name index and stop at LIMIT, preserving global
+      // alphabetical ties instead of truncating arbitrary FTS rowids.
+      const candidateCount = (table: "compendium_fts" | "compendium_tags_fts", match: string) =>
+        this.sql
+          .exec<{ count: number }>(
+            `SELECT COUNT(*) AS count FROM (SELECT rowid FROM ${table} WHERE ${table} MATCH ? LIMIT 129)`,
+            match,
+          )
+          .toArray()[0]?.count ?? 0;
+      const nameMatch = `name_words : (${prefixes})`;
+      const textMatch = `text_key : (${prefixes})`;
+      const nameCount = candidateCount("compendium_fts", nameMatch);
+      if (nameCount) {
+        // GLOB's literal prefix is optimized to a name_key index range. Escape
+        // user wildcard characters; they are ordinary text, never query syntax.
+        const glob = query.replace(/[?*[]/g, (char) => `[${char}]`) + "*";
+        append("name_key = ?", [query]);
+        append("name_key GLOB ?", [glob]);
+        append(
+          "rowid IN (SELECT rowid FROM compendium_fts WHERE compendium_fts MATCH ?)",
+          [nameMatch],
+          "name_key, name, id",
+          nameCount > 128,
+        );
+      }
+      if (rows.length === limit) return rows;
+      // Trigram MATCH requires at least three code points. Short tag words use
+      // instr, checked against any longer indexed words before the ordered walk.
+      const longWords = words.filter((word) => Array.from(word).length >= 3);
+      const trigrams = longWords.map((word) => `"${word}"`).join(" AND ");
+      if (longWords.length === words.length) {
+        // Inside a word: "sword" finds Longsword after the word-prefix matches.
+        const substringMatch = `name_key : (${trigrams})`;
+        const substringCount = candidateCount("compendium_tags_fts", substringMatch);
+        if (substringCount)
+          append(
+            "rowid IN (SELECT rowid FROM compendium_tags_fts WHERE compendium_tags_fts MATCH ?)",
+            [substringMatch],
+            "name_key, name, id",
+            substringCount > 128,
+          );
+        if (rows.length === limit) return rows;
+      }
+      const tagMatch = `tags_key : (${trigrams})`;
+      const tagCondition = words.map(() => "instr(tags_key, ?) > 0").join(" AND ");
+      const tagIds = longWords.length
+        ? "SELECT rowid FROM compendium_tags_fts WHERE compendium_tags_fts MATCH ?"
+        : `SELECT rowid FROM compendium_entries WHERE tags_key <> '' AND ${tagCondition}`;
+      const tagBindings = longWords.length ? [tagMatch] : words;
+      const tagCount = longWords.length
+        ? candidateCount("compendium_tags_fts", tagMatch)
+        : (this.sql
+            .exec<{ count: number }>(
+              `SELECT COUNT(*) AS count FROM (${tagIds} LIMIT 129)`,
+              ...tagBindings,
+            )
+            .toArray()[0]?.count ?? 0);
+      if (tagCount)
+        append(
+          `rowid IN (${tagIds})${longWords.length ? ` AND ${tagCondition}` : ""}`,
+          [...tagBindings, ...(longWords.length ? words : [])],
+          "name_key, name, id",
+          tagCount > 128,
+        );
+      if (rows.length === limit) return rows;
+      const textCount = candidateCount("compendium_fts", textMatch);
+      if (textCount)
+        append(
+          "rowid IN (SELECT rowid FROM compendium_fts WHERE compendium_fts MATCH ?)",
+          [textMatch],
+          "name_key, name, id",
+          textCount > 128,
+        );
+      return rows;
+    }
+    // Older SQLite builds keep a fully functional scan-based fallback.
     const nameMatch = words.map(() => "instr(name_key, ?) > 0").join(" AND ");
     const wordPrefix = words.map(() => "instr(' ' || name_words, ' ' || ?) > 0").join(" AND ");
-    const rows = this.sql
-      .exec<CompendiumIndexRow>(
-        `SELECT ${indexColumns} FROM compendium_entries
-      WHERE ${filter}(${nameMatch})
-      ORDER BY CASE WHEN name_key = ? THEN 0 WHEN instr(name_key, ?) = 1 THEN 1
-        WHEN ${wordPrefix} THEN 2 ELSE 3 END, name_key, name, id LIMIT ?`,
-        ...params,
-        ...words,
-        query,
-        query,
-        ...words,
-        limit,
-      )
-      .toArray()
-      .flatMap(toIndex);
-    if (rows.length === limit) return rows;
-    const excluded = rows.map((row) => row.id);
-    const exclusion = () =>
-      excluded.length ? `id NOT IN (${excluded.map(() => "?").join(",")}) AND ` : "";
-    const tags = this.sql
-      .exec<CompendiumIndexRow>(
-        `SELECT ${indexColumns} FROM compendium_entries WHERE ${filter}${exclusion()}(${words.map(() => "instr(tags_key, ?) > 0").join(" OR ")}) ORDER BY name_key, name, id LIMIT ?`,
-        ...params,
-        ...excluded,
-        ...words,
-        limit - rows.length,
-      )
-      .toArray()
-      .flatMap(toIndex);
-    rows.push(...tags);
-    if (rows.length === limit) return rows;
-    excluded.push(...tags.map((row) => row.id));
-    const textMatch = this.fts
-      ? "id IN (SELECT id FROM compendium_fts WHERE compendium_fts MATCH ?)"
-      : words.map(() => "text_key LIKE ?").join(" AND ");
-    const textParams = this.fts
-      ? [words.map((word) => `"${word}"*`).join(" AND ")]
-      : words.map((word) => `%${word}%`);
-    return [
-      ...rows,
-      ...this.sql
-        .exec<CompendiumIndexRow>(
-          `SELECT ${indexColumns} FROM compendium_entries WHERE ${filter}${exclusion()}(${textMatch}) ORDER BY name_key, name, id LIMIT ?`,
-          ...params,
-          ...excluded,
-          ...textParams,
-          limit - rows.length,
-        )
-        .toArray()
-        .flatMap(toIndex),
-    ];
+    append(
+      nameMatch,
+      [...words, query, query, ...words],
+      `CASE WHEN name_key = ? THEN 0 WHEN instr(name_key, ?) = 1 THEN 1 WHEN ${wordPrefix} THEN 2 ELSE 3 END, name_key, name, id`,
+    );
+    append(words.map(() => "instr(tags_key, ?) > 0").join(" AND "), words);
+    append(
+      words.map(() => "text_key LIKE ?").join(" AND "),
+      words.map((word) => `%${word}%`),
+    );
+    return rows;
   }
 
   private takenIds(): Set<string> {
