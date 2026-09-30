@@ -151,3 +151,121 @@ describe("shared layout limits", () => {
     ).toBeUndefined();
   });
 });
+
+describe("derived layout limits", () => {
+  const value = { key: "str_mod", label: "STR mod", expr: "floor((@str - 10) / 2)" };
+  const withDerived = (derived: SheetLayout["derived"]): SheetLayout => ({ ...layout, derived });
+
+  it("accepts at most 50 derived values", () => {
+    const values = Array.from({ length: 50 }, (_, i) => ({ ...value, key: `value_${i}` }));
+    expect(layoutLimitsError(withDerived(values))).toBeUndefined();
+    expect(layoutLimitsError(withDerived([...values, { ...value, key: "extra" }]))).toBe(
+      "Layout must have at most 50 derived values",
+    );
+  });
+
+  it.each(["", "2mod", "str-mod", "str.mod", "str mod", "é", "a\n"])(
+    "rejects invalid derived key %j",
+    (key) => {
+      expect(layoutLimitsError(withDerived([{ ...value, key }]))).toContain("needs a key");
+    },
+  );
+
+  it("allows valid keys, and rejects duplicates only among derived values", () => {
+    expect(layoutLimitsError(withDerived([{ ...value, key: "_mod2" }]))).toBeUndefined();
+    expect(layoutLimitsError(withDerived([value, value]))).toBe(
+      "Layout derived keys must be unique",
+    );
+    const sheet = withBlocks([
+      { id: "stats", type: "stats", items: [{ key: value.key, label: "Modifier" }] },
+    ]);
+    expect(layoutLimitsError({ ...sheet, derived: [value] })).toBeUndefined();
+  });
+
+  it("requires a non-empty label of at most 60 characters", () => {
+    for (const label of ["", "  ", "x".repeat(61)])
+      expect(layoutLimitsError(withDerived([{ ...value, label }]))).toBe(
+        "Derived labels must be non-empty and at most 60 characters",
+      );
+    expect(layoutLimitsError(withDerived([{ ...value, label: "x".repeat(60) }]))).toBeUndefined();
+  });
+
+  it("checks expression length, syntax and depth", () => {
+    expect(
+      layoutLimitsError(withDerived([{ ...value, expr: `1${" ".repeat(199)}` }])),
+    ).toBeUndefined();
+    expect(layoutLimitsError(withDerived([{ ...value, expr: `1${" ".repeat(200)}` }]))).toContain(
+      "At most 200 characters",
+    );
+    expect(layoutLimitsError(withDerived([{ ...value, expr: "floor()" }]))).toContain(
+      "needs 1 argument",
+    );
+    expect(
+      layoutLimitsError(withDerived([{ ...value, expr: `${"(".repeat(33)}1${")".repeat(33)}` }])),
+    ).toContain("At most 32 nested");
+  });
+
+  it("validates derived columns inside groups, including missing expressions", () => {
+    const column = (expr?: string): SheetLayout =>
+      withBlocks([
+        {
+          id: "group",
+          type: "group",
+          blocks: [
+            {
+              id: "gear",
+              type: "list",
+              key: "gear",
+              columns: [{ key: "total", label: "Total weight", kind: "derived", expr }],
+            },
+          ],
+        },
+      ]);
+    expect(layoutLimitsError(column("@row.qty * @row.weight"))).toBeUndefined();
+    expect(layoutLimitsError(column("1 +"))).toBe(
+      'Derived column "Total weight": Expected an expression at 3',
+    );
+    expect(layoutLimitsError(column())).toBe(
+      'Derived column "Total weight": Expected an expression at 0',
+    );
+    expect(layoutLimitsError(column(`1${" ".repeat(200)}`))).toContain("At most 200 characters");
+  });
+
+  it("keeps cycles, unknown refs and legacy notation saveable", () => {
+    const sheet = withBlocks([
+      {
+        id: "stats",
+        type: "stats",
+        items: [{ key: "old-key", label: "", roll: "broken notation" }],
+      },
+      {
+        id: "list",
+        type: "list",
+        key: "gear",
+        roll: "broken notation",
+        columns: [{ key: "old-key", label: "", kind: "text", expr: "invalid legacy expression" }],
+      },
+    ]);
+    expect(
+      layoutLimitsError({
+        ...sheet,
+        derived: [
+          { key: "self", label: "Self", expr: "@self" },
+          { key: "unknown", label: "Unknown", expr: "@missing" },
+        ],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("applies derived validation to imports and preserves them on round trip", () => {
+    const derivedLayout = withDerived([value]);
+    expect(importTemplate(exportTemplate({ ...template, layout: derivedLayout }))).toEqual({
+      ok: true,
+      input: { ...input, layout: derivedLayout },
+    });
+    expect(importTemplate(envelope({ ...input, layout: withDerived([value, value]) }))).toEqual({
+      ok: false,
+      error: "Layout derived keys must be unique",
+    });
+  });
+});
