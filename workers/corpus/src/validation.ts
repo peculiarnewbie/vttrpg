@@ -1,13 +1,14 @@
 import * as Schema from "effect/Schema";
 import {
   compendiumLimits,
+  type CompendiumEntry,
   type EntryType,
   type SaveEntryInput,
 } from "../../../src/domain/compendium";
 import { typeError, entryError } from "../../../src/domain/compendium-rules";
 import { parseEntryId } from "../../../src/domain/entry-id";
 import type { SystemInput, SourceInput } from "../../../src/domain/corpus-rpc";
-import { licenceError } from "../../../src/domain/licence";
+import { licenceError, type Licence } from "../../../src/domain/licence";
 import { layoutLimitsError } from "../../../src/domain/template-io";
 
 export const safeId = (id: string): void => {
@@ -73,4 +74,17 @@ export const validateBatch = (items: readonly unknown[]): void => {
     throw new Error("Batch exceeds 100 entries");
   if (new TextEncoder().encode(JSON.stringify(items)).byteLength > compendiumLimits.packBytes)
     throw new Error("Batch exceeds 4 MB");
+};
+
+/** Reserve the full published shape so later version/revision growth stays within 16 KB. */
+export const validatePublishedEntrySize = (entry: CompendiumEntry, licence: Licence): void => {
+  const published = {
+    ...entry,
+    rev: Number.MAX_SAFE_INTEGER,
+    licence,
+    sourceVersion: 2147483647,
+    sourceRev: Number.MAX_SAFE_INTEGER,
+  };
+  if (new TextEncoder().encode(JSON.stringify(published)).byteLength > compendiumLimits.entryBytes)
+    throw new Error("Published entry JSON must be at most 16 KB including licence and provenance");
 };

@@ -194,4 +194,44 @@ describe("corpus service RPC and immutable publication", () => {
         app.corpusCall(method, { ...other, sourceId: "private-book", version: 1 }),
       ).rejects.toThrow("private");
   });
+
+  it("atomically rejects entries whose combined licence and body exceed the publication limit", async () => {
+    const longLicence = { ...licence, attribution: "a".repeat(8000) };
+    await app.corpusCall("createSource", {
+      ...owner,
+      source: {
+        id: "size-budget",
+        systemId: system.id,
+        name: "Size budget fixtures",
+        licence: longLicence,
+        visibility: "private",
+      },
+    });
+    const call = { ...owner, sourceId: "size-budget" };
+    await expect(
+      app.corpusCall("saveEntries", {
+        ...call,
+        entries: [input, { ...input, name: "Too large when licensed", body: "x".repeat(10000) }],
+      }),
+    ).rejects.toThrow("including licence");
+    const saved = await app.corpusCall<CompendiumEntry[]>("saveEntries", {
+      ...call,
+      entries: [{ ...input, body: "é".repeat(3750) }],
+    });
+    expect(saved[0].id).toBe("size-budget/spell/invented-lantern");
+    expect(saved[0].rev).toBe(1);
+    const manifest = await app.corpusCall<SnapshotManifest>("publish", call);
+    expect(manifest.entryCount).toBe(1);
+    const bucket = await app.mf.getR2Bucket("CORPUS_BUCKET", "corpus");
+    const object = await bucket.get(manifest.bodyChunks[0].file.key);
+    const published = await decodeBodies(new Uint8Array(await object!.arrayBuffer()));
+    expect(published[0]).toMatchObject({
+      id: saved[0].id,
+      body: saved[0].body,
+      licence: longLicence,
+    });
+    expect(new TextEncoder().encode(JSON.stringify(published[0])).byteLength).toBeLessThanOrEqual(
+      16 * 1024,
+    );
+  });
 });
