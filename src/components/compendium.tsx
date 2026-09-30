@@ -17,7 +17,7 @@ import type { CharacterValue } from "../domain/schemas";
 import type { LayoutBlock, ListRow, SheetLayout, SheetValues } from "../domain/sheet-layout";
 import { colors, fonts, radii, skin } from "../theme/tokens.stylex";
 import { sx } from "../theme/sx";
-import { ListEditor, SheetBlocks, type CompendiumLookup } from "./sheet-blocks";
+import { ListEditor, SheetBlocks } from "./sheet-blocks";
 import { styles } from "./styles.stylex";
 import { Badge, Button, EmptyState, ErrorBanner, Field, Input, Textarea } from "./ui";
 
