@@ -427,6 +427,7 @@ function TypeEditor(props: {
                     <input
                       {...sx(styles.input, t.compact)}
                       aria-label={`${field().label || `Field ${index + 1}`} dice`}
+                      style={{ width: "7em" }}
                       placeholder="1d100"
                       value={field().dice ?? ""}
                       onInput={(event) => setField(index, { dice: event.currentTarget.value })}

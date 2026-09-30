@@ -68,9 +68,6 @@ export function RollView(props: { roll: RollResult; showTotal: boolean }) {
       <Show when={props.roll.table}>
         {(table) => (
           <div {...sx(v.table)}>
-            <span {...sx(v.tableName)}>
-              {table().entryName} · {table().fieldLabel}
-            </span>
             <Show
               when={table().row}
               fallback={<span {...sx(v.tableNone)}>No row for {props.roll.total}</span>}
@@ -122,9 +119,8 @@ const v = stylex.create({
     borderStyle: "dashed",
   },
   sign: { fontFamily: fonts.numeric, color: colors.textMuted },
-  // The oracle's row reads first: it is what people rolled for.
+  // The oracle's row reads first: it is what people rolled for (the message names the table).
   table: { display: "flex", flexDirection: "column", gap: "1px", fontSize: fontSize.body },
-  tableName: { fontSize: fontSize.micro, color: colors.textMuted },
   tableRange: { fontFamily: fonts.numeric, color: colors.textMuted },
   tableNone: { color: colors.textMuted, fontStyle: "italic" },
   sides: { fontFamily: fonts.numeric, fontSize: fontSize.micro, color: colors.textMuted },
