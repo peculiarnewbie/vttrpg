@@ -6,6 +6,8 @@ import { notationRefs, parseNotation, rollText, type Parsed } from "../domain/di
 import { refValues, sheetRefLookup } from "../domain/sheet-refs";
 import { layoutLimitsError } from "../domain/template-io";
 import { WorldCompendium } from "./world-compendium";
+import { WorldSources } from "./world-sources";
+import { corpusEnabled, type CorpusBindings } from "./corpus-env";
 import { computeStats, evaluateRoll, makeResolver, parseRollCommand } from "../domain/dice";
 import {
   Character,
@@ -52,7 +54,7 @@ export const canEditCharacter = (
   return character.scope === "world" ? !character.locked : character.memberId === memberId;
 };
 
-export type WorldDoEnv = {
+export type WorldDoEnv = CorpusBindings & {
   BUCKET: R2Bucket;
 };
 
@@ -234,6 +236,7 @@ export const defaultTemplate = (worldId: string): SheetTemplate => ({
 
 export class WorldDO extends DurableObject<WorldDoEnv> {
   private readonly compendium: WorldCompendium;
+  private readonly sources: WorldSources;
   constructor(ctx: DurableObjectState, env: WorldDoEnv) {
     super(ctx, env);
     this.compendium = new WorldCompendium({
@@ -243,6 +246,18 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       bucket: env.BUCKET,
       worldId: this.worldId,
     });
+    this.sources = new WorldSources({
+      sql: ctx.storage.sql,
+      transactionSync: (closure) => ctx.storage.transactionSync(closure),
+      compendium: this.compendium,
+      corpus: corpusEnabled(env) ? env.CORPUS : undefined,
+      bucket: corpusEnabled(env) ? env.CORPUS_BUCKET : undefined,
+      accountId: () =>
+        ctx.storage.sql
+          .exec<{ value: string }>("SELECT value FROM settings WHERE key = 'corpus_account_id'")
+          .toArray()[0]?.value ?? "",
+    });
+    this.compendium.setSources(this.sources);
     ctx.blockConcurrencyWhile(async () => {
       this.ensureSchema();
       await this.compendium.ensureMigrated();
@@ -504,6 +519,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       updated_at TEXT NOT NULL
     )`);
     this.compendium.migrate();
+    this.sources.migrate();
     // Additive columns for instances created before the feature existed.
     this.ensureColumn("templates", "layout", "layout TEXT");
     this.ensureColumn("notes", "editable_by_all", "editable_by_all INTEGER NOT NULL DEFAULT 0");
@@ -1036,11 +1052,11 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     };
   }
 
-  private tableRoll(
+  private async tableRoll(
     frame: Extract<ClientFrame, { type: "roll.table" }>,
     attachment: SocketAttachment,
-  ): Parsed<ChatMessage> {
-    const found = this.compendium.lookup(frame.entryId, attachment.role);
+  ): Promise<Parsed<ChatMessage>> {
+    const found = await this.compendium.lookup(frame.entryId, attachment.role);
     if (!found) return { ok: false, error: "Entry not found" };
     const { entry, type } = found;
     const field = type.fields.find((field) => field.key === frame.field);
@@ -1281,8 +1297,20 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    const corpusAccountId = request.headers.get("x-ttrpg-corpus-account-id");
+    if (corpusAccountId)
+      this.ctx.storage.sql.exec(
+        "INSERT INTO settings (key,value) VALUES ('corpus_account_id',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        corpusAccountId,
+      );
 
     if (request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
+      if (corpusEnabled(this.env)) {
+        await this.sources
+          .check()
+          .catch((error: unknown) => console.error("Library refresh failed", error));
+        await this.scheduleSourceCheck();
+      }
       return this.handleUpgrade(request);
     }
 
@@ -1291,6 +1319,23 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     }
 
     return json({ error: "Not found" }, 404);
+  }
+
+  private async scheduleSourceCheck(): Promise<void> {
+    if (
+      corpusEnabled(this.env) &&
+      this.ctx.storage.sql.exec("SELECT source_id FROM world_sources LIMIT 1").toArray().length
+    )
+      await this.ctx.storage.setAlarm(Date.now() + 15 * 60 * 1000);
+    else await this.ctx.storage.deleteAlarm();
+  }
+
+  async alarm(): Promise<void> {
+    if (corpusEnabled(this.env))
+      await this.sources
+        .check()
+        .catch((error: unknown) => console.error("Library refresh failed", error));
+    await this.scheduleSourceCheck();
   }
 
   private handleUpgrade(request: Request): Response {
@@ -1351,6 +1396,16 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     const path = url.pathname.replace(/^\/internal\//, "");
 
     try {
+      if (
+        path === "libraries" ||
+        path.startsWith("libraries/") ||
+        path.startsWith("compendium/overrides/") ||
+        path.startsWith("compendium/blocked/")
+      ) {
+        const response = await this.sources.handle(request.method, path, body, role);
+        await this.scheduleSourceCheck();
+        return response;
+      }
       if (path === "compendium" || path.startsWith("compendium/"))
         return this.compendium.handle(
           request.method,
@@ -1698,7 +1753,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       try {
         result =
           frame.type === "roll.table"
-            ? this.tableRoll(frame, attachment)
+            ? await this.tableRoll(frame, attachment)
             : this.directRoll(frame, attachment);
       } catch {
         result = { ok: false, error: "Roll failed" };

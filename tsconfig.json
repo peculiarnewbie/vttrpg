@@ -17,6 +17,7 @@
   },
   "include": [
     "src",
+    "workers",
     "e2e",
     "worker-configuration.d.ts",
     "vite.config.ts",

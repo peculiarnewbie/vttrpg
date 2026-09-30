@@ -1,0 +1,40 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "ttrpg-corpus",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-03-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [],
+  "d1_databases": [
+    {
+      "binding": "CORPUS_DB",
+      "database_name": "ttrpg-corpus",
+      "database_id": "9b2b03c6-2f2a-4865-817d-b5e0ab439b0a",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "r2_buckets": [{ "binding": "CORPUS_BUCKET", "bucket_name": "ttrpg-corpus-files" }],
+  "durable_objects": { "bindings": [{ "name": "SOURCES", "class_name": "SourceDO" }] },
+  "exports": { "SourceDO": { "type": "durable-object", "storage": "sqlite" } },
+  "env": {
+    "preview": {
+      "name": "ttrpg-corpus-preview",
+      "workers_dev": false,
+      "preview_urls": false,
+      "routes": [],
+      "d1_databases": [
+        {
+          "binding": "CORPUS_DB",
+          "database_name": "ttrpg-corpus-preview",
+          "database_id": "02c86251-9eff-446e-ac94-a8cf31e39a9d",
+          "migrations_dir": "migrations",
+        },
+      ],
+      "r2_buckets": [{ "binding": "CORPUS_BUCKET", "bucket_name": "ttrpg-corpus-files-preview" }],
+      "durable_objects": { "bindings": [{ "name": "SOURCES", "class_name": "SourceDO" }] },
+      "exports": { "SourceDO": { "type": "durable-object", "storage": "sqlite" } },
+    },
+  },
+}

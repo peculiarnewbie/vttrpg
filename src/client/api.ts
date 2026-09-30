@@ -1,4 +1,6 @@
 import * as Schema from "effect/Schema";
+import { WorldLibraries, WorldSource, type EnableSourceInput } from "../domain/corpus-rpc";
+import { EntryOverride, type SaveOverrideInput } from "../domain/overrides";
 import {
   Compendium,
   CompendiumEntry,
@@ -56,6 +58,7 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
 };
 
 export type WorldBootstrap = {
+  features?: { corpus: boolean };
   board: BoardSnapshot;
   scenes?: SceneMetadata[];
   activeSceneId?: string;
@@ -70,6 +73,58 @@ export type WorldBootstrap = {
 };
 
 export const api = {
+  libraries: async (worldId: string) =>
+    Schema.decodeUnknownSync(WorldLibraries)(
+      await request(`/api/worlds/${encodeURIComponent(worldId)}/libraries`),
+    ),
+  checkLibraries: async (worldId: string) =>
+    Schema.decodeUnknownSync(WorldLibraries)(
+      await request(`/api/worlds/${encodeURIComponent(worldId)}/libraries/check`, {
+        method: "POST",
+      }),
+    ),
+  enableLibrary: async (worldId: string, sourceId: string, input: EnableSourceInput) =>
+    Schema.decodeUnknownSync(WorldSource)(
+      await request(
+        `/api/worlds/${encodeURIComponent(worldId)}/libraries/${encodeURIComponent(sourceId)}`,
+        { method: "PUT", body: JSON.stringify(input) },
+      ),
+    ),
+  disableLibrary: async (worldId: string, sourceId: string): Promise<void> => {
+    await request(
+      `/api/worlds/${encodeURIComponent(worldId)}/libraries/${encodeURIComponent(sourceId)}`,
+      { method: "DELETE" },
+    );
+  },
+  blockedEntries: async (worldId: string) =>
+    Schema.decodeUnknownSync(Schema.Struct({ ids: Schema.Array(Schema.String) }))(
+      await request(`/api/worlds/${encodeURIComponent(worldId)}/libraries/blocked`),
+    ),
+  blockEntry: async (worldId: string, entryId: string, blocked: boolean): Promise<void> => {
+    await request(
+      `/api/worlds/${encodeURIComponent(worldId)}/compendium/blocked/${encodeURIComponent(entryId)}`,
+      { method: blocked ? "PUT" : "DELETE" },
+    );
+  },
+  entryOverride: async (worldId: string, entryId: string) =>
+    Schema.decodeUnknownSync(Schema.NullOr(EntryOverride))(
+      await request(
+        `/api/worlds/${encodeURIComponent(worldId)}/compendium/overrides/${encodeURIComponent(entryId)}`,
+      ),
+    ),
+  saveEntryOverride: async (worldId: string, entryId: string, input: SaveOverrideInput) =>
+    Schema.decodeUnknownSync(EntryOverride)(
+      await request(
+        `/api/worlds/${encodeURIComponent(worldId)}/compendium/overrides/${encodeURIComponent(entryId)}`,
+        { method: "PUT", body: JSON.stringify(input) },
+      ),
+    ),
+  deleteEntryOverride: async (worldId: string, entryId: string): Promise<void> => {
+    await request(
+      `/api/worlds/${encodeURIComponent(worldId)}/compendium/overrides/${encodeURIComponent(entryId)}`,
+      { method: "DELETE" },
+    );
+  },
   getCompendiumIndex: async (worldId: string, since: number) =>
     Schema.decodeUnknownSync(IndexDelta)(
       await request(`/api/worlds/${encodeURIComponent(worldId)}/compendium/index?since=${since}`),
