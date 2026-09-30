@@ -10,6 +10,7 @@ import {
   type EntryBodies,
   type IndexDelta,
 } from "../domain/compendium";
+import { entryFacets } from "../domain/entry-facets";
 import { entryError, packError, typeError } from "../domain/compendium-rules";
 import {
   entryId,
@@ -27,6 +28,7 @@ type CompendiumTypeRow = {
   name: string;
   plural: string | null;
   fields: string;
+  filters: string | null;
   position: number;
 };
 
@@ -38,13 +40,14 @@ type CompendiumIndexRow = {
   visibility: string;
   updated_at: string;
   rev: number;
+  facets: string | null;
 };
 type CompendiumEntryRow = CompendiumIndexRow & {
   body: string;
   fields: string;
 };
 
-const indexColumns = "id, type_id, name, tags, visibility, updated_at, rev";
+const indexColumns = "id, type_id, name, tags, visibility, updated_at, rev, facets";
 const normalize = (text: string) =>
   text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
 const nameWords = (text: string) =>
@@ -74,6 +77,7 @@ const toIndex = (row: CompendiumIndexRow): IndexRow[] => {
     visibility: row.visibility,
     rev: row.rev,
     updatedAt: row.updated_at,
+    facets: parse<unknown>(row.facets, undefined),
   });
   return decoded._tag === "Success" ? [decoded.success] : [];
 };
@@ -146,6 +150,13 @@ export class WorldCompendium {
       tags TEXT NOT NULL, body TEXT NOT NULL, fields TEXT NOT NULL,
       visibility TEXT NOT NULL, updated_at TEXT NOT NULL
     )`);
+    if (
+      !sql
+        .exec<{ name: string }>("PRAGMA table_info(compendium_types)")
+        .toArray()
+        .some((row) => row.name === "filters")
+    )
+      sql.exec("ALTER TABLE compendium_types ADD COLUMN filters TEXT");
     const columns = new Set(
       sql
         .exec<{ name: string }>("PRAGMA table_info(compendium_entries)")
@@ -154,6 +165,7 @@ export class WorldCompendium {
     );
     for (const [name, ddl] of [
       ["rev", "INTEGER NOT NULL DEFAULT 0"],
+      ["facets", "TEXT"],
       ["name_key", "TEXT NOT NULL DEFAULT ''"],
       ["name_words", "TEXT NOT NULL DEFAULT ''"],
       ["tags_key", "TEXT NOT NULL DEFAULT ''"],
@@ -300,6 +312,17 @@ export class WorldCompendium {
         this.setting("compendium_search", "1");
       });
     }
+    if (this.setting("compendium_facets") !== "1") {
+      this.transactionSync(() => {
+        const types = this.types();
+        const filtered = types.filter((type) => type.filters?.length);
+        if (filtered.length) {
+          const rev = this.bump();
+          for (const type of filtered) this.recomputeFacets(type, rev);
+        }
+        this.setting("compendium_facets", "1");
+      });
+    }
     if (this.rebuildFts) {
       this.transactionSync(() => {
         sql.exec("DELETE FROM compendium_fts");
@@ -341,6 +364,7 @@ export class WorldCompendium {
           name: row.name,
           plural: row.plural ?? undefined,
           fields: parse<unknown>(row.fields, undefined),
+          filters: parse<unknown>(row.filters, undefined),
         });
         return decoded._tag === "Success" ? [decoded.success] : [];
       });
@@ -389,6 +413,17 @@ export class WorldCompendium {
         .toArray()[0]?.new_id ?? id
     );
   }
+  /** Resolve legacy ids and enforce entry visibility before handing content to rolls. */
+  lookup(id: string, role: string): { entry: CompendiumEntry; type: EntryType } | undefined {
+    const row = this.sql
+      .exec<CompendiumEntryRow>("SELECT * FROM compendium_entries WHERE id = ?", this.resolveId(id))
+      .toArray()[0];
+    if (!row || (role !== "dm" && row.visibility !== "public")) return undefined;
+    const entry = toEntry(row)[0];
+    const type = entry && this.types().find((type) => type.id === entry.typeId);
+    return entry && type ? { entry, type } : undefined;
+  }
+
   bodies(input: EntryBodiesInput, role: string): EntryBodies {
     const aliases: Record<string, string> = {};
     const missing: string[] = [];
@@ -501,27 +536,45 @@ export class WorldCompendium {
   }
   private writeCompendiumType(type: EntryType) {
     this.sql.exec(
-      `INSERT INTO compendium_types (id, name, plural, fields, position)
-      VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM compendium_types))
-      ON CONFLICT(id) DO UPDATE SET name = excluded.name, plural = excluded.plural, fields = excluded.fields`,
+      `INSERT INTO compendium_types (id, name, plural, fields, filters, position)
+      VALUES (?, ?, ?, ?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM compendium_types))
+      ON CONFLICT(id) DO UPDATE SET name = excluded.name, plural = excluded.plural, fields = excluded.fields, filters = excluded.filters`,
       type.id,
       type.name,
       type.plural ?? null,
       JSON.stringify(type.fields),
+      type.filters === undefined ? null : JSON.stringify(type.filters),
     );
   }
+  private recomputeFacets(type: EntryType, rev: number) {
+    const entries = this.sql
+      .exec<CompendiumEntryRow>("SELECT * FROM compendium_entries WHERE type_id = ?", type.id)
+      .toArray()
+      .flatMap(toEntry);
+    for (const entry of entries) {
+      const facets = entryFacets(entry, type);
+      this.sql.exec(
+        "UPDATE compendium_entries SET facets = ?, rev = ? WHERE id = ?",
+        facets === undefined ? null : JSON.stringify(facets),
+        rev,
+        entry.id,
+      );
+    }
+  }
+
   private writeCompendiumEntry(entry: CompendiumEntry, type?: EntryType) {
     const text = (type?.fields ?? [])
       .filter((field) => field.kind === "text" || field.kind === "longtext")
       .map((field) => entry.fields[field.key])
       .filter((value) => typeof value === "string")
       .join(" ");
+    const facets = type ? entryFacets(entry, type) : undefined;
     this.sql.exec(
-      `INSERT INTO compendium_entries (id, type_id, name, tags, body, fields, visibility, updated_at, rev, name_key, name_words, tags_key, text_key)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO compendium_entries (id, type_id, name, tags, body, fields, visibility, updated_at, rev, name_key, name_words, tags_key, text_key, facets)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET name = excluded.name, tags = excluded.tags, body = excluded.body,
       fields = excluded.fields, visibility = excluded.visibility, updated_at = excluded.updated_at,
-      rev = excluded.rev, name_key = excluded.name_key, name_words = excluded.name_words, tags_key = excluded.tags_key, text_key = excluded.text_key`,
+      rev = excluded.rev, name_key = excluded.name_key, name_words = excluded.name_words, tags_key = excluded.tags_key, text_key = excluded.text_key, facets = excluded.facets`,
       entry.id,
       entry.typeId,
       entry.name,
@@ -535,6 +588,7 @@ export class WorldCompendium {
       nameWords(entry.name),
       normalize(entry.tags.join(" ")),
       normalize(`${entry.body} ${text}`),
+      facets === undefined ? null : JSON.stringify(facets),
     );
     this.sql.exec("DELETE FROM compendium_tombstones WHERE id = ?", entry.id);
   }
@@ -618,8 +672,15 @@ export class WorldCompendium {
       if (!types.some((row) => row.id === type.id) && types.length >= compendiumLimits.types)
         return json({ error: "A world can have at most 50 entry types" }, 400);
       const rev = this.transactionSync(() => {
+        const previous = types.find((candidate) => candidate.id === type.id);
         this.writeCompendiumType(type);
-        return this.bump();
+        const revision = this.bump();
+        if (
+          JSON.stringify(previous?.filters) !== JSON.stringify(type.filters) ||
+          JSON.stringify(previous?.fields) !== JSON.stringify(type.fields)
+        )
+          this.recomputeFacets(type, revision);
+        return revision;
       });
       this.updated(rev);
       return json(type);
@@ -736,7 +797,15 @@ export class WorldCompendium {
         return json({ error: "A world can have at most 10000 entries" }, 400);
       const rev = this.transactionSync(() => {
         const revision = this.bump();
-        for (const type of pack.types) this.writeCompendiumType(type);
+        for (const type of pack.types) {
+          const previous = types.find((candidate) => candidate.id === type.id);
+          this.writeCompendiumType(type);
+          if (
+            JSON.stringify(previous?.filters) !== JSON.stringify(type.filters) ||
+            JSON.stringify(previous?.fields) !== JSON.stringify(type.fields)
+          )
+            this.recomputeFacets(type, revision);
+        }
         for (const entry of entries) this.writeCompendiumEntry(entry, typeMap.get(entry.typeId));
         for (const [oldId, newId] of aliases)
           sql.exec("INSERT INTO compendium_aliases (old_id, new_id) VALUES (?, ?)", oldId, newId);

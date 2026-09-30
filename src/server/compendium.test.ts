@@ -683,3 +683,262 @@ it("backs up legacy ids once and rewrites entry picks and copied rows before cha
     (await bucket.list({ prefix: `world/${worldId}/backups/compendium-` })).objects,
   ).toHaveLength(1);
 });
+
+it("stores facets in index deltas and search, refreshes them on type changes and removes absent filters", async () => {
+  const filtered: EntryType = { ...type, filters: [{ key: "cost", kind: "range" }] };
+  expect((await saveType(filtered)).status).toBe(200);
+  const saved = await decodedEntry(await saveEntry());
+  const initial = await index(0, playerCookie);
+  expect(initial.types).toEqual([filtered]);
+  expect(initial.upserts).toMatchObject([{ id: saved.id, facets: { cost: 5 } }]);
+  const peer = await tabletop.connect({ worldId, cookie: playerCookie });
+  const search = async (requestId: string) => {
+    peer.send({ type: "search", requestId, query: "sword" });
+    await peer.sync();
+    const result = peer.frames.find(
+      (frame) => frame.type === "search.result" && frame.requestId === requestId,
+    );
+    return result?.type === "search.result" ? result.results : [];
+  };
+  try {
+    expect(await search("original")).toMatchObject([{ id: saved.id, facets: { cost: 5 } }]);
+    const changed: EntryType = { ...type, filters: [{ key: "dice", kind: "flag" }] };
+    expect((await saveType(changed)).status).toBe(200);
+    const delta = await index(initial.rev, playerCookie);
+    expect(delta.full).toBe(false);
+    expect(delta.rev).toBeGreaterThan(initial.rev);
+    expect(delta.upserts).toMatchObject([{ id: saved.id, rev: delta.rev, facets: { dice: true } }]);
+    expect(await search("changed")).toMatchObject([{ id: saved.id, facets: { dice: true } }]);
+    expect((await saveType()).status).toBe(200);
+    const cleared = await index(delta.rev, playerCookie);
+    expect(cleared.upserts).toHaveLength(1);
+    expect(cleared.upserts[0].facets).toBeUndefined();
+    expect((await search("cleared"))[0].facets).toBeUndefined();
+  } finally {
+    peer.socket.close();
+  }
+});
+
+it("computes facets for imported entries and existing entries when a pack changes filters", async () => {
+  await saveType({ ...type, filters: [{ key: "cost", kind: "range" }] });
+  const saved = await decodedEntry(await saveEntry());
+  const before = await index(0);
+  const importedType: EntryType = { ...type, filters: [{ key: "dice", kind: "flag" }] };
+  const response = await importPack({
+    format: "ttrpg-pack",
+    version: 2,
+    name: "Equipment",
+    types: [importedType],
+    entries: [{ ...entry, id: "world/item/axe", name: "Axe" }],
+  });
+  expect(response.status).toBe(200);
+  const delta = await index(before.rev);
+  expect(delta.types).toEqual([importedType]);
+  expect(
+    delta.upserts
+      .map((row) => ({ id: row.id, facets: row.facets }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  ).toEqual([
+    { id: "world/item/axe", facets: { dice: true } },
+    { id: saved.id, facets: { dice: true } },
+  ]);
+});
+
+const oracleType: EntryType = {
+  id: "oracle",
+  name: "Oracle",
+  fields: [
+    { key: "action", label: "Action", kind: "oracle", dice: "1d6" },
+    { key: "description", label: "Description", kind: "text" },
+  ],
+};
+const oracleEntry: SaveEntryInput = {
+  typeId: "oracle",
+  name: "Action oracle",
+  tags: [],
+  body: "Players decide what this means.",
+  fields: {
+    action: [
+      { min: 1, max: 3, text: "Explore" },
+      { min: 4, max: 6, text: "Discover" },
+    ],
+    description: "Content",
+  },
+  visibility: "public",
+};
+
+it("rolls a visible oracle, broadcasts and persists its table and landed row without applying effects", async () => {
+  expect((await saveType(oracleType)).status).toBe(200);
+  const saved = await decodedEntry(await saveEntry(oracleEntry));
+  const peer = await tabletop.connect({ worldId, cookie: playerCookie });
+  const observer = await tabletop.connect({ worldId, cookie });
+  try {
+    await peer.sync();
+    await observer.sync();
+    peer.send({ type: "roll.table", entryId: saved.id, field: "action", visibility: "public" });
+    await peer.sync();
+    await expect
+      .poll(() =>
+        observer.frames.some((frame) => frame.type === "message" && frame.message.roll?.table),
+      )
+      .toBe(true);
+    const frame = peer.frames.find(
+      (frame) => frame.type === "message" && frame.message.roll?.table,
+    );
+    if (frame?.type !== "message" || !frame.message.roll) throw new Error("Missing oracle message");
+    const { message } = frame;
+    const roll = frame.message.roll;
+    expect(message).toMatchObject({
+      kind: "roll",
+      content: "Action oracle · Action",
+      visibility: "public",
+      recipientMemberIds: [],
+    });
+    expect(roll.table).toEqual({
+      entryId: saved.id,
+      entryName: saved.name,
+      field: "action",
+      fieldLabel: "Action",
+      row:
+        roll.total <= 3
+          ? { min: 1, max: 3, text: "Explore" }
+          : { min: 4, max: 6, text: "Discover" },
+    });
+    expect(roll.total).toBeGreaterThanOrEqual(1);
+    expect(roll.total).toBeLessThanOrEqual(6);
+    expect(
+      observer.frames.find((item) => item.type === "message" && item.message.id === message.id),
+    ).toMatchObject({ message });
+    const history = await call(`/worlds/${worldId}/messages`, { cookie: playerCookie });
+    expect(await history.json()).toMatchObject({ messages: [message] });
+    expect((await read()).entries).toEqual([saved]);
+  } finally {
+    peer.socket.close();
+    observer.socket.close();
+  }
+});
+
+it("rejects DM-only entries and non-oracle fields for players, while the DM can roll hidden tables", async () => {
+  await saveType(oracleType);
+  const publicEntry = await decodedEntry(await saveEntry(oracleEntry));
+  const hidden = await decodedEntry(
+    await saveEntry({ ...oracleEntry, name: "Hidden oracle", visibility: "dm" }),
+  );
+  const peer = await tabletop.connect({ worldId, cookie: playerCookie });
+  const gm = await tabletop.connect({ worldId, cookie });
+  try {
+    peer.send({ type: "roll.table", entryId: hidden.id, field: "action", visibility: "public" });
+    peer.send({
+      type: "roll.table",
+      entryId: publicEntry.id,
+      field: "description",
+      visibility: "public",
+    });
+    peer.send({ type: "roll.table", entryId: "missing", field: "action", visibility: "public" });
+    await peer.sync();
+    expect(peer.frames.filter((frame) => frame.type === "error")).toMatchObject([
+      { code: "roll" },
+      { code: "roll" },
+      { code: "roll" },
+    ]);
+    expect(peer.frames.filter((frame) => frame.type === "message")).toHaveLength(0);
+    gm.send({ type: "roll.table", entryId: hidden.id, field: "action", visibility: "private" });
+    await gm.sync();
+    expect(gm.frames.find((frame) => frame.type === "message")).toMatchObject({
+      message: { visibility: "private", roll: { table: { entryId: hidden.id } } },
+    });
+    await peer.sync();
+    expect(peer.frames.filter((frame) => frame.type === "message")).toHaveLength(0);
+  } finally {
+    peer.socket.close();
+    gm.socket.close();
+  }
+});
+
+it("resolves legacy oracle ids and preserves private visibility", async () => {
+  const response = await importPack({
+    format: "ttrpg-pack",
+    version: 1,
+    name: "Oracles",
+    types: [oracleType],
+    entries: [{ ...oracleEntry, id: "ent_old_oracle" }],
+  });
+  expect(response.status).toBe(200);
+  const peer = await tabletop.connect({ worldId, cookie: playerCookie });
+  try {
+    peer.send({
+      type: "roll.table",
+      entryId: "ent_old_oracle",
+      field: "action",
+      visibility: "private",
+      recipientMemberIds: [],
+    });
+    await peer.sync();
+    expect(peer.frames.find((frame) => frame.type === "message")).toMatchObject({
+      message: {
+        visibility: "private",
+        recipientMemberIds: [],
+        roll: { table: { entryId: "world/oracle/action-oracle" } },
+      },
+    });
+  } finally {
+    peer.socket.close();
+  }
+});
+
+it("rejects invalid persisted oracle dice and rows and allows a total to land in a gap", async () => {
+  await saveType(oracleType);
+  const saved = await decodedEntry(await saveEntry(oracleEntry));
+  const db = await storage();
+  const peer = await tabletop.connect({ worldId, cookie: playerCookie });
+  const roll = async () => {
+    peer.send({ type: "roll.table", entryId: saved.id, field: "action", visibility: "public" });
+    await peer.sync();
+  };
+  try {
+    for (const dice of ["not dice", "1d6 + @cost"]) {
+      await db.exec(
+        "UPDATE compendium_types SET fields = ? WHERE id = ?",
+        JSON.stringify(
+          oracleType.fields.map((field) => (field.key === "action" ? { ...field, dice } : field)),
+        ),
+        oracleType.id,
+      );
+      await roll();
+    }
+    await db.exec(
+      "UPDATE compendium_types SET fields = ? WHERE id = ?",
+      JSON.stringify(oracleType.fields),
+      oracleType.id,
+    );
+    await db.exec(
+      "UPDATE compendium_entries SET fields = ? WHERE id = ?",
+      JSON.stringify({
+        action: [
+          { min: 1, max: 4, text: "First" },
+          { min: 3, max: 6, text: "Overlap" },
+        ],
+      }),
+      saved.id,
+    );
+    await roll();
+    expect(peer.frames.filter((frame) => frame.type === "error")).toMatchObject([
+      { code: "roll" },
+      { code: "roll" },
+      { code: "roll" },
+    ]);
+    expect(peer.frames.filter((frame) => frame.type === "message")).toHaveLength(0);
+    await db.exec(
+      "UPDATE compendium_entries SET fields = ? WHERE id = ?",
+      JSON.stringify({ action: [{ min: 7, max: 8, text: "Outside the range" }] }),
+      saved.id,
+    );
+    await roll();
+    const result = peer.frames.find((frame) => frame.type === "message");
+    if (result?.type !== "message") throw new Error("Missing oracle message");
+    expect(result.message.roll?.table).toMatchObject({ entryId: saved.id });
+    expect(result.message.roll?.table?.row).toBeUndefined();
+  } finally {
+    peer.socket.close();
+  }
+});

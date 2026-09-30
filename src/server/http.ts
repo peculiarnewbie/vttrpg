@@ -1,3 +1,4 @@
+import { canEditCharacter } from "./world-do";
 import { canSeeNote } from "../domain/note-permissions";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -748,10 +749,7 @@ const SaveCharacter = HttpRouter.route(
         {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            ...input,
-            memberId: input.memberId ?? member.id,
-          }),
+          body: JSON.stringify(input),
         },
         member,
       );
@@ -765,7 +763,7 @@ const DeleteCharacter = HttpRouter.route(
   "/api/worlds/:id/characters/:characterId",
   route(
     Effect.gen(function* () {
-      const { member, stub } = yield* loadWorld(["dm"]);
+      const { member, stub } = yield* loadWorld();
       const params = yield* HttpRouter.params;
       const characterId = params.characterId;
       if (!characterId) return yield* Effect.fail(new NotFound({ message: "Character not found" }));
@@ -794,13 +792,13 @@ const UploadAvatar = HttpRouter.route(
       const characterId = params.characterId;
       if (!characterId) return yield* Effect.fail(new NotFound({ message: "Character not found" }));
       const request = yield* HttpServerRequest.HttpServerRequest;
-      const character = yield* doJson<{ memberId: string }>(
+      const character = yield* doJson<Character>(
         stub,
         `character/${characterId}`,
         { method: "GET" },
         member,
       );
-      if (member.role !== "dm" && character.memberId !== member.id) {
+      if (!canEditCharacter(character, member.id, member.role)) {
         return yield* Effect.fail(new Forbidden({ message: "You cannot edit this character" }));
       }
       const contentType = (request.headers["content-type"] ?? "").split(";")[0].trim();
@@ -827,6 +825,41 @@ const UploadAvatar = HttpRouter.route(
         },
         member,
       );
+      return json(updated);
+    }),
+  ),
+);
+
+const DeleteAvatar = HttpRouter.route(
+  "DELETE",
+  "/api/worlds/:id/characters/:characterId/avatar",
+  route(
+    Effect.gen(function* () {
+      const { member, stub } = yield* loadWorld();
+      const params = yield* HttpRouter.params;
+      if (!params.characterId)
+        return yield* Effect.fail(new NotFound({ message: "Character not found" }));
+      const character = yield* doJson<Character>(
+        stub,
+        `character/${params.characterId}`,
+        { method: "GET" },
+        member,
+      );
+      const updated = yield* doJson<Character>(
+        stub,
+        "character/avatar",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ characterId: params.characterId, avatarKey: null }),
+        },
+        member,
+      );
+      const avatarKey = character.avatarKey;
+      if (avatarKey) {
+        const bucket = yield* Bucket;
+        yield* Effect.promise(() => bucket.delete(avatarKey));
+      }
       return json(updated);
     }),
   ),
@@ -1078,6 +1111,7 @@ export const Api = HttpRouter.addAll([
   SaveCharacter,
   DeleteCharacter,
   UploadAvatar,
+  DeleteAvatar,
   GetAvatar,
   ListMessages,
   ListNotes,
