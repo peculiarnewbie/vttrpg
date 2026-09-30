@@ -159,6 +159,13 @@ member, while DM-only entries stay hidden from players. DMs export and import
 `ttrpg-pack` JSON to move content between worlds; re-importing updates matching
 ids. Presets contain entry types only — no copyrighted game content is shipped.
 
+Entries have stable ids, `world/<type>/<slug>`, fixed when they're created, so
+renaming an entry never breaks a link or a sheet (older worlds' random ids are
+migrated once, after a backup to R2, and kept as aliases). A world holds up to
+10,000 entries: clients keep an index of names, tags and revisions, synced by
+revision after each change, and load entries' text and fields on demand; search
+over the world's WebSocket finds words in entries' text as well.
+
 - **World settings → Compendium**: define entry types (a Knight has an Ability and
   a Property list), add a premade system's types, create the types your sheet
   templates refer to, and export or import packs.
@@ -170,10 +177,13 @@ ids. Presets contain entry types only — no copyrighted game content is shipped
   _offer_ to copy the entry's lists into the sheet (a Knight's starting
   Property); it never does so on its own. Lists with a `source` gain
   "+ From compendium", which copies an entry into a row the player can change;
-  the row remembers its entry and links back to it.
-- **Links**: write `[[Entry name]]` in chat, notes, or an entry's description to
-  link an entry (typing `[[` suggests names); readers who can see the entry open
-  its card, everyone else sees the plain name. Entry cards can be shared in chat.
+  the row remembers its entry (and the revision it copied) and links back to it.
+  When the entry changes, the row shows ↻: its owner sees what changed and
+  chooses **Update the row** or **Keep mine** — rows never change on their own.
+- **Links**: typing `[[` in chat, notes, or an entry's description suggests
+  entries and inserts `[[ref:<id>|Name]]`, which survives renames; a hand-typed
+  `[[Entry name]]` still links by name. Readers who can see the entry open its
+  card, everyone else sees the plain name. Entry cards can be shared in chat.
 - Any block can be shown only while a value is empty or filled ("Only show when"),
   e.g. Bastionland's hand-typed Ability shows only until a Knight is linked.
 
