@@ -1,7 +1,15 @@
 // @vitest-environment jsdom
 import { createMemo, createRoot, flush } from "solid-js";
 import { afterEach, expect, it, vi } from "vitest";
-import type { Compendium, CompendiumPack, SaveEntryInput } from "../domain/compendium";
+import type {
+  Compendium,
+  CompendiumPack,
+  CompendiumEntry,
+  EntryBodies,
+  IndexDelta,
+  IndexRow,
+  SaveEntryInput,
+} from "../domain/compendium";
 import { api, ApiError } from "./api";
 import { createCompendium, createCompendiumRefresh } from "./compendium";
 
@@ -146,54 +154,202 @@ const pack: CompendiumPack = {
   entries: [{ ...input, id: entry.id }],
 };
 
-it("loads the Solid store, exposes lookups and retains data on failure until a successful retry", async () => {
+const row = (id: string, rev = 1, name = id): IndexRow => ({
+  id,
+  rev,
+  name,
+  typeId: "item",
+  tags: [],
+  visibility: "public",
+  updatedAt: `2026-01-${String(rev).padStart(2, "0")}`,
+});
+const body = (id: string, rev = 1): CompendiumEntry => ({
+  ...row(id, rev),
+  body: "body",
+  fields: {},
+});
+const delta = (upserts: readonly IndexRow[] = [], rev = 1, full = true): IndexDelta => ({
+  rev,
+  full,
+  upserts,
+  types: data.types,
+  deletes: [],
+});
+const harness = (
+  initial = delta(),
+  bodies = vi.fn(async (_world: string, ids: readonly string[]): Promise<EntryBodies> => ({
+    entries: ids.map((id) => body(id)),
+    missing: [],
+  })),
+) => {
   vi.useFakeTimers();
-  let fail = false;
-  const fetcher = vi.fn(async () => {
-    if (fail) throw new Error("offline");
-    return data;
-  });
+  const index = vi.fn(async () => initial);
   let dispose!: () => void;
   const store = createRoot((cleanup) => {
     dispose = cleanup;
-    const store = createCompendium("world", fetcher);
-    return { ...store, count: createMemo(() => store.entries().length) };
+    return createCompendium("world", { index, bodies });
   });
   flush();
-  expect(store.loading()).toBe(true);
-  expect(store.entries()).toEqual([]);
-  expect(store.count()).toBe(0);
-  expect(store.entry("missing")).toBeUndefined();
-  const initial = store.refresh();
+  return { store, index, bodies, dispose };
+};
+const sync = async (store: ReturnType<typeof createCompendium>) => {
+  const finished = store.refresh();
   await vi.advanceTimersByTimeAsync(30);
-  expect(await initial).toBe(true);
+  expect(await finished).toBe(true);
   flush();
-  expect(fetcher).toHaveBeenCalledExactlyOnceWith("world");
-  expect(store.loading()).toBe(false);
-  expect(store.error()).toBeUndefined();
-  expect(store.types()).toEqual(data.types);
-  expect(store.entries()).toEqual(data.entries);
-  expect(store.count()).toBe(1);
-  expect(store.entry(entry.id)).toEqual(entry);
-  expect(store.typeById("item")).toEqual(data.types[0]);
-  expect(store.typeById("missing")).toBeUndefined();
-  expect(store.entriesOfType("item")).toEqual([entry]);
-  expect(store.entriesOfType("missing")).toEqual([]);
-  fail = true;
-  const failed = store.refresh();
+};
+
+it("applies full and delta indexes, sorts rows, replaces types, and normalizes names", async () => {
+  const h = harness(delta([row("b"), row("a"), row("c", 2, " Épée   fine ")], 2));
+  const count = createMemo(() => h.store.rows().length);
+  await sync(h.store);
+  expect(h.index).toHaveBeenCalledExactlyOnceWith("world", 0);
+  expect(h.store.rows().map((row) => row.id)).toEqual(["c", "a", "b"]);
+  expect(h.store.rowsOfType("item")).toHaveLength(3);
+  expect(h.store.rowsOfType("none")).toEqual([]);
+  expect(h.store.rowByName("epee fine")?.id).toBe("c");
+  expect(h.store.rowByName("  ")).toBeUndefined();
+  expect(count()).toBe(3);
+  h.index.mockResolvedValueOnce({ ...delta([row("a", 3)], 3, false), types: [], deletes: ["b"] });
+  await sync(h.store);
+  expect(h.index).toHaveBeenLastCalledWith("world", 2);
+  expect(h.store.row("a")?.rev).toBe(3);
+  expect(h.store.row("b")).toBeUndefined();
+  expect(h.store.types()).toEqual([]);
+  expect(count()).toBe(2);
+  h.index.mockResolvedValueOnce(delta([row("replacement")], 4));
+  await sync(h.store);
+  expect(h.store.rows().map((row) => row.id)).toEqual(["replacement"]);
+  h.dispose();
+  expect(await h.store.refresh()).toBe(false);
+});
+
+it("keeps index data on failure and clears the error on retry", async () => {
+  const h = harness(delta([row("a")]));
+  await sync(h.store);
+  h.index.mockRejectedValueOnce(new Error("offline"));
+  const failed = h.store.refresh();
   await vi.advanceTimersByTimeAsync(30);
   expect(await failed).toBe(false);
   flush();
-  expect(store.error()).toBe("offline");
-  expect(store.entries()).toEqual(data.entries);
-  fail = false;
-  const retry = store.refresh();
-  await vi.advanceTimersByTimeAsync(30);
-  expect(await retry).toBe(true);
+  expect(h.store.error()).toBe("offline");
+  expect(h.store.row("a")).toEqual(row("a"));
+  await sync(h.store);
+  expect(h.store.error()).toBeUndefined();
+  h.dispose();
+});
+
+it("batches reads in a microtask, shares pending loads, and serves cache hits reactively", async () => {
+  const h = harness(delta([row("a"), row("b")]));
+  await sync(h.store);
+  const loaded = createMemo(() => h.store.entry("a"));
+  expect(h.store.entry("a")).toBeUndefined();
+  expect(h.store.entry("b")).toBeUndefined();
+  expect(h.bodies).not.toHaveBeenCalled();
+  expect(await h.store.load(["b", "a", "a"])).toEqual([body("b"), body("a"), body("a")]);
   flush();
-  expect(store.error()).toBeUndefined();
-  dispose();
-  expect(await store.refresh()).toBe(false);
+  expect(loaded()).toEqual(body("a"));
+  expect(h.bodies).toHaveBeenCalledExactlyOnceWith("world", ["a", "b"]);
+  expect(await h.store.load(["a"])).toEqual([body("a")]);
+  expect(h.store.entriesOfType("item")).toHaveLength(2);
+  expect(h.bodies).toHaveBeenCalledTimes(1);
+  h.dispose();
+});
+
+it("splits requests at 100 ids and resolves loads in input order even beyond the LRU bound", async () => {
+  const h = harness();
+  await sync(h.store);
+  const ids = Array.from({ length: 501 }, (_, i) => String(i));
+  expect((await h.store.load(ids)).map((entry) => entry.id)).toEqual(ids);
+  expect(h.bodies.mock.calls.map((call) => call[1].length)).toEqual([100, 100, 100, 100, 100, 1]);
+  expect(h.store.entries()).toHaveLength(500);
+  expect(h.store.entry("0")).toBeUndefined();
+  await h.store.load(["0"]);
+  expect(h.store.entries()).toHaveLength(500);
+  h.dispose();
+});
+
+it("touches cache entries on reads so the least recently used entry is evicted", async () => {
+  const h = harness();
+  await sync(h.store);
+  await h.store.load(Array.from({ length: 500 }, (_, i) => String(i)));
+  expect(h.store.entry("0")).toEqual(body("0"));
+  await h.store.load(["500"]);
+  expect(h.store.entry("0")).toEqual(body("0"));
+  expect(h.store.entry("1")).toBeUndefined();
+  h.dispose();
+});
+
+it("remembers misses and invalidates cached bodies and misses on index changes or deletes", async () => {
+  const h = harness(delta([row("a"), row("missing")]));
+  await sync(h.store);
+  h.bodies.mockResolvedValueOnce({ entries: [body("a")], missing: ["missing"] });
+  expect(await h.store.load(["a", "missing"])).toEqual([body("a")]);
+  expect(h.store.missing("missing")).toBe(true);
+  h.store.entry("missing");
+  expect(await h.store.load(["missing"])).toEqual([]);
+  expect(h.bodies).toHaveBeenCalledTimes(1);
+  h.index.mockResolvedValueOnce(delta([row("a", 2), row("missing", 2)], 2, false));
+  await sync(h.store);
+  expect(h.store.entry("a")).toBeUndefined();
+  expect(h.store.missing("missing")).toBe(false);
+  h.bodies.mockResolvedValueOnce({ entries: [body("a", 2), body("missing", 2)], missing: [] });
+  await h.store.load(["a", "missing"]);
+  h.index.mockResolvedValueOnce({ ...delta([], 3, false), deletes: ["a"] });
+  await sync(h.store);
+  expect(h.store.entries().map((entry) => entry.id)).toEqual(["missing"]);
+  h.dispose();
+});
+
+it("caches aliases under both ids and invalidates both when the canonical entry changes", async () => {
+  const h = harness(delta([row("world/item/a")]));
+  await sync(h.store);
+  h.bodies.mockResolvedValueOnce({
+    entries: [body("world/item/a")],
+    missing: [],
+    aliases: { ent_a: "world/item/a" },
+  });
+  expect(await h.store.load(["ent_a"])).toEqual([body("world/item/a")]);
+  expect(h.store.entry("ent_a")).toEqual(body("world/item/a"));
+  expect(h.store.entry("world/item/a")).toEqual(body("world/item/a"));
+  expect(h.store.entries()).toHaveLength(1);
+  expect(h.bodies).toHaveBeenCalledTimes(1);
+  h.index.mockResolvedValueOnce(delta([row("world/item/a", 2)], 2, false));
+  await sync(h.store);
+  expect(h.store.entry("ent_a")).toBeUndefined();
+  h.dispose();
+});
+
+it("reports failed batches without caching misses and retries on the next read", async () => {
+  const h = harness();
+  await sync(h.store);
+  h.bodies.mockRejectedValueOnce(new Error("offline"));
+  expect(await h.store.load(["a"])).toEqual([]);
+  flush();
+  expect(h.store.error()).toBe("offline");
+  expect(h.store.missing("a")).toBe(false);
+  expect(h.store.entry("a")).toBeUndefined();
+  expect(await h.store.load(["a"])).toEqual([body("a")]);
+  flush();
+  expect(h.store.error()).toBeUndefined();
+  expect(h.bodies).toHaveBeenCalledTimes(2);
+  h.dispose();
+});
+
+it("discards bodies fetched before a newer index revision and settles loads on disposal", async () => {
+  const h = harness(delta([row("a")]));
+  await sync(h.store);
+  const fetched = deferred<EntryBodies>();
+  h.bodies.mockReturnValueOnce(fetched.promise);
+  const loaded = h.store.load(["a"]);
+  await Promise.resolve();
+  h.index.mockResolvedValueOnce(delta([row("a", 2)], 2, false));
+  await sync(h.store);
+  fetched.resolve({ entries: [body("a")], missing: [] });
+  expect(await loaded).toEqual([]);
+  const waiting = h.store.load(["b"]);
+  h.dispose();
+  expect(await waiting).toEqual([]);
 });
 
 it("sends typed compendium API requests, encodes ids, and decodes each response", async () => {
@@ -244,4 +400,89 @@ it("sends typed compendium API requests, encodes ids, and decodes each response"
   await expect(api.getCompendium("world")).rejects.toThrow();
   fetch.mockResolvedValueOnce(Response.json({ error: "DM only" }, { status: 403 }));
   await expect(api.saveEntry("world", input)).rejects.toThrow(new ApiError("DM only"));
+});
+
+it("sends and decodes index and body requests and checks the batch limit", async () => {
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  fetch.mockResolvedValueOnce(Response.json(delta([row("a")], 5)));
+  expect(await api.getCompendiumIndex("world/id", 3)).toEqual(delta([row("a")], 5));
+  expect(fetch).toHaveBeenLastCalledWith(
+    "/api/worlds/world%2Fid/compendium/index?since=3",
+    expect.anything(),
+  );
+  const response = { entries: [body("a")], missing: [], aliases: { ent_a: "a" } };
+  fetch.mockResolvedValueOnce(Response.json(response));
+  expect(await api.getEntryBodies("world/id", ["ent_a"])).toEqual(response);
+  expect(fetch).toHaveBeenLastCalledWith(
+    "/api/worlds/world%2Fid/compendium/bodies",
+    expect.objectContaining({ method: "POST", body: JSON.stringify({ ids: ["ent_a"] }) }),
+  );
+  await expect(api.getEntryBodies("world", Array(101).fill("a"))).rejects.toThrow("At most 100");
+  expect(fetch).toHaveBeenCalledTimes(2);
+  fetch.mockResolvedValueOnce(Response.json({ ...delta(), rev: "bad" }));
+  await expect(api.getCompendiumIndex("world", 0)).rejects.toThrow();
+  fetch.mockResolvedValueOnce(
+    Response.json({ entries: [{ ...body("a"), body: 42 }], missing: [] }),
+  );
+  await expect(api.getEntryBodies("world", ["a"])).rejects.toThrow();
+});
+
+it("coalesces store refreshes and uses the revision just applied without a Solid flush", async () => {
+  const h = harness();
+  const first = deferred<IndexDelta>();
+  h.index.mockReturnValueOnce(first.promise);
+  const finished = h.store.refresh();
+  await vi.advanceTimersByTimeAsync(30);
+  expect(h.store.refresh()).toBe(finished);
+  expect(h.store.refresh()).toBe(finished);
+  first.resolve(delta([row("a")], 7));
+  h.index.mockResolvedValueOnce(delta([], 8, false));
+  expect(await finished).toBe(true);
+  expect(h.index.mock.calls).toEqual([
+    ["world", 0],
+    ["world", 7],
+  ]);
+  expect(h.store.rev()).toBe(8);
+  h.dispose();
+});
+
+it("does not restore a deleted entry from an alias first resolved by an in-flight body request", async () => {
+  const h = harness(delta([row("world/item/a")]));
+  await sync(h.store);
+  const response = deferred<EntryBodies>();
+  h.bodies.mockReturnValueOnce(response.promise);
+  const loaded = h.store.load(["ent_a"]);
+  await Promise.resolve();
+  h.index.mockResolvedValueOnce({ ...delta([], 2, false), deletes: ["world/item/a"] });
+  await sync(h.store);
+  response.resolve({
+    entries: [body("world/item/a")],
+    missing: [],
+    aliases: { ent_a: "world/item/a" },
+  });
+  expect(await loaded).toEqual([]);
+  expect(h.store.entries()).toEqual([]);
+  h.dispose();
+});
+
+it("does not remember a stale missing alias if the index changes during the request", async () => {
+  const h = harness();
+  await sync(h.store);
+  const response = deferred<EntryBodies>();
+  h.bodies.mockReturnValueOnce(response.promise);
+  const loaded = h.store.load(["ent_a"]);
+  await Promise.resolve();
+  h.index.mockResolvedValueOnce(delta([row("world/item/a", 2)], 2, false));
+  await sync(h.store);
+  response.resolve({ entries: [], missing: ["ent_a"] });
+  expect(await loaded).toEqual([]);
+  expect(h.store.missing("ent_a")).toBe(false);
+  h.bodies.mockResolvedValueOnce({
+    entries: [body("world/item/a", 2)],
+    missing: [],
+    aliases: { ent_a: "world/item/a" },
+  });
+  expect(await h.store.load(["ent_a"])).toEqual([body("world/item/a", 2)]);
+  h.dispose();
 });
