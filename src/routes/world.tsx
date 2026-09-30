@@ -224,7 +224,8 @@ export default function WorldPage() {
               setPresence([...frame.members]);
               break;
             case "error":
-              resetCharacterUpdates();
+              // A roll that failed to parse leaves sheet edits alone.
+              if (frame.code !== "roll") resetCharacterUpdates();
               if (frame.message) setError(frame.message);
               break;
           }

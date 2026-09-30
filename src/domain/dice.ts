@@ -37,7 +37,8 @@ export const capDice = (dice: readonly DiceGroup[], max: number = MAX_DICE): Dic
 export const parseRollCommand = (input: string): string | null => {
   const match = /^\/roll\s*(.*)$/i.exec(input.trim());
   if (!match) return null;
-  return match[1].replace(/\s+/g, "").toLowerCase() || null;
+  // Refs are case-sensitive; the notation parser accepts `D20` as well as `d20`.
+  return match[1].replace(/\s+/g, "") || null;
 };
 
 const defaultRng: Rng = () => Math.random();

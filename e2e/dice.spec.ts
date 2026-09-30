@@ -93,7 +93,7 @@ test("derived values show on the sheet and rolls resolve them", async ({ table }
 
   // Zero dots: two dice, the higher one dropped.
   await sheet.getByRole("button", { name: "Hunt" }).click();
-  await expect(page.getByText("(0)d6khz").first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("(@hunt)d6khz").first()).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTitle("Dropped").first()).toBeVisible();
 
   // The DM sees the same rolls; nothing was written to the character.

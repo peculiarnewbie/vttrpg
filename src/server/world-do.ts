@@ -1176,9 +1176,11 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
 
     let character: Character | undefined;
     if (notationRefs(parsed.value).length || frame.characterId !== undefined) {
-      if (frame.characterId === undefined)
+      // `/roll 1d20 + @str_mod` in chat reads the sender's own character.
+      const characterId = frame.characterId ?? this.characterForMember(attachment.memberId)?.id;
+      if (characterId === undefined)
         return { ok: false, error: "Choose a character to roll sheet values" };
-      character = this.getCharacter(frame.characterId);
+      character = this.getCharacter(characterId);
       if (!character) return { ok: false, error: "Character not found" };
       if (!this.canEditCharacter(character.id, attachment.memberId, attachment.role))
         return { ok: false, error: "You cannot roll for this character" };

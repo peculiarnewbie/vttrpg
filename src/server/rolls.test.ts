@@ -288,12 +288,21 @@ describe("notation rolls", () => {
     expect(result.modifiers).toEqual([{ label: "STR mod", value: 2 }]);
   });
 
-  it("rejects refs without an explicit character and nonexistent characters, including for a DM", async () => {
-    await create();
+  it("reads the sender's own character without an explicit one, and rejects missing characters", async () => {
+    const character = await create();
     const owner = await connect(playerCookie);
+    const other = await connect(otherCookie);
     const dm = await connect(cookie);
-    await rejected(owner, dm, diceFrame("1d20+@str_mod"));
-    await rejected(owner, dm, diceFrame("(@str)d6"));
+    const { message, result } = await roll(owner, diceFrame("/roll 1d20+@str_mod"));
+    expect(message.characterId).toBe(character.id);
+    expect(result.modifiers).toEqual([{ label: "STR mod", value: 2 }]);
+    await rejected(other, dm, diceFrame("(@str)d6"), "Choose a character to roll sheet values");
+    await rejected(
+      dm,
+      owner,
+      diceFrame("1d20+@str_mod"),
+      "Choose a character to roll sheet values",
+    );
     await rejected(dm, owner, diceFrame("1d20", { characterId: "missing" }), "Character not found");
   });
 

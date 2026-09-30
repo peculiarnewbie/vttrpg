@@ -72,6 +72,7 @@ describe("parseRollCommand", () => {
     expect(parseRollCommand("/roll2d20")).toBe("2d20");
     expect(parseRollCommand("hello")).toBeNull();
     expect(parseRollCommand("/roll")).toBeNull();
+    expect(parseRollCommand("/roll 1d20 + @Str_mod")).toBe("1d20+@Str_mod");
   });
 });
 
