@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 import { ClientFrame, ServerFrame, type ClientFrame as ClientFrameType } from "../domain/schemas";
+import type { SearchRequest } from "./search";
 
 export type RealtimeStatus = "connecting" | "open" | "closed";
 
@@ -11,6 +12,13 @@ export type RealtimeHandlers = {
 export type RealtimeController = {
   send: (frame: ClientFrameType) => void;
   close: () => void;
+  /**
+   * Search the compendium: sends a `search` frame with a fresh requestId and
+   * resolves with the matching `search.result`. Rejects on an `error` frame
+   * with that requestId, after 5 s, or if the socket isn't open or closes.
+   * Replies are also passed to `onFrame` like any frame.
+   */
+  search: SearchRequest;
 };
 
 export function connectWorld(worldId: string, handlers: RealtimeHandlers): RealtimeController {
@@ -54,5 +62,6 @@ export function connectWorld(worldId: string, handlers: RealtimeHandlers): Realt
       if (retry) clearTimeout(retry);
       socket?.close();
     },
+    search: () => Promise.reject(new Error("not implemented")),
   };
 }

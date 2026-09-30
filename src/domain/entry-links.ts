@@ -6,7 +6,22 @@ import type { CompendiumEntry } from "./compendium";
  * miss (they fall back to the text); entries a member can't see never resolve.
  */
 
-export type LinkPart = { kind: "text"; text: string } | { kind: "link"; name: string };
+/*
+ * Since phase 2 links also come as `[[ref:<entry id>|Label]]`: pickers and the
+ * `[[` suggestions insert this form, so a link survives renames and tells two
+ * entries with the same name apart. The label is what readers see (and what
+ * shows if the entry is gone). `[[Name]]` still works, resolved by name.
+ */
+
+export type LinkPart =
+  | { kind: "text"; text: string }
+  | { kind: "link"; name: string }
+  | { kind: "ref"; id: string; label: string };
+
+/** `[[ref:id|Label]]`; `|` and brackets are removed from the label. */
+export const formatRefLink = (_id: string, _label: string): string => {
+  throw new Error("not implemented");
+};
 
 /** Matches `[[name]]`: 1–120 characters, no brackets or line breaks inside. */
 export const ENTRY_LINK = /\[\[([^[\]\n]{1,120})\]\]/g;

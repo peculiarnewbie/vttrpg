@@ -71,5 +71,10 @@ export const entryFieldsForDisplay = (
       : [];
   });
 
+/** The entry revision a copied row was taken at (`_rev`), if it recorded one. */
+export const revOf = (_row: ListRow): number | undefined => {
+  throw new Error("not implemented");
+};
+
 export const sourceOf = (row: ListRow): string | undefined =>
   typeof row._entry === "string" && row._entry ? row._entry : undefined;
