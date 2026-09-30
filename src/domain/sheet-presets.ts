@@ -31,6 +31,16 @@ const bastionBonds = {
   ],
 } as const;
 
+const bastionKnight = {
+  id: "knight-entry",
+  type: "entry",
+  key: "knight",
+  entryType: "knight",
+  label: "Knight",
+  show: ["ability"],
+  fill: [{ from: "property", to: "property" }],
+} as const;
+
 export const bastionlandClassic: SheetLayout = {
   system: "Mythic Bastionland",
   name: "Classic",
@@ -80,7 +90,11 @@ export const bastionlandClassic: SheetLayout = {
           type: "group",
           title: "The Knight",
           wide: 3,
-          blocks: [bastionBonds, { id: "ability", type: "text", key: "ability", label: "Ability" }],
+          blocks: [
+            bastionKnight,
+            bastionBonds,
+            { id: "ability", type: "text", key: "ability", label: "Ability" },
+          ],
         },
         {
           id: "scars",
@@ -147,6 +161,7 @@ export const bastionlandCompact: SheetLayout = {
         },
         { ...bastionProperty, variant: "slots", span: 6, wide: 3 },
         { ...bastionBonds, variant: "inline", span: 6, wide: 3 },
+        { ...bastionKnight, span: 6, wide: 3 },
         {
           id: "fatigue",
           type: "checks",
@@ -246,6 +261,7 @@ export const mothership: SheetLayout = {
           id: "weapons",
           type: "list",
           key: "weapons",
+          source: { entryType: "weapon" },
           title: "Weapons",
           variant: "cards",
           wide: 3,
@@ -259,6 +275,7 @@ export const mothership: SheetLayout = {
           id: "gear",
           type: "list",
           key: "gear",
+          source: { entryType: "item" },
           title: "Gear",
           wide: 3,
           columns: [
