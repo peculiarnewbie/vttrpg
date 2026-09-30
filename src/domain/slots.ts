@@ -6,8 +6,9 @@ import type { ListRow } from "./sheet-layout";
  */
 
 /** How many slots a row takes: its `sizeKey` value if a positive integer (max 10), else 1. */
-export const rowSize = (_row: ListRow, _sizeKey: string | undefined): number => {
-  throw new Error("not implemented");
+export const rowSize = (row: ListRow, sizeKey: string | undefined): number => {
+  const size = sizeKey === undefined ? undefined : row[sizeKey];
+  return typeof size === "number" && Number.isInteger(size) && size > 0 ? Math.min(10, size) : 1;
 };
 
 /**
@@ -15,11 +16,18 @@ export const rowSize = (_row: ListRow, _sizeKey: string | undefined): number => 
  * takes, in row order. `used` is the total; it may exceed the slot count.
  */
 export const slotLayout = (
-  _rows: readonly ListRow[],
-  _sizeKey: string | undefined,
+  rows: readonly ListRow[],
+  sizeKey: string | undefined,
 ): {
   readonly placed: readonly { index: number; start: number; size: number }[];
   readonly used: number;
 } => {
-  throw new Error("not implemented");
+  let used = 0;
+  const placed = rows.map((row, index) => {
+    const size = rowSize(row, sizeKey);
+    const start = used;
+    used += size;
+    return { index, start, size };
+  });
+  return { placed, used };
 };

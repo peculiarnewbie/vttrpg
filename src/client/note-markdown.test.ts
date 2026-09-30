@@ -73,3 +73,36 @@ it("resolves malformed references as name links and handles long ids", () => {
     `data-entry-id="${id}">Long`,
   );
 });
+
+it("renders labelled and unlabelled inline rolls as buttons without resolving entries", () => {
+  const seen: string[] = [];
+  expect(
+    renderNoteMarkdown("[[r:2d6+1|Damage]] [[r:d%]]", ({ name }) => {
+      seen.push(name);
+      return undefined;
+    }),
+  ).toBe(
+    '<p><button type="button" class="ttrpg-inline-roll" data-roll="2d6+1" data-label="Damage">Damage</button> <button type="button" class="ttrpg-inline-roll" data-roll="d%" data-label="d%">d%</button></p>',
+  );
+  expect(seen).toEqual([]);
+  expect(renderNoteMarkdown("[[r:d6|]]")).toBe(
+    '<p><button type="button" class="ttrpg-inline-roll" data-roll="d6" data-label=""></button></p>',
+  );
+});
+
+it("escapes roll notation, labels, and invalid links without dropping or duplicating text", () => {
+  expect(renderNoteMarkdown("before [[r:bad<script>|<img>]] after [[Plain]]")).toBe(
+    '<p>before [[r:bad&lt;script&gt;|&lt;img&gt;]] after <span class="ttrpg-entry-missing">Plain</span></p>',
+  );
+  const html = renderNoteMarkdown("[[r:d6+@{a\"<>&'}|<img src=x onerror=\"evil\"> & 'text']]");
+  expect(html).toContain('data-roll="d6+@{a&quot;&lt;&gt;&amp;&#39;}"');
+  expect(html).toContain(
+    'data-label="&lt;img src=x onerror=&quot;evil&quot;&gt; &amp; &#39;text&#39;"',
+  );
+  expect(html).not.toContain("<img");
+  expect(html).not.toContain('onerror="evil"');
+  expect(renderNoteMarkdown("`[[r:d6]]`\n\n```\n[[r:d6]]\n```")).not.toContain("ttrpg-inline-roll");
+  expect(renderNoteMarkdown("[[r:]] middle [[r:d0]] end")).toBe(
+    "<p>[[r:]] middle [[r:d0]] end</p>",
+  );
+});

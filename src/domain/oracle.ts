@@ -16,14 +16,35 @@ export type OracleRow = { readonly min: number; readonly max: number; readonly t
  * most 200. Gaps are allowed (a total in a gap lands on no row). Rows come
  * back sorted by `min`.
  */
-export const oracleRows = (_value: unknown): Parsed<readonly OracleRow[]> => {
-  throw new Error("not implemented");
+export const oracleRows = (value: unknown): Parsed<readonly OracleRow[]> => {
+  if (!Array.isArray(value) || value.length > 200)
+    return { ok: false, error: "Oracle must have at most 200 rows" };
+  const rows: OracleRow[] = [];
+  for (const row of value) {
+    if (
+      typeof row !== "object" ||
+      row === null ||
+      Array.isArray(row) ||
+      !Number.isInteger(row.min) ||
+      !Number.isInteger(row.max) ||
+      row.min > row.max ||
+      typeof row.text !== "string" ||
+      !row.text.trim()
+    )
+      return { ok: false, error: "Oracle rows need integer min ≤ max and text" };
+    rows.push({ min: row.min, max: row.max, text: row.text });
+  }
+  rows.sort((a, b) => a.min - b.min);
+  for (let index = 1; index < rows.length; index++) {
+    if (rows[index].min <= rows[index - 1].max)
+      return { ok: false, error: "Oracle rows must not overlap" };
+  }
+  return { ok: true, value: rows };
 };
 
 /** The row covering `total`, if any. */
-export const oracleRow = (_rows: readonly OracleRow[], _total: number): OracleRow | undefined => {
-  throw new Error("not implemented");
-};
+export const oracleRow = (rows: readonly OracleRow[], total: number): OracleRow | undefined =>
+  Number.isFinite(total) ? rows.find((row) => row.min <= total && total <= row.max) : undefined;
 
 /** Rows as they're stored in an entry's fields (ListRow[]). */
 export const oracleListRows = (rows: readonly OracleRow[]): ListRow[] =>

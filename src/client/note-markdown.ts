@@ -30,10 +30,14 @@ function inline(text: string, entryLink?: EntryLinkResolver): string {
     result += escapeHtml(text.slice(offset, match.index));
     if (match[1] !== undefined) {
       const part = splitEntryLinks(match[0])[0];
-      if (part.kind === "text") continue;
-      // TODO(p3-domain): inline rolls render as buttons carrying data-roll.
+      if (part.kind === "text") {
+        result += escapeHtml(part.text);
+        offset = match.index + match[0].length;
+        continue;
+      }
       if (part.kind === "roll") {
-        result += escapeHtml(part.label ?? part.notation);
+        const label = part.label ?? part.notation;
+        result += `<button type="button" class="ttrpg-inline-roll" data-roll="${escapeHtml(part.notation)}" data-label="${escapeHtml(label)}">${escapeHtml(label)}</button>`;
         offset = match.index + match[0].length;
         continue;
       }
