@@ -255,6 +255,7 @@ const summarize = (block: LayoutBlock): string => {
       return block.title ?? block.key;
     case "checks":
     case "text":
+    case "entry":
       return block.label ?? block.key;
     case "trackers":
     case "stats":

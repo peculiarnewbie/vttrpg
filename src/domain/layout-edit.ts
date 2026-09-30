@@ -220,6 +220,7 @@ export const blockTypes: { type: BlockType; label: string }[] = [
   { type: "checks", label: "Checkboxes" },
   { type: "text", label: "Text" },
   { type: "rolls", label: "Rolls" },
+  { type: "entry", label: "Compendium entry" },
   { type: "group", label: "Group" },
 ];
 
@@ -257,6 +258,8 @@ export const newBlock = (layout: SheetLayout, type: BlockType): LayoutBlock => {
       return { id, type, key, label: "Notes" };
     case "rolls":
       return { id, type, items: [{ label: "Roll", dice: "d20" }] };
+    case "entry":
+      return { id, type, key, entryType: "", label: "Entry" };
     case "group":
       return { id, type, title: "Group", blocks: [] };
   }
@@ -273,6 +276,7 @@ export const layoutKeys = (layout: SheetLayout): string[] =>
       case "list":
       case "checks":
       case "text":
+      case "entry":
         return [block.key];
       default:
         return [];

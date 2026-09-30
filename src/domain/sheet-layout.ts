@@ -28,6 +28,7 @@ export const blockVariants = {
   checks: ["boxes", "tags"],
   text: ["plain"],
   rolls: ["buttons"],
+  entry: ["card", "line"],
   group: ["plain", "framed"],
 } as const;
 export type BlockType = keyof typeof blockVariants;
@@ -110,6 +111,12 @@ const leafBlocks = [
     columns: Schema.Array(ListColumn),
     /** Render this many rows even when empty (inventory slots, harm lines). */
     slots: Schema.optional(Schema.Int),
+    /**
+     * Rows can be added from compendium entries of this type: the entry's name
+     * fills a `name` column and fields fill columns with the same key. Rows are
+     * copies (players may change them) that remember their entry in `_entry`.
+     */
+    source: Schema.optional(Schema.Struct({ entryType: Schema.String })),
   }),
   Schema.Struct({
     ...common,
@@ -131,6 +138,27 @@ const leafBlocks = [
     type: Schema.Literal("rolls"),
     variant: variantOf("rolls"),
     items: Schema.Array(Schema.Struct({ label: Schema.String, dice: Schema.String })),
+  }),
+  /**
+   * One compendium entry picked for the character (a Knight, a class). The value
+   * at `key` is the entry id; the sheet shows the entry live, so compendium edits
+   * show up on every sheet that links it.
+   */
+  Schema.Struct({
+    ...common,
+    type: Schema.Literal("entry"),
+    variant: variantOf("entry"),
+    key: Schema.String,
+    /** Compendium entry type id the picker offers, e.g. "knight". */
+    entryType: Schema.String,
+    label: Schema.optional(Schema.String),
+    /** Entry field keys to show on the sheet, in order; defaults to all fields. */
+    show: Schema.optional(Schema.Array(Schema.String)),
+    /**
+     * Offered, never automatic: after picking, copy an entry's list field into
+     * the character's list at `to` (a Knight's starting Property).
+     */
+    fill: Schema.optional(Schema.Array(Schema.Struct({ from: Schema.String, to: Schema.String }))),
   }),
 ] as const;
 
