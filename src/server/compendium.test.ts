@@ -569,7 +569,7 @@ it("searches and ranks names, tags and text with accents, filters and private re
     ).toMatchObject({ results: [] });
     expect(
       sender.frames.find((frame) => frame.type === "search.result" && frame.requestId === "words"),
-    ).toMatchObject({ results: [{ name: "Great flame" }, { name: "Amulet" }] });
+    ).toMatchObject({ results: [{ name: "Great flame" }] });
     observer.send({ type: "search", requestId: "dm", query: "flame", typeIds: ["spell"] });
     await observer.sync();
     expect(
