@@ -28,30 +28,53 @@ function MessageText(props: {
   content: string;
   compendium?: CompendiumStore;
   onOpenEntry?: (entryId: string) => void;
+  /** Roll an inline `[[r:…]]` roll someone wrote. */
+  onRollInline?: (notation: string, label: string) => void;
 }) {
   return (
     <For each={splitEntryLinks(props.content)}>
       {(part) => (
-        <Show when={part.kind !== "text" && part} fallback={(part as { text: string }).text}>
-          {(link) => {
-            const target = () =>
-              link().kind === "ref"
-                ? { id: (link() as { id: string }).id, name: (link() as { label: string }).label }
-                : { name: (link() as { name: string }).name };
-            return (
-              <Show when={linkedRow(props.compendium, target())} fallback={target().name}>
-                {(row) => (
-                  <button
-                    type="button"
-                    class="ttrpg-entry-link"
-                    onClick={() => props.onOpenEntry?.(row().id)}
-                  >
-                    {row().name}
-                  </button>
-                )}
-              </Show>
-            );
-          }}
+        <Show
+          when={part.kind === "roll" && part}
+          fallback={
+            <Show
+              when={part.kind !== "text" && part.kind !== "roll" && part}
+              fallback={(part as { text: string }).text}
+            >
+              {(link) => {
+                const target = () =>
+                  link().kind === "ref"
+                    ? {
+                        id: (link() as { id: string }).id,
+                        name: (link() as { label: string }).label,
+                      }
+                    : { name: (link() as { name: string }).name };
+                return (
+                  <Show when={linkedRow(props.compendium, target())} fallback={target().name}>
+                    {(row) => (
+                      <button
+                        type="button"
+                        class="ttrpg-entry-link"
+                        onClick={() => props.onOpenEntry?.(row().id)}
+                      >
+                        {row().name}
+                      </button>
+                    )}
+                  </Show>
+                );
+              }}
+            </Show>
+          }
+        >
+          {(roll) => (
+            <button
+              type="button"
+              class="ttrpg-inline-roll"
+              onClick={() => props.onRollInline?.(roll().notation, roll().label ?? roll().notation)}
+            >
+              {roll().label ?? roll().notation}
+            </button>
+          )}
         </Show>
       )}
     </For>
@@ -64,6 +87,8 @@ function MessageCard(props: {
   worldId: string;
   compendium?: CompendiumStore;
   onOpenEntry?: (entryId: string) => void;
+  /** Roll an inline `[[r:…]]` roll someone wrote. */
+  onRollInline?: (notation: string, label: string) => void;
 }) {
   const message = props.message;
   const avatarSrc = () =>
@@ -109,6 +134,7 @@ function MessageCard(props: {
               content={message.content}
               compendium={props.compendium}
               onOpenEntry={props.onOpenEntry}
+              onRollInline={props.onRollInline}
             />
           </div>
           <DiceView message={message} />
@@ -138,6 +164,8 @@ export function Chat(props: {
   /** For `[[Entry]]` links in messages and suggestions while typing. */
   compendium?: CompendiumStore;
   onOpenEntry?: (entryId: string) => void;
+  /** Roll an inline `[[r:…]]` roll someone wrote. */
+  onRollInline?: (notation: string, label: string) => void;
 }) {
   let scrollRef: HTMLDivElement | undefined;
   let pendingPreserve: number | null = null;
@@ -314,6 +342,7 @@ export function Chat(props: {
                   worldId={props.worldId}
                   compendium={props.compendium}
                   onOpenEntry={props.onOpenEntry}
+                  onRollInline={props.onRollInline}
                 />
               </div>
             )}

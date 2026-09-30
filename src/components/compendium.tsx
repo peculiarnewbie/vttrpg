@@ -14,7 +14,13 @@ import { indexEntries, searchIndex } from "../domain/compendium-search";
 import type { CompendiumStore } from "../client/compendium-store";
 import { createSearch, type SearchRequest } from "../client/search";
 import type { CharacterValue } from "../domain/schemas";
-import type { LayoutBlock, ListRow, SheetLayout, SheetValues } from "../domain/sheet-layout";
+import type {
+  LayoutBlock,
+  ListColumn,
+  ListRow,
+  SheetLayout,
+  SheetValues,
+} from "../domain/sheet-layout";
 import { colors, fonts, radii, skin } from "../theme/tokens.stylex";
 import { sx } from "../theme/sx";
 import { ListEditor, SheetBlocks } from "./sheet-blocks";
@@ -41,7 +47,9 @@ const filled = (value: CharacterValue | undefined) =>
 /** A read-only layout for one entry: short fields together, prose and lists below; empty fields skipped. */
 const entryLayout = (type: EntryType, entry: CompendiumEntry): SheetLayout => {
   const fields = type.fields.filter((field) => filled(entry.fields[field.key]));
-  const short = fields.filter((field) => ["text", "number", "dice", "tags"].includes(field.kind));
+  const short = fields.filter((field) =>
+    ["text", "number", "dice", "tags", "select", "set"].includes(field.kind),
+  );
   const blocks: LayoutBlock[] = [];
   if (short.length)
     blocks.push({
@@ -53,45 +61,114 @@ const entryLayout = (type: EntryType, entry: CompendiumEntry): SheetLayout => {
   for (const field of fields) {
     if (field.kind === "longtext")
       blocks.push({ id: field.key, type: "text", key: field.key, label: field.label });
-    if (field.kind === "list")
+    if (field.kind === "list" || field.kind === "actions" || field.kind === "progression")
       blocks.push({
         id: field.key,
         type: "list",
         key: field.key,
         title: field.label,
-        columns: field.columns ?? [],
+        columns: fieldColumns(field),
       });
   }
   return { system: type.name, name: type.name, pages: [{ id: "entry", title: "", blocks }] };
 };
 
-/** Field values as the sheet renderer reads them (tags shown as text). */
+/** Field values as the sheet renderer reads them (tags and sets shown as text). */
 const entryValues = (entry: CompendiumEntry, type: EntryType): SheetValues =>
   Object.fromEntries(
     type.fields.map((field) => {
       const value = entry.fields[field.key];
       return [
         field.key,
-        field.kind === "tags" && Array.isArray(value)
+        (field.kind === "tags" || field.kind === "set") && Array.isArray(value)
           ? value.join(", ")
           : (value as SheetValues[string]),
       ];
     }),
   );
 
+/** The row shape of the kinds that are stored as rows. */
+const fieldColumns = (field: EntryField): ListColumn[] =>
+  field.kind === "actions"
+    ? [
+        { key: "name", label: "Action", kind: "text" },
+        { key: "roll", label: "Roll", kind: "dice" },
+        { key: "text", label: "Effect", kind: "text" },
+      ]
+    : field.kind === "progression"
+      ? [{ key: "level", label: "Level", kind: "number" }, ...(field.columns ?? [])]
+      : field.kind === "oracle"
+        ? [
+            { key: "min", label: "From", kind: "number" },
+            { key: "max", label: "To", kind: "number" },
+            { key: "text", label: "Result", kind: "text" },
+          ]
+        : [...(field.columns ?? [])];
+
+const rowsOf = (value: CharacterValue | undefined) =>
+  (Array.isArray(value) ? value : []).filter(
+    (row): row is ListRow => typeof row === "object" && row !== null && !Array.isArray(row),
+  );
+
+const ids = (value: CharacterValue | undefined) =>
+  typeof value === "string" && value ? [value] : Array.isArray(value) ? (value as string[]) : [];
+
+/** An oracle table: its roll, and each row's range. What a row means is up to the table. */
+function OracleTable(props: { field: EntryField; rows: readonly ListRow[]; onRoll?: () => void }) {
+  const range = (row: ListRow) =>
+    row.min === row.max ? String(row.min) : `${String(row.min)}–${String(row.max)}`;
+  return (
+    <section {...sx(c.oracle)} aria-label={props.field.label}>
+      <div {...sx(c.oracleHead)}>
+        <span {...sx(c.oracleTitle)}>{props.field.label}</span>
+        <Show when={props.onRoll}>
+          <button type="button" {...sx(c.oracleRoll)} onClick={() => props.onRoll?.()}>
+            Roll {props.field.dice}
+          </button>
+        </Show>
+      </div>
+      <div {...sx(c.oracleRows)} role="table" aria-label={`${props.field.label} rows`}>
+        <For each={props.rows}>
+          {(row) => (
+            <div {...sx(c.oracleRow)} role="row">
+              <span {...sx(c.oracleRange)} role="cell">
+                {range(row)}
+              </span>
+              <span role="cell">{String(row.text ?? "")}</span>
+            </div>
+          )}
+        </For>
+      </div>
+    </section>
+  );
+}
+
 export function EntryCard(props: {
   entry: CompendiumEntry;
   type: EntryType;
   onRoll?: (label: string, dice: string) => void;
-  /** For `[[Entry]]` links in the description. */
+  /** Roll one of the entry's oracle tables (the server rolls and finds the row). */
+  onRollTable?: (entryId: string, field: string) => void;
+  /** For links in the description and reference fields. */
   compendium?: Pick<CompendiumStore, "row" | "rowByName">;
   onOpenEntry?: (entryId: string) => void;
 }) {
   const link = (link: { name: string; id?: string }) => linkedRow(props.compendium, link)?.id;
+  // Entry links and inline rolls in the description are plain HTML; one handler serves both.
   const open = (event: MouseEvent) => {
-    const target = (event.target as Element).closest<HTMLElement>("[data-entry-id]");
+    const target = (event.target as Element).closest<HTMLElement>("[data-entry-id], [data-roll]");
     if (target?.dataset.entryId) props.onOpenEntry?.(target.dataset.entryId);
+    else if (target?.dataset.roll)
+      props.onRoll?.(target.dataset.label || props.entry.name, target.dataset.roll);
   };
+  const references = () =>
+    props.type.fields.filter(
+      (field) => field.kind === "reference" && ids(props.entry.fields[field.key]).length,
+    );
+  const oracles = () =>
+    props.type.fields.filter(
+      (field) => field.kind === "oracle" && rowsOf(props.entry.fields[field.key]).length,
+    );
   return (
     <article {...sx(c.card)} aria-label={props.entry.name}>
       <SheetBlocks
@@ -103,6 +180,42 @@ export function EntryCard(props: {
         onRoll={props.onRoll ?? (() => {})}
         readOnly
       />
+      <For each={references()}>
+        {(field) => (
+          <div {...sx(c.refs)}>
+            <span {...sx(styles.label)}>{field.label}</span>
+            <For each={ids(props.entry.fields[field.key])}>
+              {(id) => (
+                <Show
+                  when={props.compendium?.row(id)}
+                  fallback={<span {...sx(c.refMissing)}>{id.split("/").pop()}</span>}
+                >
+                  {(row) => (
+                    <button
+                      type="button"
+                      class="ttrpg-entry-link"
+                      onClick={() => props.onOpenEntry?.(row().id)}
+                    >
+                      {row().name}
+                    </button>
+                  )}
+                </Show>
+              )}
+            </For>
+          </div>
+        )}
+      </For>
+      <For each={oracles()}>
+        {(field) => (
+          <OracleTable
+            field={field}
+            rows={rowsOf(props.entry.fields[field.key])}
+            onRoll={
+              props.onRollTable ? () => props.onRollTable?.(props.entry.id, field.key) : undefined
+            }
+          />
+        )}
+      </For>
       <Show when={props.entry.body.trim()}>
         <div
           class={`ttrpg-note-markdown ${sx(c.body).class}`}
@@ -120,10 +233,68 @@ const splitTags = (text: string) =>
     .map((tag) => tag.trim())
     .filter(Boolean);
 
+/** Pick other entries by name; stored as ids so renames don't break the reference. */
+function ReferenceInput(props: {
+  field: EntryField;
+  value: CharacterValue | undefined;
+  onChange: (value: CharacterValue | undefined) => void;
+  compendium?: Pick<CompendiumStore, "row" | "rowsOfType">;
+}) {
+  const chosen = () => ids(props.value);
+  const choices = () =>
+    (props.field.ref?.typeIds ?? [])
+      .flatMap((typeId) => props.compendium?.rowsOfType(typeId) ?? [])
+      .filter((row) => !chosen().includes(row.id))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  const set = (next: string[]) =>
+    props.onChange(
+      next.length === 0 ? undefined : props.field.ref?.multiple ? next : next[next.length - 1],
+    );
+  return (
+    <div {...sx(styles.field)}>
+      <span {...sx(styles.label)}>{props.field.label}</span>
+      <div {...sx(c.refs)}>
+        <For each={chosen()}>
+          {(id) => (
+            <span {...sx(c.chosen)}>
+              {props.compendium?.row(id)?.name ?? id.split("/").pop()}
+              <button
+                type="button"
+                {...sx(c.unchoose)}
+                aria-label={`Remove ${props.compendium?.row(id)?.name ?? id}`}
+                onClick={() => set(chosen().filter((item) => item !== id))}
+              >
+                ×
+              </button>
+            </span>
+          )}
+        </For>
+        <Show when={props.field.ref?.multiple || !chosen().length}>
+          <select
+            {...sx(styles.select, c.refSelect)}
+            aria-label={`Add to ${props.field.label}`}
+            value=""
+            onChange={(event) => {
+              const id = event.currentTarget.value;
+              event.currentTarget.value = "";
+              if (id) set([...chosen(), id]);
+            }}
+          >
+            <option value="">{choices().length ? "Choose…" : "Nothing to choose yet"}</option>
+            <For each={choices()}>{(row) => <option value={row.id}>{row.name}</option>}</For>
+          </select>
+        </Show>
+      </div>
+    </div>
+  );
+}
+
 function FieldInput(props: {
   field: EntryField;
   value: CharacterValue | undefined;
   onChange: (value: CharacterValue | undefined) => void;
+  /** For reference fields: entries to choose from. */
+  compendium?: Pick<CompendiumStore, "row" | "rowsOfType">;
 }) {
   const text = () =>
     typeof props.value === "string" || typeof props.value === "number" ? String(props.value) : "";
@@ -163,19 +334,81 @@ function FieldInput(props: {
           />
         </Field>
       </Match>
-      <Match when={props.field.kind === "list"}>
+      <Match
+        when={
+          props.field.kind === "list" ||
+          props.field.kind === "actions" ||
+          props.field.kind === "progression" ||
+          props.field.kind === "oracle"
+        }
+      >
         <div {...sx(styles.field)}>
-          <span {...sx(styles.label)}>{props.field.label}</span>
+          <span {...sx(styles.label)}>
+            {props.field.label}
+            {props.field.kind === "oracle" && props.field.dice
+              ? ` (rolls ${props.field.dice})`
+              : ""}
+          </span>
           <ListEditor
             block={{
               key: props.field.key,
               title: props.field.label,
-              columns: props.field.columns ?? [],
+              columns: fieldColumns(props.field),
             }}
-            rows={(Array.isArray(props.value) ? props.value : []) as readonly ListRow[]}
+            rows={rowsOf(props.value)}
             onSave={(rows) => props.onChange(rows.length ? (rows as CharacterValue) : undefined)}
           />
         </div>
+      </Match>
+      <Match when={props.field.kind === "select"}>
+        <Field label={props.field.label}>
+          <select
+            {...sx(styles.select)}
+            value={text()}
+            onChange={(event) => props.onChange(event.currentTarget.value || undefined)}
+          >
+            <option value="">—</option>
+            <For each={props.field.options ?? []}>
+              {(option) => <option value={option}>{option}</option>}
+            </For>
+          </select>
+        </Field>
+      </Match>
+      <Match when={props.field.kind === "set"}>
+        <fieldset {...sx(c.set)}>
+          <legend {...sx(styles.label)}>{props.field.label}</legend>
+          <For each={props.field.options ?? []}>
+            {(option) => {
+              const on = () => Array.isArray(props.value) && props.value.includes(option);
+              return (
+                <label {...sx(c.setOption)}>
+                  <input
+                    type="checkbox"
+                    checked={on()}
+                    onChange={() => {
+                      const current = (Array.isArray(props.value) ? props.value : []) as string[];
+                      const next = on()
+                        ? current.filter((item) => item !== option)
+                        : (props.field.options ?? []).filter(
+                            (item) => item === option || current.includes(item),
+                          );
+                      props.onChange(next.length ? next : undefined);
+                    }}
+                  />
+                  {option}
+                </label>
+              );
+            }}
+          </For>
+        </fieldset>
+      </Match>
+      <Match when={props.field.kind === "reference"}>
+        <ReferenceInput
+          field={props.field}
+          value={props.value}
+          onChange={props.onChange}
+          compendium={props.compendium}
+        />
       </Match>
     </Switch>
   );
@@ -183,6 +416,7 @@ function FieldInput(props: {
 
 function EntryEditor(props: {
   worldId: string;
+  compendium?: Pick<CompendiumStore, "row" | "rowsOfType">;
   type: EntryType;
   entry?: CompendiumEntry;
   onSaved: (entry: CompendiumEntry) => void;
@@ -272,6 +506,7 @@ function EntryEditor(props: {
             field={field}
             value={draft().fields[field.key]}
             onChange={(value) => setField(field.key, value)}
+            compendium={props.compendium}
           />
         )}
       </For>
@@ -307,6 +542,7 @@ export function CompendiumPanel(props: {
   focus?: string | null;
   onFocus?: (entryId: string | null) => void;
   onRoll?: (label: string, dice: string) => void;
+  onRollTable?: (entryId: string, field: string) => void;
   onSetup?: () => void;
   /** Post a link to the entry in chat. */
   onShare?: (entry: CompendiumEntry) => void;
@@ -389,6 +625,7 @@ export function CompendiumPanel(props: {
               {(type) => (
                 <EntryEditor
                   worldId={props.worldId}
+                  compendium={props.compendium}
                   type={type()}
                   entry={edit().entryId ? props.compendium.entry(edit().entryId!) : undefined}
                   onCancel={() => setEditing(null)}
@@ -477,6 +714,7 @@ export function CompendiumPanel(props: {
                     entry={entry()}
                     type={props.compendium.typeById(entry().typeId)!}
                     onRoll={props.onRoll}
+                    onRollTable={props.onRollTable}
                     compendium={props.compendium}
                     onOpenEntry={setFocus}
                   />
@@ -573,6 +811,65 @@ export function CompendiumPanel(props: {
 const hair = { borderWidth: "1px", borderStyle: "solid", borderColor: colors.border } as const;
 
 const c = stylex.create({
+  refs: { display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "6px" },
+  refMissing: { color: colors.textFaint, fontStyle: "italic" },
+  chosen: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "2px",
+    paddingLeft: "6px",
+    ...hair,
+    borderRadius: skin.controlRadius,
+    fontSize: "13px",
+  },
+  unchoose: {
+    padding: "0 4px",
+    borderWidth: 0,
+    backgroundColor: "transparent",
+    color: colors.textMuted,
+    cursor: "pointer",
+  },
+  refSelect: { width: "auto", minWidth: "10em" },
+  set: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "4px 10px",
+    margin: 0,
+    padding: 0,
+    borderWidth: 0,
+  },
+  setOption: { display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "13px" },
+  oracle: { display: "flex", flexDirection: "column", gap: "4px" },
+  oracleHead: { display: "flex", alignItems: "center", gap: "8px" },
+  oracleTitle: {
+    fontFamily: fonts.display,
+    fontSize: "12px",
+    textTransform: skin.headTransform,
+    letterSpacing: skin.headTracking,
+    color: colors.textMuted,
+  },
+  oracleRoll: {
+    paddingInline: "7px",
+    paddingBlock: "2px",
+    ...hair,
+    borderRadius: skin.controlRadius,
+    backgroundColor: { default: colors.surface, ":hover": colors.surfaceHover },
+    color: colors.accent,
+    fontFamily: fonts.numeric,
+    fontSize: "12px",
+    cursor: "pointer",
+  },
+  oracleRows: { display: "flex", flexDirection: "column", fontSize: "13px" },
+  oracleRow: {
+    display: "grid",
+    gridTemplateColumns: "4.5em minmax(0, 1fr)",
+    gap: "6px",
+    paddingBlock: "1px",
+    borderBottomWidth: "1px",
+    borderBottomStyle: "dotted",
+    borderBottomColor: colors.border,
+  },
+  oracleRange: { fontFamily: fonts.numeric, color: colors.textMuted, textAlign: "right" },
   card: {
     display: "flex",
     flexDirection: "column",

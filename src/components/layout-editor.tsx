@@ -290,7 +290,8 @@ const summarize = (block: LayoutBlock): string => {
 type Column = {
   key: string;
   label: string;
-  kind?: "text" | "number" | "select";
+  /** `csv`: a string array edited as comma-separated text. */
+  kind?: "text" | "number" | "select" | "csv";
   options?: readonly string[];
   width?: string;
   placeholder?: string;
@@ -320,6 +321,13 @@ function ItemRows<T extends Record<string, unknown>>(props: {
         if (kind === "number") {
           if (raw.trim() === "") delete next[key];
           else next[key] = Math.trunc(Number(raw));
+        } else if (kind === "csv") {
+          const items = raw
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean);
+          if (items.length) next[key] = items;
+          else delete next[key];
         } else if (
           raw === "" &&
           key !== "label" &&
@@ -364,10 +372,16 @@ function ItemRows<T extends Record<string, unknown>>(props: {
                         aria-label={`${props.title} ${index + 1} ${column.label}`}
                         type={column.kind === "number" ? "number" : "text"}
                         placeholder={column.placeholder}
-                        value={String(
-                          (props.items[index] as Record<string, unknown>)[column.key] ?? "",
-                        )}
+                        value={(() => {
+                          const value = (props.items[index] as Record<string, unknown>)[column.key];
+                          return Array.isArray(value) ? value.join(", ") : String(value ?? "");
+                        })()}
                         onInput={(event) =>
+                          column.kind !== "csv" &&
+                          set(index, column.key, event.currentTarget.value, column.kind)
+                        }
+                        onChange={(event) =>
+                          column.kind === "csv" &&
                           set(index, column.key, event.currentTarget.value, column.kind)
                         }
                       />
@@ -703,10 +717,32 @@ function Inspector(props: {
                       placeholder: "@row.qty * 2",
                       width: "minmax(0, 1.2fr)",
                     },
+                    {
+                      key: "options",
+                      label: "Choices (select)",
+                      kind: "csv",
+                      placeholder: "a, b, c",
+                      width: "minmax(0, 1fr)",
+                    },
                   ]}
                   onChange={(columns) => patch({ columns })}
                   make={() => ({ key: `col_${Date.now() % 10000}`, label: "Column", kind: "text" })}
                 />
+                <label {...sx(e.field)}>
+                  In the slots style, rows take as many slots as
+                  <select
+                    {...sx(styles.select, e.small)}
+                    value={list().slotSize ?? ""}
+                    onChange={(event) =>
+                      patch({ slotSize: event.currentTarget.value || undefined })
+                    }
+                  >
+                    <option value="">one each</option>
+                    <For each={list().columns.filter((column) => column.kind === "number")}>
+                      {(column) => <option value={column.key}>their “{column.label}”</option>}
+                    </For>
+                  </select>
+                </label>
                 <label {...sx(e.field)}>
                   Each row rolls (optional)
                   <input
@@ -792,7 +828,48 @@ function Inspector(props: {
                           </For>
                         </div>
                       </div>
-                      <For each={current().fields.filter((field) => field.kind === "list")}>
+                      <Show when={current().fields.some((field) => field.kind === "progression")}>
+                        <div {...sx(e.pair)}>
+                          <label {...sx(e.field)}>
+                            Progression (the “progression” style)
+                            <select
+                              {...sx(styles.select, e.small)}
+                              value={entry().progression?.field ?? ""}
+                              onChange={(event) => {
+                                const field = event.currentTarget.value;
+                                patch({
+                                  progression: field
+                                    ? { field, level: entry().progression?.level ?? "level" }
+                                    : undefined,
+                                });
+                              }}
+                            >
+                              <option value="">None</option>
+                              <For
+                                each={current().fields.filter(
+                                  (field) => field.kind === "progression",
+                                )}
+                              >
+                                {(field) => <option value={field.key}>{field.label}</option>}
+                              </For>
+                            </select>
+                          </label>
+                          <Show when={entry().progression}>
+                            {(spec) => (
+                              <TextInput
+                                label="Level is the sheet value"
+                                value={spec().level}
+                                onInput={(level) => patch({ progression: { ...spec(), level } })}
+                              />
+                            )}
+                          </Show>
+                        </div>
+                      </Show>
+                      <For
+                        each={current().fields.filter(
+                          (field) => field.kind === "list" || field.kind === "progression",
+                        )}
+                      >
                         {(field) => (
                           <label {...sx(e.field)}>
                             After picking, offer to copy {field.label} into
@@ -1237,6 +1314,19 @@ export function LayoutEditor(props: {
               +
             </button>
           </div>
+          <label {...sx(e.check)}>
+            <input
+              type="checkbox"
+              checked={props.layout.subject === "shared"}
+              onChange={(event) =>
+                props.onChange({
+                  ...props.layout,
+                  subject: event.currentTarget.checked ? "shared" : undefined,
+                })
+              }
+            />
+            Shared sheet — a crew, a steading, a ship: every member can edit it (the DM can lock it)
+          </label>
           <div {...sx(e.pair)}>
             <TextInput
               label="Page title"
