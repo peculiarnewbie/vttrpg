@@ -57,6 +57,9 @@ const matchesKind = (value: unknown, kind: ListColumnKind | "longtext"): boolean
       );
     case "check":
       return typeof value === "boolean";
+    case "derived":
+      // Computed from the row, never stored.
+      return false;
   }
 };
 

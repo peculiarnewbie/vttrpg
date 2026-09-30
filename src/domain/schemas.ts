@@ -60,6 +60,10 @@ export type RollDefinition = Infer<typeof RollDefinition>;
 export const RolledDie = Schema.Struct({
   sides: Schema.Int,
   results: Schema.Array(Schema.Int),
+  /** Per result: whether it counts (kh/kl/adv/dis drop the rest). Absent = all kept. */
+  kept: Schema.optional(Schema.Array(Schema.Boolean)),
+  /** The term was subtracted (`1d20 - 1d4`). */
+  negative: Schema.optional(Schema.Boolean),
 });
 export type RolledDie = Infer<typeof RolledDie>;
 
@@ -69,11 +73,22 @@ export const RollModifierPart = Schema.Struct({
 });
 export type RollModifierPart = Infer<typeof RollModifierPart>;
 
+/** One `|`-separated part of a notation, rolled on its own and never added to the others. */
+export const RollGroup = Schema.Struct({
+  notation: Schema.String,
+  dice: Schema.Array(RolledDie),
+  modifiers: Schema.Array(RollModifierPart),
+  total: Schema.Int,
+});
+export type RollGroup = Infer<typeof RollGroup>;
+
 export const RollResult = Schema.Struct({
   notation: Schema.String,
   dice: Schema.Array(RolledDie),
   modifiers: Schema.Array(RollModifierPart),
   total: Schema.Int,
+  /** Present when the notation has several groups; the fields above repeat the first. */
+  groups: Schema.optional(Schema.Array(RollGroup)),
 });
 export type RollResult = Infer<typeof RollResult>;
 
@@ -331,6 +346,13 @@ export const ClientFrame = Schema.Union([
     recipientMemberIds: Schema.optional(Schema.Array(Schema.String)),
     /** What was rolled, e.g. a Property row's item ("Longsword"); shown with the dice. */
     label: Schema.optional(Schema.String.check(Schema.isMaxLength(120))),
+    /**
+     * The sheet `@refs` resolve against, on the server. Required when the
+     * notation has refs; owner or DM only. Values are read, never written.
+     */
+    characterId: Schema.optional(Schema.String),
+    /** The list row `@row.column` refers to. */
+    row: Schema.optional(Schema.Struct({ key: Schema.String, index: Schema.Int })),
   }),
   Schema.Struct({
     type: Schema.Literals(["character.save"]),
