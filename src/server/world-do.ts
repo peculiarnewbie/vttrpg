@@ -36,7 +36,21 @@ import {
   type SceneMetadata,
 } from "../domain/board";
 import { newId, nowIso } from "./crypto";
+import { oracleRows, oracleRow } from "../domain/oracle";
 import { trackerDefinitions } from "../domain/trackers-definitions";
+
+/** The shared permission rule for HTTP and WebSocket character operations. */
+export const canEditCharacter = (
+  character: Pick<Character, "memberId" | "scope" | "locked"> | undefined,
+  memberId: string,
+  role: string,
+  action: "edit" | "delete" = "edit",
+): boolean => {
+  if (role === "dm") return true;
+  if (!character || !memberId) return false;
+  if (action === "delete") return character.scope === "world" && character.memberId === memberId;
+  return character.scope === "world" ? !character.locked : character.memberId === memberId;
+};
 
 export type WorldDoEnv = {
   BUCKET: R2Bucket;
@@ -73,6 +87,8 @@ type CharacterRow = {
   ticker_max: string | null;
   layout_prefs: string | null;
   avatar_key: string | null;
+  scope: NonNullable<Character["scope"]>;
+  locked: number;
   created_at: string;
   updated_at: string;
 };
@@ -494,6 +510,8 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     this.ensureColumn("characters", "avatar_key", "avatar_key TEXT");
     this.ensureColumn("characters", "ticker_max", "ticker_max TEXT");
     this.ensureColumn("characters", "layout_prefs", "layout_prefs TEXT");
+    this.ensureColumn("characters", "scope", "scope TEXT NOT NULL DEFAULT 'member'");
+    this.ensureColumn("characters", "locked", "locked INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("messages", "author_avatar_key", "author_avatar_key TEXT");
     this.ensureColumn("messages", "character_id", "character_id TEXT");
     const existing = sql.exec("SELECT COUNT(*) AS n FROM templates").one() as { n: number };
@@ -547,6 +565,8 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       tickerMax: parse(row.ticker_max, {}),
       layoutPrefs: prefs._tag === "Success" ? prefs.success : undefined,
       avatarKey: row.avatar_key ?? undefined,
+      scope: row.scope ?? "member",
+      locked: Boolean(row.locked),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -715,17 +735,24 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
   }
 
   private canSaveCharacter(input: SaveCharacterInput, memberId: string, role: string): boolean {
-    if (role === "dm") return true;
     const existing = input.id === undefined ? undefined : this.getCharacter(input.id);
+    if (existing) {
+      return (
+        canEditCharacter(existing, memberId, role) &&
+        (role === "dm" ||
+          existing.scope === "world" ||
+          input.memberId === undefined ||
+          input.memberId === memberId)
+      );
+    }
     return (
-      Boolean(memberId) &&
-      (!existing || existing.memberId === memberId) &&
-      (input.memberId === undefined || input.memberId === memberId)
+      role === "dm" ||
+      (Boolean(memberId) && (input.memberId === undefined || input.memberId === memberId))
     );
   }
 
   private canEditCharacter(id: string, memberId: string, role: string): boolean {
-    return role === "dm" || (Boolean(memberId) && this.getCharacter(id)?.memberId === memberId);
+    return canEditCharacter(this.getCharacter(id), memberId, role);
   }
 
   private saveCharacter(input: SaveCharacterInput): Character {
@@ -746,7 +773,12 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     const character: Character = {
       id,
       worldId: this.worldId,
-      memberId: input.memberId ?? existing?.memberId ?? "",
+      memberId:
+        existing?.scope === "world"
+          ? existing.memberId
+          : (input.memberId ?? existing?.memberId ?? ""),
+      scope: existing?.scope ?? input.scope ?? "member",
+      locked: existing?.locked ?? false,
       name: input.name,
       templateId: input.templateId,
       values: input.values,
@@ -771,7 +803,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       );
     } else {
       this.ctx.storage.sql.exec(
-        "INSERT INTO characters (id, member_id, name, template_id, data, tickers, ticker_max, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO characters (id, member_id, name, template_id, data, tickers, ticker_max, scope, locked, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         id,
         character.memberId,
         character.name,
@@ -779,6 +811,8 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         JSON.stringify(character.values),
         JSON.stringify(character.tickers),
         JSON.stringify(character.tickerMax),
+        character.scope ?? "member",
+        character.locked ? 1 : 0,
         now,
         now,
       );
@@ -877,13 +911,16 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     return { character: updated };
   }
 
-  private setCharacterAvatar(characterId: string, avatarKey: string): Character | undefined {
+  private setCharacterAvatar(
+    characterId: string,
+    avatarKey: string | undefined,
+  ): Character | undefined {
     const character = this.getCharacter(characterId);
     if (!character) return undefined;
     const updated: Character = { ...character, avatarKey, updatedAt: nowIso() };
     this.ctx.storage.sql.exec(
       "UPDATE characters SET avatar_key = ?, updated_at = ? WHERE id = ?",
-      avatarKey,
+      avatarKey ?? null,
       updated.updatedAt,
       characterId,
     );
@@ -995,6 +1032,47 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         roll: rolled.value,
         authorAvatarKey: authorCharacter?.avatarKey,
         characterId: authorCharacter?.id,
+      }),
+    };
+  }
+
+  private tableRoll(
+    frame: Extract<ClientFrame, { type: "roll.table" }>,
+    attachment: SocketAttachment,
+  ): Parsed<ChatMessage> {
+    const found = this.compendium.lookup(frame.entryId, attachment.role);
+    if (!found) return { ok: false, error: "Entry not found" };
+    const { entry, type } = found;
+    const field = type.fields.find((field) => field.key === frame.field);
+    if (field?.kind !== "oracle" || !field.dice)
+      return { ok: false, error: "Oracle field not found" };
+    const parsed = parseNotation(field.dice);
+    if (!parsed.ok) return parsed;
+    if (notationRefs(parsed.value).length)
+      return { ok: false, error: "Oracle dice cannot use sheet references" };
+    const rows = oracleRows(entry.fields[field.key]);
+    if (!rows.ok) return rows;
+    const rolled = rollText(field.dice);
+    if (!rolled.ok) return rolled;
+    return {
+      ok: true,
+      value: this.createMessage({
+        authorMemberId: attachment.memberId,
+        authorName: attachment.name,
+        kind: "roll",
+        content: `${entry.name} · ${field.label}`,
+        visibility: frame.visibility,
+        recipientMemberIds: frame.recipientMemberIds ?? [],
+        roll: {
+          ...rolled.value,
+          table: {
+            entryId: entry.id,
+            entryName: entry.name,
+            field: field.key,
+            fieldLabel: field.label,
+            row: oracleRow(rows.value, rolled.value.total),
+          },
+        },
       }),
     };
   }
@@ -1332,6 +1410,8 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         }
 
         case "POST roll": {
+          if (!this.canEditCharacter(String(body.characterId), memberId, role))
+            return json({ error: "You cannot roll for this character" }, 403);
           const evaluated = this.rollFor(String(body.characterId), String(body.rollId));
           if (!evaluated) return json({ error: "Roll not found" }, 404);
           const visibility = (body.visibility as Visibility) ?? evaluated.definition.visibility;
@@ -1359,7 +1439,10 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
           if (error) return json({ error }, 400);
           const character = this.saveCharacter({
             ...decoded.success,
-            memberId: decoded.success.memberId ?? memberId,
+            memberId:
+              decoded.success.memberId ??
+              (decoded.success.id ? this.getCharacter(decoded.success.id)?.memberId : undefined) ??
+              memberId,
           });
           this.broadcast({ type: "character", character });
           return json(character);
@@ -1367,8 +1450,10 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
 
         case "POST character/avatar": {
           const characterId = String(body.characterId ?? "");
-          const avatarKey = String(body.avatarKey ?? "");
-          if (!characterId || !avatarKey) return json({ error: "Missing avatar" }, 400);
+          const avatarKey = body.avatarKey === null ? undefined : String(body.avatarKey ?? "");
+          if (!characterId || avatarKey === "") return json({ error: "Missing avatar" }, 400);
+          if (!this.canEditCharacter(characterId, memberId, role))
+            return json({ error: "You cannot edit this character" }, 403);
           const character = this.setCharacterAvatar(characterId, avatarKey);
           if (!character) return json({ error: "Character not found" }, 404);
           this.broadcast({ type: "character", character });
@@ -1444,7 +1529,8 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         return character ? json(character) : json({ error: "Not found" }, 404);
       }
       if (characterMatch && request.method === "DELETE") {
-        if (role !== "dm") return json({ error: "Only the DM can delete characters" }, 403);
+        if (!canEditCharacter(this.getCharacter(characterMatch[1]), memberId, role, "delete"))
+          return json({ error: "You cannot delete this character" }, 403);
         this.deleteCharacter(characterMatch[1]);
         return json({ ok: true });
       }
@@ -1484,6 +1570,12 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
           type: "error",
           message: "Invalid frame",
           ...(searchRequest === undefined ? {} : { code: "search", requestId: searchRequest }),
+          ...(typeof parsed === "object" &&
+          parsed !== null &&
+          "type" in parsed &&
+          parsed.type === "roll.table"
+            ? { code: "roll" }
+            : {}),
         } satisfies ServerFrame),
       );
       return;
@@ -1574,6 +1666,16 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     }
 
     if (frame.type === "roll") {
+      if (!this.canEditCharacter(frame.characterId, attachment.memberId, attachment.role)) {
+        socket.send(
+          JSON.stringify({
+            type: "error",
+            code: "roll",
+            message: "You cannot roll for this character",
+          } satisfies ServerFrame),
+        );
+        return;
+      }
       const evaluated = this.rollFor(frame.characterId, frame.rollId);
       if (!evaluated) return;
       const message = this.createMessage({
@@ -1591,8 +1693,16 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       return;
     }
 
-    if (frame.type === "roll.dice") {
-      const result = this.directRoll(frame, attachment);
+    if (frame.type === "roll.dice" || frame.type === "roll.table") {
+      let result: Parsed<ChatMessage>;
+      try {
+        result =
+          frame.type === "roll.table"
+            ? this.tableRoll(frame, attachment)
+            : this.directRoll(frame, attachment);
+      } catch {
+        result = { ok: false, error: "Roll failed" };
+      }
       if (result.ok) this.broadcastMessage(result.value);
       else
         socket.send(
@@ -1602,6 +1712,37 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
             message: result.error,
           } satisfies ServerFrame),
         );
+      return;
+    }
+
+    if (frame.type === "character.lock") {
+      if (attachment.role !== "dm") {
+        socket.send(
+          JSON.stringify({
+            type: "error",
+            message: "Only the DM can lock shared sheets",
+          } satisfies ServerFrame),
+        );
+        return;
+      }
+      const character = this.getCharacter(frame.characterId);
+      if (!character || character.scope !== "world") {
+        socket.send(
+          JSON.stringify({
+            type: "error",
+            message: "Shared sheet not found",
+          } satisfies ServerFrame),
+        );
+        return;
+      }
+      const updated: Character = { ...character, locked: frame.locked, updatedAt: nowIso() };
+      this.ctx.storage.sql.exec(
+        "UPDATE characters SET locked = ?, updated_at = ? WHERE id = ?",
+        frame.locked ? 1 : 0,
+        updated.updatedAt,
+        character.id,
+      );
+      this.broadcast({ type: "character", character: updated });
       return;
     }
 
@@ -1627,6 +1768,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         memberId: frame.character.memberId || attachment.memberId,
         values: frame.character.values,
         tickerMax: frame.character.tickerMax,
+        scope: frame.character.scope,
       });
       this.broadcast({ type: "character", character });
       return;
