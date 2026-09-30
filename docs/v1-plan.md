@@ -1,8 +1,9 @@
 # Tabletop 1.0 — implementation plan
 
 > **Status (2026-10-01):** P1 (dice notation, derived values), P2 (world
-> compendium at scale) and P3 (entry field kinds, sheet capabilities) are done,
-> merged to `main` and deployed. **Next: P4 — the corpus Worker.** P5–P7 follow.
+> compendium at scale), P3 (entry field kinds, sheet capabilities), and P4
+> (the corpus Worker, versioned libraries and table overrides) are done,
+> merged to `main` and deployed. **Next: P5 — compendium browser page.** P6–P7 follow.
 
 ## Context
 
@@ -36,7 +37,7 @@ group without comparing them.
 
 ## How every phase runs
 
-- Branch `v1/pN-<name>`; orchestrator (Claude) commits the contract first
+- Branch `v1/pN-<name>`; orchestrator commits the contract first
   (schemas in `src/domain`, frames, RPC types), then 2–3 Codex workers
   (gpt-6.1-sol, reasoning high) implement non-UI slices in worktrees with
   disjoint files; orchestrator reviews, runs `pnpm check`, `pnpm test` and the

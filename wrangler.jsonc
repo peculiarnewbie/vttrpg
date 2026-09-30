@@ -7,6 +7,10 @@
   "workers_dev": true,
   "preview_urls": false,
   "routes": [{ "pattern": "ttrpg.peculiarnewbie.com", "custom_domain": true }],
+  "vars": { "FLAGS": "corpus" },
+  "services": [
+    { "binding": "CORPUS", "service": "ttrpg-corpus", "entrypoint": "CorpusEntrypoint" },
+  ],
   "assets": {
     "directory": "./dist/client",
     "binding": "ASSETS",
@@ -25,6 +29,7 @@
       "binding": "BUCKET",
       "bucket_name": "ttrpg-files-live-bolt-x2t3543ef7xmukte",
     },
+    { "binding": "CORPUS_BUCKET", "bucket_name": "ttrpg-corpus-files" },
   ],
   "durable_objects": {
     "bindings": [{ "name": "WORLDS", "class_name": "WorldDO" }],
@@ -36,6 +41,14 @@
     "preview": {
       "name": "ttrpg-preview",
       "routes": [],
+      "vars": { "FLAGS": "corpus" },
+      "services": [
+        {
+          "binding": "CORPUS",
+          "service": "ttrpg-corpus-preview",
+          "entrypoint": "CorpusEntrypoint",
+        },
+      ],
       "d1_databases": [
         {
           "binding": "DB",
@@ -49,6 +62,7 @@
           "binding": "BUCKET",
           "bucket_name": "ttrpg-files-preview",
         },
+        { "binding": "CORPUS_BUCKET", "bucket_name": "ttrpg-corpus-files-preview" },
       ],
       "durable_objects": {
         "bindings": [{ "name": "WORLDS", "class_name": "WorldDO" }],

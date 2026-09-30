@@ -46,6 +46,10 @@ Both Workers disable `workers.dev`, preview URLs, and public routes. The named
 
 ## Connect Workers Builds
 
+Both connections were created with `cf` on 2026-09-30, including the preview
+Worker's non-production branch trigger. The dashboard instructions below
+describe the same configuration.
+
 Connect `peculiarnewbie/vttrpg` to each existing corpus Worker under
 **Workers & Pages → Worker → Settings → Build**. Use the repository root as
 the root directory and `PNPM_VERSION=12.4.2` as a build variable.
@@ -59,8 +63,8 @@ the root directory and `PNPM_VERSION=12.4.2` as a build variable.
 | Non-production deploy command | Disabled                                       | `pnpm db:corpus:migrate:preview && pnpm deploy:corpus:preview` |
 
 Set corpus build watch includes to `workers/corpus/*`, `src/domain/*`,
-`package.json`, and `pnpm-lock.yaml`. Cloudflare's wildcard matches paths
-under these directories. Keep `src/domain/*`, `workers/corpus/*`,
+`package.json`, `pnpm-lock.yaml`, and `pnpm-workspace.yaml`. Cloudflare's
+wildcard matches paths under these directories. Keep `src/domain/*`, `workers/corpus/*`,
 `package.json`, and `pnpm-lock.yaml` included in the existing table Workers'
 watch paths too (their default `*` already includes them).
 

@@ -28,7 +28,7 @@ compendiums is in [docs/corpus.md](docs/corpus.md).
 
 ```bash
 pnpm install
-pnpm dev      # migrates local D1, builds, then runs Wrangler dev
+pnpm dev      # table only; migrates local D1, builds, then runs Wrangler dev
 pnpm dev:all  # includes the corpus Worker and local libraries
 pnpm check    # lint + format + typecheck
 pnpm test
