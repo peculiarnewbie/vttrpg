@@ -78,7 +78,28 @@ const e = stylex.create({
     cursor: "pointer",
     ":hover": { backgroundColor: colors.surfaceHover },
   },
-  child: { paddingLeft: "22px" },
+  // A group is scaffolding, not content: a quiet header and a bracket around its blocks.
+  groupKind: { color: colors.textFaint },
+  groupTitle: { fontStyle: "italic", color: colors.textMuted },
+  groupCount: { flexShrink: 0, fontSize: "11px", color: colors.textFaint },
+  groupKids: {
+    display: "flex",
+    flexDirection: "column",
+    marginLeft: "12px",
+    borderLeftWidth: "2px",
+    borderLeftStyle: "solid",
+    borderLeftColor: colors.borderStrong,
+  },
+  groupEmpty: {
+    paddingInline: "8px",
+    paddingBlock: "5px",
+    fontSize: "12px",
+    fontStyle: "italic",
+    color: colors.textFaint,
+    borderBottomWidth: "1px",
+    borderBottomStyle: "solid",
+    borderBottomColor: colors.border,
+  },
   rowOn: { backgroundColor: colors.accentMuted },
   kind: {
     flexShrink: 0,
@@ -157,7 +178,7 @@ const summarize = (block: LayoutBlock): string => {
     case "heading":
       return block.text;
     case "group":
-      return `${block.title ?? "Group"} · ${block.blocks.length} inside`;
+      return block.title || "Untitled group";
     case "list":
       return block.title ?? block.key;
     case "checks":
@@ -581,14 +602,9 @@ export function LayoutEditor(props: {
     setPageId(decoded.success.pages[0]?.id ?? "");
   };
 
-  const Row = (rowProps: {
-    item: LayoutBlock;
-    nested?: boolean;
-    first: boolean;
-    last: boolean;
-  }) => (
+  const Row = (rowProps: { item: LayoutBlock; first: boolean; last: boolean }) => (
     <div
-      {...sx(e.row, rowProps.nested && e.child, selected() === rowProps.item.id && e.rowOn)}
+      {...sx(e.row, selected() === rowProps.item.id && e.rowOn)}
       role="button"
       tabindex={0}
       aria-pressed={selected() === rowProps.item.id ? "true" : "false"}
@@ -597,8 +613,19 @@ export function LayoutEditor(props: {
         if (event.key === "Enter" || event.key === " ") setSelected(rowProps.item.id);
       }}
     >
-      <span {...sx(e.kind)}>{rowProps.item.type}</span>
-      <span {...sx(e.summary)}>{summarize(rowProps.item)}</span>
+      <span {...sx(e.kind, rowProps.item.type === "group" && e.groupKind)}>
+        {rowProps.item.type}
+      </span>
+      <span {...sx(e.summary, rowProps.item.type === "group" && e.groupTitle)}>
+        {summarize(rowProps.item)}
+      </span>
+      <Show when={rowProps.item.type === "group" && rowProps.item}>
+        {(group) => (
+          <span {...sx(e.groupCount)}>
+            {group().blocks.length} {group().blocks.length === 1 ? "block" : "blocks"}
+          </span>
+        )}
+      </Show>
       <button
         {...sx(e.icon)}
         aria-label={`Move ${rowProps.item.id} up`}
@@ -738,16 +765,22 @@ export function LayoutEditor(props: {
                   />
                   <Show when={item.type === "group" && item}>
                     {(group) => (
-                      <For each={group().blocks}>
-                        {(child, childIndex) => (
-                          <Row
-                            item={child}
-                            nested
-                            first={childIndex() === 0}
-                            last={childIndex() === group().blocks.length - 1}
-                          />
-                        )}
-                      </For>
+                      <div {...sx(e.groupKids)}>
+                        <For each={group().blocks}>
+                          {(child, childIndex) => (
+                            <Row
+                              item={child}
+                              first={childIndex() === 0}
+                              last={childIndex() === group().blocks.length - 1}
+                            />
+                          )}
+                        </For>
+                        <Show when={!group().blocks.length}>
+                          <span {...sx(e.groupEmpty)}>
+                            Empty. Select the group, then add a block to it.
+                          </span>
+                        </Show>
+                      </div>
                     )}
                   </Show>
                 </>
