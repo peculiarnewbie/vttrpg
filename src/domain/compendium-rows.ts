@@ -1,6 +1,7 @@
 import type { CompendiumEntry, EntryField, EntryType } from "./compendium";
 import type { CharacterValue } from "./schemas";
 import type { ListColumn, ListRow } from "./sheet-layout";
+import { clampTicks } from "./progress";
 
 const columnValue = (
   value: CharacterValue | undefined,
@@ -13,7 +14,10 @@ const columnValue = (
     }
     case "text":
     case "dice":
+    case "select":
       return typeof value === "string" ? value : undefined;
+    case "progress":
+      return typeof value === "number" ? clampTicks(value) : undefined;
     case "check":
       return typeof value === "boolean" ? value : undefined;
     case "tags":

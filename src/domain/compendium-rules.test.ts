@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { entryError, packError, typeError } from "./compendium-rules";
+import type { ListRow } from "./sheet-layout";
 import {
   compendiumLimits,
   type CompendiumPack,
@@ -310,4 +311,349 @@ describe("compendium pack rules", () => {
       }),
     ).toBe("Entry JSON must be at most 16 KB");
   });
+});
+
+const richerType: EntryType = {
+  id: "content",
+  name: "Content",
+  fields: [
+    { key: "choice", label: "Choice", kind: "select", options: ["A", "B"] },
+    { key: "choices", label: "Choices", kind: "set", options: ["A", "B"] },
+    { key: "ref", label: "Reference", kind: "reference", ref: { typeIds: ["future"] } },
+    {
+      key: "refs",
+      label: "References",
+      kind: "reference",
+      ref: { typeIds: ["future"], multiple: true },
+    },
+    { key: "actions", label: "Actions", kind: "actions" },
+    {
+      key: "levels",
+      label: "Levels",
+      kind: "progression",
+      columns: [
+        { key: "choice", label: "Choice", kind: "select", options: ["A", "B"] },
+        { key: "progress", label: "Progress", kind: "progress" },
+        { key: "total", label: "Total", kind: "derived", expr: "@row.progress" },
+      ],
+    },
+    { key: "oracle", label: "Oracle", kind: "oracle", dice: "d%" },
+  ],
+};
+const richerEntry: SaveEntryInput = { ...entry, typeId: richerType.id };
+
+it("accepts new definitions and values, including empty choices, missing columns and forward references", () => {
+  expect(typeError(richerType)).toBeUndefined();
+  expect(
+    typeError({ ...richerType, fields: [{ key: "levels", label: "Levels", kind: "progression" }] }),
+  ).toBeUndefined();
+  expect(
+    entryError(
+      {
+        ...richerEntry,
+        fields: {
+          choice: "",
+          choices: [],
+          ref: "library/future/example",
+          refs: [],
+          actions: [],
+          levels: [],
+          oracle: [],
+        },
+      },
+      richerType,
+    ),
+  ).toBeUndefined();
+  expect(
+    entryError(
+      {
+        ...richerEntry,
+        fields: {
+          choice: "A",
+          choices: ["A", "B"],
+          ref: "world/future/example",
+          refs: ["library/future/example"],
+          actions: [
+            { name: "Action", roll: "1d20 + @bonus | d6", text: "What the players decide" },
+            { name: "Move" },
+          ],
+          levels: [
+            { level: 30, choice: "B", progress: 40, _entry: "legacy", _rev: 0 },
+            { level: 1 },
+          ],
+          oracle: [
+            { min: 3, max: 3, text: "Three" },
+            { min: 1, max: 1, text: "One" },
+          ],
+        },
+      },
+      richerType,
+    ),
+  ).toBeUndefined();
+});
+
+it.each(["select", "set"] as const)("requires bounded unique options for %s fields", (kind) => {
+  const testType = (options?: readonly string[]) => ({
+    ...type,
+    fields: [{ key: "choice", label: "Choice", kind, options }],
+  });
+  for (const options of [
+    undefined,
+    [],
+    [""],
+    [" "],
+    ["A", "A"],
+    ["x".repeat(61)],
+    Array.from({ length: 51 }, (_, index) => String(index)),
+  ])
+    expect(typeError(testType(options))).toContain("Choice");
+  expect(
+    typeError(testType(Array.from({ length: 50 }, (_, index) => `${index}`.padEnd(60, "x")))),
+  ).toBeUndefined();
+});
+
+it("validates reference ids, oracle notation and allowed column definitions", () => {
+  const invalidFields: EntryType["fields"] = [
+    { key: "field", label: "Field", kind: "reference" },
+    { key: "field", label: "Field", kind: "reference", ref: { typeIds: [] } },
+    { key: "field", label: "Field", kind: "reference", ref: { typeIds: [""] } },
+    { key: "field", label: "Field", kind: "reference", ref: { typeIds: ["Bad"] } },
+    { key: "field", label: "Field", kind: "reference", ref: { typeIds: Array(11).fill("future") } },
+    { key: "field", label: "Field", kind: "oracle" },
+    ...["", "bad", "d0", "d6+@bonus", "(@pool)d6", "d6 | @{bonus}"].map((dice) => ({
+      key: "field",
+      label: "Field",
+      kind: "oracle" as const,
+      dice,
+    })),
+    { key: "field", label: "Field", kind: "actions", columns: [] },
+    {
+      key: "field",
+      label: "Field",
+      kind: "progression",
+      columns: [{ key: "level", label: "Level", kind: "number" }],
+    },
+    {
+      key: "field",
+      label: "Field",
+      kind: "list",
+      columns: [{ key: "choice", label: "Choice", kind: "select" }],
+    },
+    {
+      key: "field",
+      label: "Field",
+      kind: "progression",
+      columns: [{ key: "choice", label: "Choice", kind: "select", options: ["A", "A"] }],
+    },
+  ];
+  for (const field of invalidFields) expect(typeError(fieldType([field]))).toContain("Field");
+  expect(
+    typeError(
+      fieldType([
+        {
+          key: "field",
+          label: "Field",
+          kind: "reference",
+          ref: { typeIds: Array.from({ length: 10 }, (_, index) => `future_${index}`) },
+        },
+      ]),
+    ),
+  ).toBeUndefined();
+  for (const kind of ["list", "progression"] as const) {
+    expect(
+      typeError(
+        fieldType([
+          {
+            key: "field",
+            label: "Field",
+            kind,
+            columns: [
+              { key: "progress", label: "Progress", kind: "progress" },
+              { key: "choice", label: "Choice", kind: "select", options: ["A"] },
+            ],
+          },
+        ]),
+      ),
+    ).toBeUndefined();
+  }
+});
+
+const fieldKinds = [
+  "text",
+  "longtext",
+  "number",
+  "dice",
+  "tags",
+  "list",
+  "select",
+  "set",
+  "reference",
+  "actions",
+  "progression",
+  "oracle",
+] as const;
+
+it.each(fieldKinds)("validates filter compatibility with %s fields", (kind) => {
+  const field = {
+    ...richerType.fields.find((candidate) => candidate.kind === kind),
+    ...type.fields.find((candidate) => candidate.kind === kind),
+    key: "field",
+    label: "Field",
+    kind,
+  };
+  for (const filterKind of ["range", "set", "flag"] as const) {
+    const error = typeError({
+      ...type,
+      fields: [field],
+      filters: [{ key: "field", kind: filterKind }],
+    });
+    const compatible =
+      filterKind === "flag" ||
+      (filterKind === "range" ? kind === "number" : ["select", "set", "tags"].includes(kind));
+    expect(error === undefined).toBe(compatible);
+  }
+});
+
+it("rejects unknown, repeated and excessive filters", () => {
+  expect(typeError({ ...type, filters: [{ key: "missing", kind: "flag" }] })).toContain("missing");
+  expect(
+    typeError({
+      ...type,
+      filters: [
+        { key: "text", kind: "flag" },
+        { key: "text", kind: "flag" },
+      ],
+    }),
+  ).toContain("text");
+  const fields = Array.from({ length: 11 }, (_, index) => ({
+    key: `field_${index}`,
+    label: "Field",
+    kind: "number" as const,
+  }));
+  const filters = fields.map(({ key }) => ({ key, kind: "range" as const }));
+  expect(typeError({ ...type, fields, filters })).toContain("10");
+  expect(typeError({ ...type, fields, filters: filters.slice(0, 10) })).toBeUndefined();
+});
+
+it.each<[string, SaveEntryInput["fields"][string]]>([
+  ["choice", "C"],
+  ["choice", 1],
+  ["choices", "A"],
+  ["choices", ["A", "A"]],
+  ["choices", ["C"]],
+  ["choices", [""]],
+  ["ref", "ent_old"],
+  ["ref", ""],
+  ["ref", ["world/future/a"]],
+  ["ref", 1],
+  ["refs", "world/future/a"],
+  ["refs", ["bad"]],
+  ["refs", Array(51).fill("world/future/a")],
+  ["actions", "action"],
+  ["actions", ["action"]],
+  ["actions", [{ name: " " }]],
+  ["actions", [{ name: 1 }]],
+  ["actions", [{ name: "A", roll: "" }]],
+  ["actions", [{ name: "A", roll: "bad" }]],
+  ["actions", [{ name: "A", roll: 1 }]],
+  ["actions", [{ name: "A", text: 1 }]],
+  ["actions", [{ name: "A", extra: true }]],
+  ["actions", [{ name: "A", _entry: "world/future/a" }]],
+  ["actions", Array(51).fill({ name: "A" })],
+  ["levels", "row"],
+  ["levels", ["row"]],
+  ["levels", [{}]],
+  ["levels", [{ level: "1" }]],
+  ["levels", [{ level: 0 }]],
+  ["levels", [{ level: -1 }]],
+  ["levels", [{ level: 31 }]],
+  ["levels", [{ level: 1.5 }]],
+  ["levels", [{ level: NaN }]],
+  ["levels", [{ level: Infinity }]],
+  ["levels", [{ level: 1, unknown: "A" }]],
+  ["levels", [{ level: 1, choice: "C" }]],
+  ["levels", [{ level: 1, progress: -1 }]],
+  ["levels", [{ level: 1, progress: 41 }]],
+  ["levels", [{ level: 1, progress: 1.5 }]],
+  ["levels", [{ level: 1, progress: "4" }]],
+  ["levels", [{ level: 1, total: 1 }]],
+  ["levels", [{ level: 1, _rev: -1 }]],
+  ["levels", [{ level: 1, _entry: 1 }]],
+  ["levels", Array(31).fill({ level: 1 })],
+  [
+    "oracle",
+    [
+      { min: 1, max: 2, text: "One" },
+      { min: 2, max: 3, text: "Two" },
+    ],
+  ],
+  ["oracle", [{ min: 1, max: 1, text: "" }]],
+  ["oracle", [{ min: 1.5, max: 2, text: "One" }]],
+  ["oracle", "table"],
+])("rejects invalid %s values and names the field", (key, value) => {
+  expect(entryError({ ...richerEntry, fields: { [key]: value } }, richerType)).toContain(
+    richerType.fields.find((field) => field.key === key)?.label,
+  );
+});
+
+it("accepts row-count boundaries, duplicates at a level and select/progress list cells", () => {
+  expect(
+    entryError(
+      {
+        ...richerEntry,
+        fields: {
+          refs: Array(50).fill("world/future/a"),
+          actions: Array(50).fill({ name: "A" }),
+          levels: Array(30).fill({ level: 1 }),
+          oracle: Array.from({ length: 200 }, (_, min) => ({ min, max: min, text: "x" })),
+        },
+      },
+      richerType,
+    ),
+  ).toBeUndefined();
+  const listType = fieldType([
+    { key: "list", label: "List", kind: "list", columns: richerType.fields[5].columns },
+  ]);
+  expect(
+    entryError(
+      {
+        ...entry,
+        fields: {
+          list: [
+            { choice: "", progress: 0 },
+            { choice: "A", progress: 40 },
+          ],
+        },
+      },
+      listType,
+    ),
+  ).toBeUndefined();
+  const invalidRows: ListRow[] = [
+    { choice: "C" },
+    { choice: 1 },
+    { progress: Infinity },
+    { progress: NaN },
+    { progress: true },
+  ];
+  for (const row of invalidRows)
+    expect(entryError({ ...entry, fields: { list: [row] } }, listType)).toContain("List");
+});
+
+it("applies new type and entry validation to packs", () => {
+  const richerPack: CompendiumPack = {
+    ...pack,
+    version: 2,
+    types: [richerType],
+    entries: [{ ...richerEntry, id: "world/content/a", fields: { choice: "A" } }],
+  };
+  expect(packError(richerPack)).toBeUndefined();
+  expect(
+    packError({ ...richerPack, entries: [{ ...richerPack.entries[0], fields: { choice: "C" } }] }),
+  ).toContain("Choice");
+  expect(
+    packError({
+      ...richerPack,
+      types: [{ ...richerType, filters: [{ key: "choice", kind: "range" }] }],
+    }),
+  ).toContain("Choice");
 });

@@ -122,3 +122,63 @@ it("shows populated fields in type order, including zero and false, respecting a
   ).toEqual(["shots", "dmg"]);
   expect(entryFieldsForDisplay(populated, type, [])).toEqual([]);
 });
+
+it("copies select strings and set arrays, clamps numeric progress, and skips derived values", () => {
+  const richerColumns: ListColumn[] = [
+    { key: "choice", label: "Choice", kind: "select", options: ["A", "B"] },
+    { key: "choice_text", label: "Choice text", kind: "text" },
+    { key: "choices", label: "Choices", kind: "tags" },
+    { key: "ticks", label: "Ticks", kind: "progress" },
+    { key: "total", label: "Total", kind: "derived", expr: "@row.ticks" },
+  ];
+  const fields = { choice: "A", choice_text: "B", choices: ["A", "B"], ticks: 46.5, total: 99 };
+  const row = rowFromEntry({ ...entry, fields }, richerColumns);
+  expect(row).toEqual({
+    choice: "A",
+    choice_text: "B",
+    choices: ["A", "B"],
+    ticks: 40,
+    _entry: entry.id,
+  });
+  expect(row.choices).not.toBe(fields.choices);
+  expect(
+    rowsFromEntryList({ ...entry, fields: { list: [fields] } }, "list", richerColumns),
+  ).toEqual([row]);
+  for (const [ticks, expected] of [
+    [-1, 0],
+    [6.9, 6],
+    [NaN, 0],
+    [Infinity, 40],
+  ]) {
+    expect(rowFromEntry({ ...entry, fields: { ticks } }, richerColumns).ticks).toBe(expected);
+  }
+  for (const ticks of ["6", true, ["6"]])
+    expect(rowFromEntry({ ...entry, fields: { ticks } }, richerColumns)).toEqual({
+      _entry: entry.id,
+    });
+});
+
+it("skips empty values for every new kind and keeps populated content in type order", () => {
+  const kinds = ["select", "set", "reference", "actions", "progression", "oracle"] as const;
+  const type: EntryType = {
+    id: "test",
+    name: "Test",
+    fields: kinds.map((kind) => ({ key: kind, label: kind, kind })),
+  };
+  const fields = { select: "", set: [], reference: "", actions: [], progression: [], oracle: [] };
+  expect(entryFieldsForDisplay({ ...entry, fields }, type)).toEqual([]);
+  expect(
+    entryFieldsForDisplay(
+      {
+        ...entry,
+        fields: {
+          ...fields,
+          select: "A",
+          actions: [{ name: "Move" }],
+          progression: [{ level: 1 }],
+        },
+      },
+      type,
+    ).map(({ field }) => field.key),
+  ).toEqual(["select", "actions", "progression"]);
+});

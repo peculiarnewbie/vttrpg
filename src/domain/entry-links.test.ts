@@ -3,6 +3,7 @@ import type { CompendiumEntry, IndexRow } from "./compendium";
 import {
   findEntryByName,
   formatRefLink,
+  formatRollLink,
   insertLink,
   linkQueryAt,
   normalizeName,
@@ -96,4 +97,41 @@ describe("entry links", () => {
       caret: 5 + ref.length,
     });
   });
+});
+
+it("splits valid inline rolls, leaving invalid notation completely as text", () => {
+  expect(splitEntryLinks("Roll [[r: 2d6+1 | Damage ]] then [[r:d%]].")).toEqual([
+    { kind: "text", text: "Roll " },
+    { kind: "roll", notation: "2d6+1", label: "Damage" },
+    { kind: "text", text: " then " },
+    { kind: "roll", notation: "d%" },
+    { kind: "text", text: "." },
+  ]);
+  for (const payload of ["", "d0", "no dice", "d6+", "d6 | label | bad"]) {
+    const text = `[[r:${payload}]]`;
+    expect(splitEntryLinks(text)).toEqual([{ kind: "text", text }]);
+  }
+  expect(splitEntryLinks(`[[r:d6${" ".repeat(200)}]]`)).toEqual([{ kind: "roll", notation: "d6" }]);
+  expect(splitEntryLinks("[[r:1d20+@str_mod]]")).toEqual([
+    { kind: "roll", notation: "1d20+@str_mod" },
+  ]);
+  expect(splitEntryLinks("[[r:1d20 | 2d6]]")).toEqual([{ kind: "roll", notation: "1d20 | 2d6" }]);
+  expect(splitEntryLinks("[[r:1d20 | 2d6 | Attack]]")).toEqual([
+    { kind: "roll", notation: "1d20 | 2d6", label: "Attack" },
+  ]);
+  expect(splitEntryLinks("[[r:d6|]]")).toEqual([{ kind: "roll", notation: "d6", label: "" }]);
+});
+
+it("formats roll links with safe labels and supports long valid notation", () => {
+  expect(formatRollLink("2d6+1")).toBe("[[r:2d6+1]]");
+  expect(formatRollLink("2d6+1", "[Damage]|\nroll")).toBe("[[r:2d6+1|Damageroll]]");
+  expect(splitEntryLinks(formatRollLink("d6", "Damage"))).toEqual([
+    { kind: "roll", notation: "d6", label: "Damage" },
+  ]);
+  const notation = "d6" + " + 1".repeat(19) + " | d6" + " + 1".repeat(19);
+  expect(notation.length).toBeGreaterThan(120);
+  expect(splitEntryLinks(formatRollLink(notation))).toEqual([{ kind: "roll", notation }]);
+  expect(splitEntryLinks(formatRollLink("d6+" + "1".repeat(201)))).toEqual([
+    { kind: "text", text: formatRollLink("d6+" + "1".repeat(201)) },
+  ]);
 });
