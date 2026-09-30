@@ -97,6 +97,26 @@ theme uses them. Prototypes of the three sheets live at `/lab/sheets`.
 Tracker display is a per-tracker template option (Auto, Pips, Bar, Number); Auto
 shows pips for ranges of 12 or less and a bar otherwise.
 
+## Sheet layouts
+
+A template's sheet is a **layout**: pages of generic blocks (headings, trackers,
+stats, fields, lists with typed columns, checkboxes, text, rolls, and groups) on a
+6-column grid. Blocks span columns in the side panel and can take a different span
+when the sheet is wide; narrow sheets stack. Every block type has styles over the
+same data (stats as a strip, bars, boxes, or a list; lists as a table, cards, or
+numbered slots…). The template sets each block's default; a character's owner can
+pick their own with **Style** on the sheet. Trackers keep their values in the
+character's trackers, so per-character maxima and instant clicks work as before.
+
+DMs edit layouts in **World settings → Sheet templates**: reorder, duplicate, and
+remove blocks, edit their contents, preview at panel or wide width, or edit the
+layout as JSON. Templates can start from a premade layout (Mythic Bastionland
+Classic and Compact, Mothership, Blades in the Dark) and be exported or imported as
+`ttrpg-template` JSON. Older templates render through an equivalent derived layout
+and can be converted; their formulas and roll modifiers stay in effect. On the
+sheet, **Edit** makes fields, lists, and plain stats editable in place, saving
+each value as you leave it. Layouts are prototyped at `/lab/systems`.
+
 ## Realtime protocol
 
 The client opens `/api/worlds/:id/ws`, which the Worker authenticates and

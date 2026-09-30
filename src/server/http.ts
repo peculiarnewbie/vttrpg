@@ -1,6 +1,7 @@
 import { canSeeNote } from "../domain/note-permissions";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { layoutLimitsError } from "../domain/template-io";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import type { HttpServerError } from "effect/unstable/http/HttpServerError";
 import {
@@ -13,6 +14,7 @@ import {
   SaveTemplateInput,
   UpdateMemberInput,
   type ChatMessage,
+  type Character,
   type MemberRole,
   type Note,
   type NoteSummary,
@@ -688,6 +690,8 @@ const SaveTemplate = HttpRouter.route(
     Effect.gen(function* () {
       const { member, stub } = yield* loadWorld(["dm"]);
       const input = yield* readBody(SaveTemplateInput);
+      const error = layoutLimitsError(input.layout);
+      if (error) return yield* Effect.fail(new BadRequest({ message: error }));
       const template = yield* doJson(
         stub,
         "template",
@@ -713,11 +717,13 @@ const ListCharacters = HttpRouter.route(
   route(
     Effect.gen(function* () {
       const { member, stub } = yield* loadWorld();
-      return json(
-        yield* doJson(stub, "state", { method: "GET" }, member).pipe(
-          Effect.map((s: any) => s.characters),
-        ),
+      const state = yield* doJson<{ characters: Character[] }>(
+        stub,
+        "state",
+        { method: "GET" },
+        member,
       );
+      return json(state.characters);
     }),
   ),
 );
@@ -729,7 +735,7 @@ const SaveCharacter = HttpRouter.route(
     Effect.gen(function* () {
       const { member, stub } = yield* loadWorld();
       const input = yield* readBody(SaveCharacterInput);
-      const character = yield* doJson(
+      const character = yield* doJson<Character>(
         stub,
         "character",
         {

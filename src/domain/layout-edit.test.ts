@@ -1,0 +1,90 @@
+import * as Schema from "effect/Schema";
+import { describe, expect, it } from "vitest";
+import {
+  addPage,
+  allBlocks,
+  blockTypes,
+  duplicateBlock,
+  findBlock,
+  insertBlock,
+  layoutKeys,
+  moveBlock,
+  newBlock,
+  parentGroup,
+  removeBlock,
+  removePage,
+  updateBlock,
+} from "./layout-edit";
+import { SheetLayout } from "./sheet-layout";
+import { bastionlandClassic, bladesInTheDark } from "./sheet-presets";
+import { layoutLimitsError } from "./template-io";
+
+const ids = (layout: SheetLayout) => layout.pages[0].blocks.map((block) => block.id);
+
+describe("layout edits", () => {
+  it("moves top-level blocks and group children among their siblings", () => {
+    const moved = moveBlock(bastionlandClassic, "defence", -1);
+    expect(ids(moved).slice(0, 2)).toEqual(["defence", "virtues"]);
+    expect(moveBlock(bastionlandClassic, "virtues", -1)).toEqual(bastionlandClassic);
+    const inGroup = moveBlock(bastionlandClassic, "standing", -1);
+    expect(parentGroup(inGroup, "standing")?.blocks.map((b) => b.id)).toEqual([
+      "standing",
+      "guard",
+    ]);
+  });
+
+  it("updates and removes blocks wherever they live", () => {
+    const renamed = updateBlock(bastionlandClassic, "guard", (block) =>
+      block.type === "trackers" ? { ...block, variant: "boxes" } : block,
+    );
+    expect(findBlock(renamed, "guard")).toMatchObject({ variant: "boxes" });
+    const removed = removeBlock(bastionlandClassic, "guard");
+    expect(findBlock(removed, "guard")).toBeUndefined();
+    expect(findBlock(removed, "standing")).toBeDefined();
+  });
+
+  it("inserts new blocks with unique ids, into pages or groups", () => {
+    let layout = bastionlandClassic;
+    for (const { type } of blockTypes) {
+      layout = insertBlock(layout, "knight", newBlock(layout, type));
+    }
+    const heading = newBlock(layout, "heading");
+    layout = insertBlock(layout, "knight", heading, "defence");
+    expect(parentGroup(layout, heading.id)?.id).toBe("defence");
+    const all = allBlocks(layout).map((block) => block.id);
+    expect(new Set(all).size).toBe(all.length);
+    expect(Schema.decodeUnknownResult(SheetLayout)(layout)._tag).toBe("Success");
+    expect(layoutLimitsError(layout)).toBeUndefined();
+  });
+
+  it("never nests groups", () => {
+    const group = newBlock(bastionlandClassic, "group");
+    const layout = insertBlock(bastionlandClassic, "knight", group, "defence");
+    expect(parentGroup(layout, group.id)).toBeUndefined();
+    expect(ids(layout)).toContain(group.id);
+  });
+
+  it("duplicates a group with fresh ids for it and its children", () => {
+    const layout = duplicateBlock(bladesInTheDark, "insight");
+    const index = ids(layout).indexOf("insight");
+    const copy = layout.pages[0].blocks[index + 1];
+    expect(copy.type).toBe("group");
+    expect(copy.id).not.toBe("insight");
+    const all = allBlocks(layout).map((block) => block.id);
+    expect(new Set(all).size).toBe(all.length);
+    expect(layout.pages).toHaveLength(1);
+  });
+
+  it("adds and removes pages but keeps at least one", () => {
+    const two = addPage(bastionlandClassic, "Gear");
+    expect(two.pages.map((page) => page.title)).toEqual(["Knight", "Gear"]);
+    const one = removePage(two, two.pages[1].id);
+    expect(removePage(one, one.pages[0].id).pages).toHaveLength(1);
+  });
+
+  it("lists the value keys a layout reads", () => {
+    expect(layoutKeys(bastionlandClassic)).toEqual(
+      expect.arrayContaining(["vig", "gd", "armour", "property", "seer", "ability", "fatigue"]),
+    );
+  });
+});

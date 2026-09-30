@@ -1,6 +1,8 @@
 import { canSeeNote, canSaveNote } from "../domain/note-permissions";
 import { DurableObject } from "cloudflare:workers";
 import * as Schema from "effect/Schema";
+import { SheetLayout } from "../domain/sheet-layout";
+import { layoutLimitsError } from "../domain/template-io";
 import {
   capDice,
   computeStats,
@@ -25,7 +27,7 @@ import {
   type PresenceMember,
   SaveCharacterInput,
   type SaveNoteInput,
-  type SaveTemplateInput,
+  SaveTemplateInput,
   type ServerFrame,
   type Visibility,
 } from "../domain/schemas";
@@ -41,6 +43,7 @@ import {
   type SceneMetadata,
 } from "../domain/board";
 import { newId, nowIso } from "./crypto";
+import { trackerDefinitions } from "../domain/trackers-definitions";
 
 export type WorldDoEnv = {
   BUCKET: R2Bucket;
@@ -63,6 +66,7 @@ type TemplateRow = {
   stats: string;
   tickers: string;
   rolls: string;
+  layout: string | null;
   updated_at: string;
 };
 
@@ -74,6 +78,7 @@ type CharacterRow = {
   data: string;
   tickers: string;
   ticker_max: string | null;
+  layout_prefs: string | null;
   avatar_key: string | null;
   created_at: string;
   updated_at: string;
@@ -116,6 +121,48 @@ const parse = <T>(value: string | null, fallback: T): T => {
   } catch {
     return fallback;
   }
+};
+
+const LayoutPrefs = Schema.Record(Schema.String, Schema.String.check(Schema.isMaxLength(40))).check(
+  Schema.isMaxProperties(200),
+  Schema.makeFilter((prefs) => Object.keys(prefs).every((key) => key.length <= 80), {
+    expected: "Block ids of 80 characters or fewer",
+  }),
+);
+
+const characterValuesError = (values: Character["values"]): string | undefined => {
+  const cellError = (value: string | number | boolean | readonly string[]) => {
+    if (typeof value === "string" && value.length > 4000)
+      return "Character strings must be 4000 characters or fewer";
+    if (typeof value === "number" && !Number.isFinite(value))
+      return "Character numbers must be finite";
+    if (typeof value === "object") {
+      if (value.length > 50) return "String arrays must contain at most 50 items";
+      if (value.some((item) => item.length > 4000))
+        return "Character strings must be 4000 characters or fewer";
+    }
+    return undefined;
+  };
+  for (const [key, value] of Object.entries(values)) {
+    if (key.length > 80) return "Character value keys must be 80 characters or fewer";
+    if (typeof value !== "object" || value.every((item) => typeof item === "string")) {
+      const error = cellError(value);
+      if (error) return error;
+    } else {
+      if (value.length > 100) return "Lists must contain at most 100 rows";
+      for (const row of value) {
+        if (typeof row === "string") continue;
+        for (const [column, cell] of Object.entries(row)) {
+          if (column.length > 80) return "List column keys must be 80 characters or fewer";
+          const error = cellError(cell);
+          if (error) return error;
+        }
+      }
+    }
+  }
+  if (new TextEncoder().encode(JSON.stringify(values)).byteLength > 64 * 1024)
+    return "Serialized character values must be 64 KB or smaller";
+  return undefined;
 };
 
 export const defaultTemplate = (worldId: string): SheetTemplate => ({
@@ -439,9 +486,11 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       updated_at TEXT NOT NULL
     )`);
     // Additive columns for instances created before the feature existed.
+    this.ensureColumn("templates", "layout", "layout TEXT");
     this.ensureColumn("notes", "editable_by_all", "editable_by_all INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("characters", "avatar_key", "avatar_key TEXT");
     this.ensureColumn("characters", "ticker_max", "ticker_max TEXT");
+    this.ensureColumn("characters", "layout_prefs", "layout_prefs TEXT");
     this.ensureColumn("messages", "author_avatar_key", "author_avatar_key TEXT");
     this.ensureColumn("messages", "character_id", "character_id TEXT");
     const existing = sql.exec("SELECT COUNT(*) AS n FROM templates").one() as { n: number };
@@ -462,6 +511,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
   // -------------------------------------------------------------------------
 
   private toTemplate(row: TemplateRow): SheetTemplate {
+    const layout = Schema.decodeUnknownResult(SheetLayout)(parse<unknown>(row.layout, undefined));
     return {
       id: row.id,
       worldId: this.worldId,
@@ -471,20 +521,28 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       stats: parse(row.stats, []),
       tickers: parse(row.tickers, []),
       rolls: parse(row.rolls, []),
+      layout: layout._tag === "Success" ? layout.success : undefined,
       updatedAt: row.updated_at,
     };
   }
 
   private toCharacter(row: CharacterRow): Character {
+    const values = Schema.decodeUnknownResult(Character.fields.values)(
+      parse<unknown>(row.data, {}),
+    );
+    const prefs = Schema.decodeUnknownResult(LayoutPrefs)(
+      parse<unknown>(row.layout_prefs, undefined),
+    );
     return {
       id: row.id,
       worldId: this.worldId,
       memberId: row.member_id,
       name: row.name,
       templateId: row.template_id,
-      values: parse(row.data, {}),
+      values: values._tag === "Success" ? values.success : {},
       tickers: parse(row.tickers, {}),
       tickerMax: parse(row.ticker_max, {}),
+      layoutPrefs: prefs._tag === "Success" ? prefs.success : undefined,
       avatarKey: row.avatar_key ?? undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -606,7 +664,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
 
   private insertTemplate(template: SheetTemplate) {
     this.ctx.storage.sql.exec(
-      "INSERT OR REPLACE INTO templates (id, name, description, fields, stats, tickers, rolls, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT OR REPLACE INTO templates (id, name, description, fields, stats, tickers, rolls, layout, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       template.id,
       template.name,
       template.description ?? null,
@@ -614,6 +672,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       JSON.stringify(template.stats),
       JSON.stringify(template.tickers),
       JSON.stringify(template.rolls),
+      template.layout ? JSON.stringify(template.layout) : null,
       template.updatedAt,
     );
   }
@@ -630,17 +689,19 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       stats: input.stats,
       tickers: input.tickers,
       rolls: input.rolls,
+      layout: input.layout,
       updatedAt: nowIso(),
     };
     if (existing) {
       this.ctx.storage.sql.exec(
-        "UPDATE templates SET name = ?, description = ?, fields = ?, stats = ?, tickers = ?, rolls = ?, updated_at = ? WHERE id = ?",
+        "UPDATE templates SET name = ?, description = ?, fields = ?, stats = ?, tickers = ?, rolls = ?, layout = ?, updated_at = ? WHERE id = ?",
         template.name,
         template.description ?? null,
         JSON.stringify(template.fields),
         JSON.stringify(template.stats),
         JSON.stringify(template.tickers),
         JSON.stringify(template.rolls),
+        template.layout ? JSON.stringify(template.layout) : null,
         template.updatedAt,
         id,
       );
@@ -671,15 +732,13 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     const template = this.getTemplate(input.templateId) ?? this.getTemplate();
     const tickers: Record<string, number> = existing ? { ...existing.tickers } : {};
     const tickerMax = { ...(input.tickerMax ?? existing?.tickerMax) };
-    if (template) {
-      for (const ticker of template.tickers) {
-        if (tickerMax[ticker.id] !== undefined)
-          tickerMax[ticker.id] = Math.max(ticker.min, tickerMax[ticker.id]);
-        tickers[ticker.id] = Math.max(
-          ticker.min,
-          Math.min(tickerMax[ticker.id] ?? ticker.max, tickers[ticker.id] ?? ticker.defaultValue),
-        );
-      }
+    for (const ticker of trackerDefinitions(template)) {
+      if (tickerMax[ticker.id] !== undefined)
+        tickerMax[ticker.id] = Math.max(ticker.min, tickerMax[ticker.id]);
+      tickers[ticker.id] = Math.max(
+        ticker.min,
+        Math.min(tickerMax[ticker.id] ?? ticker.max, tickers[ticker.id] ?? ticker.defaultValue),
+      );
     }
     const character: Character = {
       id,
@@ -690,6 +749,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       values: input.values,
       tickers,
       tickerMax,
+      layoutPrefs: existing?.layoutPrefs,
       avatarKey: existing?.avatarKey,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
@@ -731,7 +791,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     const character = this.getCharacter(characterId);
     if (!character) return undefined;
     const template = this.getTemplate(character.templateId) ?? this.getTemplate();
-    const definition = template?.tickers.find((ticker) => ticker.id === tickerId);
+    const definition = trackerDefinitions(template).find((ticker) => ticker.id === tickerId);
     if (!definition) return undefined;
     const clamped = Math.max(
       definition.min,
@@ -749,6 +809,69 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       characterId,
     );
     return updated;
+  }
+
+  private setCharacterValue(
+    characterId: string,
+    key: string,
+    value: Character["values"][string],
+  ): { character: Character } | { error: string } {
+    const character = this.getCharacter(characterId);
+    if (!character) return { error: "Character not found" };
+    const template = this.getTemplate(character.templateId) ?? this.getTemplate();
+    if (trackerDefinitions(template).some((tracker) => tracker.id === key))
+      return { error: "Tracker values must be updated with ticker.set" };
+    const values = { ...character.values, [key]: value };
+    const error = characterValuesError(values);
+    if (error) return { error };
+    const updated: Character = { ...character, values, updatedAt: nowIso() };
+    // No await between reading and writing: frames cannot overwrite each other's keys.
+    this.ctx.storage.sql.exec(
+      "UPDATE characters SET data = ?, updated_at = ? WHERE id = ?",
+      JSON.stringify(values),
+      updated.updatedAt,
+      characterId,
+    );
+    return { character: updated };
+  }
+
+  private setLayoutPref(
+    characterId: string,
+    blockId: string,
+    variant: string | null,
+  ): { character: Character } | { error: string } {
+    const character = this.getCharacter(characterId);
+    if (!character) return { error: "Character not found" };
+    if (blockId.length > 80) return { error: "Block ids must be 80 characters or fewer" };
+    if (variant !== null && variant.length > 40)
+      return { error: "Layout variants must be 40 characters or fewer" };
+    const template = this.getTemplate(character.templateId) ?? this.getTemplate();
+    if (
+      template?.layout &&
+      !template.layout.pages.some((page) =>
+        page.blocks.some(
+          (block) =>
+            block.id === blockId ||
+            (block.type === "group" && block.blocks.some((child) => child.id === blockId)),
+        ),
+      )
+    )
+      return { error: "Layout block not found" };
+    const layoutPrefs =
+      variant === null
+        ? { ...character.layoutPrefs }
+        : { ...character.layoutPrefs, [blockId]: variant };
+    if (variant === null) delete layoutPrefs[blockId];
+    if (Object.keys(layoutPrefs).length > 200)
+      return { error: "Layout preferences must contain at most 200 entries" };
+    const updated: Character = { ...character, layoutPrefs, updatedAt: nowIso() };
+    this.ctx.storage.sql.exec(
+      "UPDATE characters SET layout_prefs = ?, updated_at = ? WHERE id = ?",
+      JSON.stringify(layoutPrefs),
+      updated.updatedAt,
+      characterId,
+    );
+    return { character: updated };
   }
 
   private setCharacterAvatar(characterId: string, avatarKey: string): Character | undefined {
@@ -822,6 +945,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     authorMemberId: string,
     authorName: string,
     recipientMemberIds: readonly string[] = [],
+    label = "",
   ) {
     const cleaned = parseRollCommand(notation) ?? notation;
     const parsed = parseDiceExpression(cleaned);
@@ -841,7 +965,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       authorMemberId,
       authorName,
       kind: "roll",
-      content: "",
+      content: label.trim(),
       visibility,
       recipientMemberIds: [...recipientMemberIds],
       roll: result,
@@ -1192,6 +1316,8 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
           if (decoded._tag === "Failure") return json({ error: "Invalid character" }, 400);
           if (!this.canSaveCharacter(decoded.success, memberId, role))
             return json({ error: "You cannot edit this character" }, 403);
+          const error = characterValuesError(decoded.success.values);
+          if (error) return json({ error }, 400);
           const character = this.saveCharacter({
             ...decoded.success,
             memberId: decoded.success.memberId ?? memberId,
@@ -1226,16 +1352,12 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         }
 
         case "POST template": {
-          const template = this.saveTemplate({
-            id: body.id as string | undefined,
-            name: String(body.name ?? "Untitled"),
-            description: body.description as string | undefined,
-            fields: (body.fields as SaveTemplateInput["fields"]) ?? [],
-            stats: (body.stats as SaveTemplateInput["stats"]) ?? [],
-            tickers: (body.tickers as SaveTemplateInput["tickers"]) ?? [],
-            rolls: (body.rolls as SaveTemplateInput["rolls"]) ?? [],
-          });
-          return json(template);
+          if (role !== "dm") return json({ error: "Only the DM can save templates" }, 403);
+          const input = Schema.decodeUnknownResult(SaveTemplateInput)(body);
+          if (input._tag === "Failure") return json({ error: "Invalid template data" }, 400);
+          const error = layoutLimitsError(input.success.layout);
+          if (error) return json({ error }, 400);
+          return json(this.saveTemplate(input.success));
         }
 
         case "POST note": {
@@ -1402,6 +1524,7 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         attachment.memberId,
         attachment.name,
         frame.recipientMemberIds,
+        frame.label,
       );
       if (message) this.broadcastMessage(message);
       return;
@@ -1417,6 +1540,11 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         );
         return;
       }
+      const error = characterValuesError(frame.character.values);
+      if (error) {
+        socket.send(JSON.stringify({ type: "error", message: error } satisfies ServerFrame));
+        return;
+      }
       const character = this.saveCharacter({
         id: frame.character.id,
         name: frame.character.name,
@@ -1426,6 +1554,31 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         tickerMax: frame.character.tickerMax,
       });
       this.broadcast({ type: "character", character });
+      return;
+    }
+
+    if (frame.type === "character.value" || frame.type === "character.prefs") {
+      if (!this.canEditCharacter(frame.characterId, attachment.memberId, attachment.role)) {
+        socket.send(
+          JSON.stringify({
+            type: "error",
+            message: "You cannot edit this character",
+          } satisfies ServerFrame),
+        );
+        return;
+      }
+      const result =
+        frame.type === "character.value"
+          ? this.setCharacterValue(frame.characterId, frame.key, frame.value)
+          : this.setLayoutPref(frame.characterId, frame.blockId, frame.variant);
+      if ("error" in result)
+        socket.send(JSON.stringify({ type: "error", message: result.error } satisfies ServerFrame));
+      else
+        this.broadcast({
+          type: "character",
+          character: result.character,
+          requestId: frame.type === "character.value" ? frame.requestId : undefined,
+        });
       return;
     }
 
