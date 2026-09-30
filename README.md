@@ -120,6 +120,14 @@ and can be converted; their formulas and roll modifiers stay in effect. On the
 sheet, **Edit** makes fields, lists, and plain stats editable in place, saving
 each value as you leave it. Layouts are prototyped at `/lab/systems`.
 
+## Compendium
+
+Each world has its own compendium of typed entries with fields and markdown
+bodies. Only DMs edit types and entries; public entries are visible to every
+member, while DM-only entries stay hidden from players. DMs export and import
+`ttrpg-pack` JSON to move content between worlds; re-importing updates matching
+ids. Presets contain entry types only — no copyrighted game content is shipped.
+
 ## Realtime protocol
 
 The client opens `/api/worlds/:id/ws`, which the Worker authenticates and
