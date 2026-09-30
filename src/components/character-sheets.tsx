@@ -4,7 +4,7 @@ import { api } from "../client/api";
 import { computeStats } from "../domain/dice";
 import { effectiveLayout } from "../domain/layout-from-template";
 import { trackerDefinitions } from "../domain/trackers-definitions";
-import { SheetBlocks, type CompendiumLookup } from "./sheet-blocks";
+import { SheetBlocks, type CompendiumLookup, type RollRow, type SheetRoll } from "./sheet-blocks";
 import type {
   Character,
   CharacterValue,
@@ -430,7 +430,7 @@ type Props = {
   onValue: (characterId: string, key: string, value: CharacterValue) => void;
   onLayoutPref: (characterId: string, blockId: string, variant: string | null) => void;
   /** A roll that isn't one of the template's roll definitions, e.g. a Property row's d8. */
-  onRollDice: (notation: string, label: string) => void;
+  onRollDice: (notation: string, label: string, sheet?: SheetRoll) => void;
   /** The world's compendium, for entry blocks and "from compendium" lists. */
   compendium?: CompendiumLookup;
   onOpenEntry?: (entryId: string) => void;
@@ -519,10 +519,17 @@ export function CharacterSheets(props: Props) {
     template: SheetTemplate,
     label: string,
     dice: string,
+    row?: RollRow,
   ) => {
     const defined = template.rolls.find((roll) => roll.label === label);
     if (defined) props.onRoll(character.id, defined.id, defined.visibility);
-    else props.onRollDice(dice, label);
+    // Only the owner or the DM can roll with a character's values.
+    else
+      props.onRollDice(
+        dice,
+        label,
+        canEdit(character) ? { characterId: character.id, row } : undefined,
+      );
   };
 
   const uploadAvatar = async (character: Character, file: File) => {
@@ -766,7 +773,9 @@ export function CharacterSheets(props: Props) {
                       onVariant={(blockId, variant) =>
                         props.onLayoutPref(character().id, blockId, variant)
                       }
-                      onRoll={(label, dice) => rollFromSheet(character(), sheet(), label, dice)}
+                      onRoll={(label, dice, row) =>
+                        rollFromSheet(character(), sheet(), label, dice, row)
+                      }
                       readOnly={!canEdit(character())}
                       compendium={props.compendium}
                       onOpenEntry={props.onOpenEntry}

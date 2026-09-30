@@ -18,7 +18,9 @@ compendiums is in [docs/corpus.md](docs/corpus.md).
 - **Realtime chat** — public / private / DM-only messages, plus whispers
 - **Character sheets** — owner-built templates with fields, computed stats,
   tickers (HP/mana), and click-to-roll buttons
-- **Dice engine** — dice sets + stacking modifiers (static, stat refs, field refs)
+- **Dice engine** — notation with keep highest/lowest, advantage, dice pools, sheet
+  values (`1d20 + @str_mod`), and independent groups (`1d20+5 | 2d6+3`); it rolls,
+  it never judges the result
 - **Notes** — per-world markdown files (metadata in the DO, content in R2)
 - **Mood board** — DM-prepared scenes, layered images and text, and live reveals, with independently collapsible chat and tools
 
@@ -124,6 +126,30 @@ Classic and Compact, Mothership, Blades in the Dark) and be exported or imported
 and can be converted; their formulas and roll modifiers stay in effect. On the
 sheet, **Edit** makes fields, lists, and plain stats editable in place, saving
 each value as you leave it. Layouts are prototyped at `/lab/systems`.
+
+### Dice and derived values
+
+Rolls anywhere on a sheet — the rolls block, a stat or tracker label with a roll,
+a list's per-row roll, a dice cell — take notation:
+
+| Notation                      | Means                                                            |
+| ----------------------------- | ---------------------------------------------------------------- |
+| `2d6 + 1`, `d%`, `1d20 - 1d4` | Dice and numbers; subtracted dice subtract                       |
+| `4d6kh3`, `2d20kl1`           | Keep the highest / lowest                                        |
+| `1d20adv`, `1d20dis`          | Advantage / disadvantage: one extra die, drop the lowest/highest |
+| `1d20 + @str_mod`             | A sheet value (or a derived value) as a modifier                 |
+| `(@hunt)d6khz`                | A pool sized by a value; `z`: at 0, roll two and keep the lowest |
+| `1d20 + @row.bonus`           | A column of the list row being rolled                            |
+| `1d20 + 5 \| 1d8 + 3`         | Separate groups, rolled together and never added                 |
+
+The server reads the values at roll time (only the character's owner or the DM
+can roll with them) and chat shows each modifier by its label. A layout's
+**derived values** (`floor((@str - 10) / 2)`, `ceil(@level / 4) + 1`,
+`@inventory.weight` for a list column's sum, `min`, `max`, `if`) are computed
+from other values, shown wherever a stat or field uses their key, and usable in
+rolls; `derived` list columns compute per row. They are never stored. The
+layout editor lists problems it finds (a formula that refers to itself, a roll
+using a value that isn't on the sheet) without blocking a save.
 
 ## Compendium
 

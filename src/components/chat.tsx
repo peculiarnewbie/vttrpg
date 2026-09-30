@@ -2,54 +2,23 @@ import { createVirtualizer } from "../client/virtual";
 import { For, Show, createEffect, createSignal } from "solid-js";
 import { showDiceTotals } from "../client/dice-display";
 import { api } from "../client/api";
-import { parseRollCommand } from "../domain/dice";
+import { MAX_DICE, parseRollCommand } from "../domain/dice";
 import { findEntryByName, splitEntryLinks } from "../domain/entry-links";
 import type { CompendiumStore } from "./compendium";
 import { createLinkSuggest } from "./entry-link-suggest";
 import type { ChatMessage, Visibility, WorldMember } from "../domain/schemas";
 import { Avatar, Button } from "./ui";
+import { RollView } from "./roll-view";
 import { styles } from "./styles.stylex";
 import { boardStyles } from "./board.stylex";
 import { sx } from "../theme/sx";
 
 const DICE_SIDES = [4, 6, 8, 10, 12, 20];
-const MAX_DICE = 10;
 
 export function DiceView(props: { message: ChatMessage }) {
   return (
     <Show when={props.message.roll}>
-      {(roll) => (
-        <div {...sx(styles.rollResult)}>
-          <div {...sx(styles.rowWrap)}>
-            <For each={roll().dice}>
-              {(die) => (
-                <For each={die.results}>
-                  {(value) => (
-                    <span {...sx(styles.die)}>
-                      <span>{value}</span>
-                      <sub {...sx(styles.dieLabel)}>d{die.sides}</sub>
-                    </span>
-                  )}
-                </For>
-              )}
-            </For>
-          </div>
-          <Show when={showDiceTotals()}>
-            <span {...sx(styles.rollTotal)}>Total {roll().total}</span>
-          </Show>
-          <span {...sx(styles.mono)}>
-            {roll().notation}
-            {roll().modifiers.length > 0
-              ? ` (${roll()
-                  .modifiers.map(
-                    (modifier) =>
-                      `${modifier.label} ${modifier.value >= 0 ? "+" : ""}${modifier.value}`,
-                  )
-                  .join(", ")})`
-              : ""}
-          </span>
-        </div>
-      )}
+      {(roll) => <RollView roll={roll()} showTotal={showDiceTotals()} />}
     </Show>
   );
 }
@@ -324,7 +293,9 @@ export function Chat(props: {
             {(item) => (
               <div
                 data-index={item.index}
-                ref={(el) => virtualizer.measureElement(el)}
+                // Solid 2 runs refs before the row is attached; measuring a detached node is a
+                // no-op, and only a measured row is observed for later size changes.
+                ref={(el) => requestAnimationFrame(() => virtualizer.measureElement(el))}
                 style={{
                   position: "absolute",
                   top: 0,

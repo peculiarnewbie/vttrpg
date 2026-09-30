@@ -6,6 +6,7 @@ import { api, ApiError, type WorldBootstrap } from "../client/api";
 import { connectWorld, type RealtimeController, type RealtimeStatus } from "../client/realtime";
 import { useSession } from "../client/session";
 import { CharacterSheets } from "../components/character-sheets";
+import type { SheetRoll } from "../components/sheet-blocks";
 import { CompendiumPanel, EntryCard } from "../components/compendium";
 import { createCompendium } from "../client/compendium";
 import { Chat } from "../components/chat";
@@ -223,7 +224,8 @@ export default function WorldPage() {
               setPresence([...frame.members]);
               break;
             case "error":
-              resetCharacterUpdates();
+              // A roll that failed to parse leaves sheet edits alone.
+              if (frame.code !== "roll") resetCharacterUpdates();
               if (frame.message) setError(frame.message);
               break;
           }
@@ -333,10 +335,13 @@ export default function WorldPage() {
     { id: "notes", label: "Notes" },
     { id: "compendium", label: "Compendium" },
   ];
-  /** A labelled public roll from a sheet or compendium card ("Longsword · d8"). */
-  const rollLabelled = (notation: string, label: string) => {
+  /**
+   * A labelled public roll from a sheet or compendium card ("Longsword · d8").
+   * `sheet` lets the server resolve `@refs` against that character (and a list row).
+   */
+  const rollLabelled = (notation: string, label: string, sheet?: SheetRoll) => {
     if (status() === "open")
-      controller?.send({ type: "roll.dice", notation, label, visibility: "public" });
+      controller?.send({ type: "roll.dice", notation, label, visibility: "public", ...sheet });
   };
 
   return (

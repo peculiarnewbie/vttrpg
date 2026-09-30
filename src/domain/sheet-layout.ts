@@ -15,7 +15,15 @@ export const GRID_COLUMNS = 6;
 export const TrackerDisplay = Schema.Literals(["auto", "pips", "bar", "number", "clock"]);
 export type TrackerDisplay = typeof TrackerDisplay.Type;
 
-export const ListColumnKind = Schema.Literals(["text", "number", "dice", "tags", "check"]);
+/** `derived` columns are computed per row from `expr` (e.g. `@row.qty * @row.weight`) and not editable. */
+export const ListColumnKind = Schema.Literals([
+  "text",
+  "number",
+  "dice",
+  "tags",
+  "check",
+  "derived",
+]);
 export type ListColumnKind = typeof ListColumnKind.Type;
 
 /** Visual alternatives per block type. The first entry is the default. */
@@ -66,6 +74,8 @@ export const TrackerItem = Schema.Struct({
   /** Value for new characters; defaults to `max`. */
   start: Schema.optional(Schema.Int),
   display: Schema.optional(TrackerDisplay),
+  /** Dice notation rolled when the label is clicked, e.g. `(@hunt)d6khz`. */
+  roll: Schema.optional(Schema.String),
 });
 export type TrackerItem = typeof TrackerItem.Type;
 
@@ -74,6 +84,8 @@ export const StatItem = Schema.Struct({
   label: Schema.String,
   /** Enables the `bars` variant: the stat is drawn as a fill against this maximum. */
   max: Schema.optional(Schema.Number),
+  /** Dice notation rolled when the stat is clicked, e.g. `1d20 + @str_mod`. */
+  roll: Schema.optional(Schema.String),
 });
 export type StatItem = typeof StatItem.Type;
 
@@ -81,6 +93,8 @@ export const ListColumn = Schema.Struct({
   key: Schema.String,
   label: Schema.String,
   kind: ListColumnKind,
+  /** For `derived` columns: an expression over `@row.column` and sheet values. */
+  expr: Schema.optional(Schema.String),
 });
 export type ListColumn = typeof ListColumn.Type;
 
@@ -126,6 +140,8 @@ const leafBlocks = [
      * copies (players may change them) that remember their entry in `_entry`.
      */
     source: Schema.optional(Schema.Struct({ entryType: Schema.String })),
+    /** Dice notation each row can roll, e.g. `1d20 + @row.bonus | @row.damage + @str_mod`. */
+    roll: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     ...common,
@@ -146,6 +162,7 @@ const leafBlocks = [
     ...common,
     type: Schema.Literal("rolls"),
     variant: variantOf("rolls"),
+    /** `dice` is notation and may use `@refs` (see dice-notation.ts). */
     items: Schema.Array(Schema.Struct({ label: Schema.String, dice: Schema.String })),
   }),
   /**
@@ -197,11 +214,24 @@ export const SheetPage = Schema.Struct({
 });
 export type SheetPage = typeof SheetPage.Type;
 
+/**
+ * A number computed from other values (see derived.ts): shown wherever a block
+ * item uses its key, and usable as `@key` in expressions and roll notation.
+ * Never stored on the character.
+ */
+export const DerivedValue = Schema.Struct({
+  key: Schema.String,
+  label: Schema.String,
+  expr: Schema.String,
+});
+export type DerivedValue = typeof DerivedValue.Type;
+
 export const SheetLayout = Schema.Struct({
   system: Schema.String,
   /** Name of this arrangement, e.g. "Classic" or "Compact"; a system can ship several. */
   name: Schema.String,
   pages: Schema.Array(SheetPage),
+  derived: Schema.optional(Schema.Array(DerivedValue)),
 });
 export type SheetLayout = typeof SheetLayout.Type;
 

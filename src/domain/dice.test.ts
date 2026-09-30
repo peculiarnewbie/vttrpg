@@ -26,23 +26,42 @@ describe("parseDiceExpression", () => {
     });
   });
 
-  it("caps the pool at ten dice", () => {
-    const parsed = parseDiceExpression("50d6");
-    expect(countDice(parsed.dice)).toBe(10);
-    expect(parsed.dice).toEqual([{ count: 10, sides: 6 }]);
+  it("skips negative dice terms in the legacy unsigned pool", () => {
+    expect(parseDiceExpression("1d20-1d4-2")).toEqual({
+      dice: [{ count: 1, sides: 20 }],
+      staticBonus: -2,
+    });
+  });
+
+  it("caps the pool at one hundred dice", () => {
+    const parsed = parseDiceExpression("150d6");
+    expect(countDice(parsed.dice)).toBe(100);
+    expect(parsed.dice).toEqual([{ count: 100, sides: 6 }]);
   });
 });
 
 describe("capDice", () => {
+  it("respects an explicit cap and skips non-positive groups", () => {
+    expect(
+      capDice(
+        [
+          { count: 0, sides: 6 },
+          { count: -2, sides: 8 },
+          { count: 12, sides: 20 },
+        ],
+        5,
+      ),
+    ).toEqual([{ count: 5, sides: 20 }]);
+  });
   it("clamps across groups and drops the remainder", () => {
     expect(
       capDice([
-        { count: 6, sides: 6 },
-        { count: 6, sides: 8 },
+        { count: 60, sides: 6 },
+        { count: 60, sides: 8 },
       ]),
     ).toEqual([
-      { count: 6, sides: 6 },
-      { count: 4, sides: 8 },
+      { count: 60, sides: 6 },
+      { count: 40, sides: 8 },
     ]);
   });
 });
@@ -53,10 +72,27 @@ describe("parseRollCommand", () => {
     expect(parseRollCommand("/roll2d20")).toBe("2d20");
     expect(parseRollCommand("hello")).toBeNull();
     expect(parseRollCommand("/roll")).toBeNull();
+    expect(parseRollCommand("/roll 1d20 + @Str_mod")).toBe("1d20+@Str_mod");
   });
 });
 
 describe("rollExpression", () => {
+  it("uses richer notation and subtracts negative dice", () => {
+    expect(rollExpression("d20-1d4", max).total).toBe(16);
+    expect(rollExpression("d20adv|2d6", max).groups?.map((group) => group.total)).toEqual([20, 12]);
+  });
+
+  it.each([" 2d6+ ", "1d20 x", "@bonus", "100d6adv"])(
+    "returns an empty result for invalid rolls: %s",
+    (input) => {
+      expect(rollExpression(input, max)).toEqual({
+        notation: input.trim(),
+        dice: [],
+        modifiers: [],
+        total: 0,
+      });
+    },
+  );
   it("totals dice and static bonus", () => {
     const result = rollExpression("2d6+3", max);
     expect(result.total).toBe(6 + 6 + 3);

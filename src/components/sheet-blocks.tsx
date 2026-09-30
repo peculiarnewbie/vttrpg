@@ -4,6 +4,7 @@ import {
   Match,
   Show,
   Switch,
+  createMemo,
   createSignal,
   createUniqueId,
   onCleanup,
@@ -12,6 +13,7 @@ import {
 import {
   blockShown,
   blockVariants,
+  layoutTrackers,
   gridMode,
   resolveSpan,
   resolveTrackerDisplay,
@@ -36,6 +38,8 @@ import {
   sourceOf,
 } from "../domain/compendium-rows";
 import { searchEntries } from "../domain/compendium-search";
+import { evaluate, parseExpr, type Expr } from "../domain/derived";
+import { sheetDerived, sheetScope } from "../domain/sheet-refs";
 import { colors, fonts, radii, skin } from "../theme/tokens.stylex";
 import { useTheme } from "../theme/theme-context";
 import { moveIndex } from "../client/sortable";
@@ -575,6 +579,30 @@ const s = stylex.create({
     cursor: "pointer",
   },
   rollDice: { fontFamily: fonts.numeric, color: colors.accent },
+  // A label that rolls: the stat or tracker keeps its look, with a dotted underline as the cue.
+  rollLabel: {
+    padding: 0,
+    borderWidth: 0,
+    backgroundColor: "transparent",
+    textAlign: "start",
+    cursor: "pointer",
+    textDecorationLine: "underline",
+    textDecorationStyle: "dotted",
+    textUnderlineOffset: "2px",
+    color: { default: colors.textMuted, ":hover": colors.accent },
+  },
+  rowRoll: {
+    paddingInline: "4px",
+    paddingBlock: 0,
+    ...hair,
+    borderRadius: skin.controlRadius,
+    backgroundColor: { default: "transparent", ":hover": colors.surfaceHover },
+    color: colors.accent,
+    fontSize: "12px",
+    lineHeight: 1.4,
+    cursor: "pointer",
+  },
+  derivedCell: { fontFamily: fonts.numeric, color: colors.textMuted },
   empty: { color: colors.textFaint },
 });
 
@@ -590,7 +618,8 @@ type Props = {
   subtitle?: string;
   values: SheetValues;
   onChange: (key: string, value: SheetValues[string]) => void;
-  onRoll: (label: string, dice: string) => void;
+  /** `row` is the list row `@row.column` refers to. */
+  onRoll: (label: string, dice: string, row?: RollRow) => void;
   /** Overrides the active theme's header style (the lab renders several themes at once). */
   header?: "centered" | "band";
   /** Controlled page id (the layout editor keeps its outline and preview in step). */
@@ -617,6 +646,11 @@ type Props = {
   onOpenEntry?: (entryId: string) => void;
 };
 
+/** A list row a roll reads `@row.column` from. */
+export type RollRow = { key: string; index: number };
+/** The character a roll's `@refs` resolve against, on the server. */
+export type SheetRoll = { characterId: string; row?: RollRow };
+
 /** What the sheet reads from the world's compendium (src/client/compendium.ts provides it). */
 export type CompendiumLookup = {
   entry: (id: string) => CompendiumEntry | undefined;
@@ -630,6 +664,28 @@ const scalar = (value: SheetValues[string]) =>
 const num = (value: SheetValues[string], fallback = 0) =>
   typeof value === "number" ? value : Number(value ?? fallback) || fallback;
 const clamp = (value: number, item: TrackerItem) => Math.max(item.min, Math.min(item.max, value));
+
+/** Derived values can be fractional; sheets show at most two decimals. */
+const formatNumber = (value: number) =>
+  Number.isInteger(value) ? String(value) : String(Math.round(value * 100) / 100);
+
+/** A block item's label, which rolls its notation when the author gave it one. */
+function ItemLabel(props: { text: string; roll?: string; onRoll: (dice: string) => void }) {
+  return (
+    <Show when={props.roll} fallback={<span {...sx(s.label)}>{props.text}</span>}>
+      {(roll) => (
+        <button
+          type="button"
+          {...sx(s.label, s.rollLabel)}
+          title={`Roll ${roll()}`}
+          onClick={() => props.onRoll(roll())}
+        >
+          {props.text}
+        </button>
+      )}
+    </Show>
+  );
+}
 
 function Stepper(props: { label: string; glyph: "−" | "+"; onClick: () => void }) {
   return (
@@ -670,6 +726,8 @@ function Clock(props: { item: TrackerItem; value: number; set: (n: number) => vo
   const r = size / 2 - 3;
   const c = size / 2;
   const segments = () => props.item.max - props.item.min;
+  // Segment i stands for the value min + i + 1, so a clock needn't start at 0.
+  const valueAt = (i: number) => props.item.min + i + 1;
   const point = (i: number) => {
     const angle = (i / segments()) * 2 * Math.PI - Math.PI / 2;
     return `${c + r * Math.cos(angle)} ${c + r * Math.sin(angle)}`;
@@ -687,12 +745,12 @@ function Clock(props: { item: TrackerItem; value: number; set: (n: number) => vo
         {(i) => (
           <path
             d={`M ${c} ${c} L ${point(i)} A ${r} ${r} 0 0 1 ${point(i + 1)} Z`}
-            fill={i < props.value ? "currentColor" : "transparent"}
+            fill={valueAt(i) <= props.value ? "currentColor" : "transparent"}
             stroke="currentColor"
             stroke-width="1.5"
             role="button"
-            aria-label={`Set ${props.item.label} to ${i + 1}`}
-            onClick={() => props.set(i + 1 === props.value ? i : i + 1)}
+            aria-label={`Set ${props.item.label} to ${valueAt(i)}`}
+            onClick={() => props.set(valueAt(i) === props.value ? valueAt(i) - 1 : valueAt(i))}
           />
         )}
       </For>
@@ -707,6 +765,7 @@ function Tracker(props: {
   set: (n: number) => void;
   /** Editing: the layout's own maximum as a placeholder, and a setter for this character's. */
   maxEdit?: { layoutMax: number; set: (max: number | null) => void };
+  onRoll: (dice: string) => void;
 }) {
   const display = () => resolveTrackerDisplay(props.item);
   const body = () => (
@@ -776,14 +835,18 @@ function Tracker(props: {
       when={props.boxed}
       fallback={
         <div {...sx(s.trackerLine)}>
-          <span {...sx(s.label)}>{props.item.label}</span>
+          <ItemLabel text={props.item.label} roll={props.item.roll} onRoll={props.onRoll} />
           {body()}
           {maxInput()}
         </div>
       }
     >
       <div {...sx(s.trackerBox)}>
-        <span {...sx(s.label)}>{props.item.short ?? props.item.label}</span>
+        <ItemLabel
+          text={props.item.short ?? props.item.label}
+          roll={props.item.roll}
+          onRoll={props.onRoll}
+        />
         {body()}
         <Show when={props.item.short}>
           <span {...sx(s.ofMax)}>{props.item.label}</span>
@@ -838,10 +901,16 @@ function Cell(props: {
   row: ListRow | undefined;
   onRoll: (dice: string) => void;
   onToggle: () => void;
+  derived: (column: ListColumn, row: ListRow) => number | undefined;
 }) {
   const value = () => props.row?.[props.column.key];
   return (
     <Switch fallback={<span>{value() === undefined ? "" : String(value())}</span>}>
+      <Match when={props.column.kind === "derived"}>
+        <span {...sx(s.derivedCell)}>
+          {props.row ? formatNumber(props.derived(props.column, props.row) ?? 0) : ""}
+        </span>
+      </Match>
       <Match when={props.column.kind === "dice" && typeof value() === "string" && value()}>
         <button
           {...sx(s.dice)}
@@ -878,6 +947,8 @@ type Ctx = Omit<
   mode: GridMode;
   /** The layout's list at `key`, for filling it from an entry. */
   listBlock: (key: string) => Extract<LeafBlock, { type: "list" }> | undefined;
+  /** A derived list column's value for one row. */
+  derivedCell: (column: ListColumn, row: ListRow) => number | undefined;
 };
 
 const Heading = (props: { text: string }) => (
@@ -997,7 +1068,17 @@ function Stats(props: { items: readonly StatItem[]; variant: string; ctx: Ctx })
     const v = value(item);
     return typeof v === "string" || typeof v === "number" ? v : "";
   };
-  const shown = (item: StatItem) => (plain(item) === "" ? "—" : String(plain(item)));
+  const shown = (item: StatItem) => {
+    const v = plain(item);
+    return v === "" ? "—" : typeof v === "number" ? formatNumber(v) : v;
+  };
+  const label = (item: StatItem) => (
+    <ItemLabel
+      text={item.label}
+      roll={item.roll}
+      onRoll={(dice) => props.ctx.onRoll(item.label, dice)}
+    />
+  );
   // While editing, stats that aren't derived from other values become inputs.
   const editor = () => (
     <div {...sx(s.fields3)}>
@@ -1029,7 +1110,7 @@ function Stats(props: { items: readonly StatItem[]; variant: string; ctx: Ctx })
             <For each={props.items}>
               {(item) => (
                 <div {...sx(s.statBar)}>
-                  <span {...sx(s.label)}>{item.label}</span>
+                  {label(item)}
                   <Show
                     when={item.max && typeof value(item) === "number"}
                     fallback={<span {...sx(s.statLineValue)}>{shown(item)}</span>}
@@ -1056,7 +1137,7 @@ function Stats(props: { items: readonly StatItem[]; variant: string; ctx: Ctx })
             <For each={props.items}>
               {(item) => (
                 <div {...sx(s.statBox)}>
-                  <span {...sx(s.label)}>{item.label}</span>
+                  {label(item)}
                   <span {...sx(s.statBoxValue)}>{shown(item)}</span>
                 </div>
               )}
@@ -1068,7 +1149,7 @@ function Stats(props: { items: readonly StatItem[]; variant: string; ctx: Ctx })
             <For each={props.items}>
               {(item) => (
                 <div {...sx(s.statLine)}>
-                  <span {...sx(s.label)}>{item.label}</span>
+                  {label(item)}
                   <span {...sx(s.statLineValue)}>{shown(item)}</span>
                 </div>
               )}
@@ -1080,7 +1161,7 @@ function Stats(props: { items: readonly StatItem[]; variant: string; ctx: Ctx })
             <For each={props.items}>
               {(item) => (
                 <div {...sx(s.stat)}>
-                  <span {...sx(s.label)}>{item.label}</span>
+                  {label(item)}
                   <span {...sx(s.statValue)}>{shown(item)}</span>
                 </div>
               )}
@@ -1109,12 +1190,18 @@ export function ListEditor(props: {
   block: Pick<Extract<LeafBlock, { type: "list" }>, "key" | "title" | "columns">;
   rows: readonly ListRow[];
   onSave: (rows: readonly ListRow[]) => void;
+  /** Values for derived columns, which are shown but never edited. */
+  derived?: (column: ListColumn, row: ListRow) => number | undefined;
 }) {
   const save = (rows: readonly ListRow[]) => props.onSave(rows);
   const setCell = (index: number, key: string, value: ListRow[string]) =>
     save(props.rows.map((row, i) => (i === index ? { ...row, [key]: value } : row)));
   const blank = (): ListRow =>
-    Object.fromEntries(props.block.columns.map((column) => [column.key, emptyCell(column)]));
+    Object.fromEntries(
+      props.block.columns
+        .filter((column) => column.kind !== "derived")
+        .map((column) => [column.key, emptyCell(column)]),
+    );
   const template = () =>
     [
       "14px",
@@ -1174,6 +1261,14 @@ export function ListEditor(props: {
                           />
                         }
                       >
+                        <Match when={column.kind === "derived"}>
+                          <span {...sx(s.derivedCell)} aria-label={label(column, index)}>
+                            {formatNumber(
+                              (props.rows[index] && props.derived?.(column, props.rows[index])) ??
+                                0,
+                            )}
+                          </span>
+                        </Match>
                         <Match when={column.kind === "check"}>
                           <button
                             {...sx(s.box, value() === true && s.boxOn)}
@@ -1230,8 +1325,23 @@ function List(props: { block: Extract<LeafBlock, { type: "list" }>; variant: str
   const count = () => Math.max(rows().length, props.block.slots ?? 0);
   const indexes = () => Array.from({ length: count() }, (_, i) => i);
   const [first, ...rest] = props.block.columns;
+  const rowLabel = (index: number) => String(rows()[index]?.[first.key] ?? "");
   const rollRow = (index: number) => (dice: string) =>
-    props.ctx.onRoll(String(rows()[index]?.[first.key] ?? ""), dice);
+    props.ctx.onRoll(rowLabel(index), dice, { key: props.block.key, index });
+  // The block's own roll, offered on every filled row ("1d20 + @row.bonus").
+  const rowRoll = (index: number) => (
+    <Show when={props.block.roll && rows()[index]}>
+      <button
+        type="button"
+        {...sx(s.rowRoll)}
+        title={`Roll ${props.block.roll}`}
+        aria-label={`Roll ${rowLabel(index) || `row ${index + 1}`}`}
+        onClick={() => rollRow(index)(props.block.roll!)}
+      >
+        ⚄
+      </button>
+    </Show>
+  );
   const toggle = (index: number, key: string) =>
     props.ctx.onChange(
       props.block.key,
@@ -1252,6 +1362,7 @@ function List(props: { block: Extract<LeafBlock, { type: "list" }>; variant: str
           row={rows()[index]}
           onRoll={rollRow(index)}
           onToggle={() => toggle(index, column.key)}
+          derived={props.ctx.derivedCell}
         />
       }
     >
@@ -1271,15 +1382,16 @@ function List(props: { block: Extract<LeafBlock, { type: "list" }>; variant: str
       ? props.block.source.entryType
       : undefined;
   const template = () =>
-    props.block.columns
-      .map((column) =>
+    [
+      ...props.block.columns.map((column) =>
         column.kind === "text"
           ? "minmax(0, 1fr)"
           : column.kind === "tags"
             ? "minmax(0, 0.8fr)"
             : "auto",
-      )
-      .join(" ");
+      ),
+      ...(props.block.roll ? ["auto"] : []),
+    ].join(" ");
   return (
     <>
       <Show when={props.block.title}>{(title) => <Heading text={title()} />}</Show>
@@ -1289,6 +1401,7 @@ function List(props: { block: Extract<LeafBlock, { type: "list" }>; variant: str
             block={props.block}
             rows={rows()}
             onSave={(next) => props.ctx.onChange(props.block.key, next)}
+            derived={props.ctx.derivedCell}
           />
         </Match>
         <Match when={props.variant === "cards"}>
@@ -1296,7 +1409,9 @@ function List(props: { block: Extract<LeafBlock, { type: "list" }>; variant: str
             <For each={rows().map((_, i) => i)}>
               {(index) => (
                 <div {...sx(s.card)}>
-                  <span {...sx(s.cardTitle)}>{String(rows()[index]?.[first.key] ?? "")}</span>
+                  <span {...sx(s.cardTitle)}>
+                    {String(rows()[index]?.[first.key] ?? "")} {rowRoll(index)}
+                  </span>
                   <For each={rest}>
                     {(column) => (
                       <Show when={rows()[index]?.[column.key] !== ""}>
@@ -1320,6 +1435,7 @@ function List(props: { block: Extract<LeafBlock, { type: "list" }>; variant: str
                   <span {...sx(s.slotNumber)}>{index + 1}</span>
                   <span {...sx(s.slotBody)}>
                     <For each={props.block.columns}>{(column) => cell(index, column)}</For>
+                    {rowRoll(index)}
                   </span>
                 </div>
               )}
@@ -1331,11 +1447,19 @@ function List(props: { block: Extract<LeafBlock, { type: "list" }>; variant: str
             <For each={props.block.columns}>
               {(column) => <span {...sx(s.label, s.th)}>{column.label}</span>}
             </For>
+            <Show when={props.block.roll}>
+              <span {...sx(s.th)} />
+            </Show>
             <For each={indexes()}>
               {(index) => (
-                <For each={props.block.columns}>
-                  {(column) => <span {...sx(s.td)}>{cell(index, column)}</span>}
-                </For>
+                <>
+                  <For each={props.block.columns}>
+                    {(column) => <span {...sx(s.td)}>{cell(index, column)}</span>}
+                  </For>
+                  <Show when={props.block.roll}>
+                    <span {...sx(s.td)}>{rowRoll(index)}</span>
+                  </Show>
+                </>
               )}
             </For>
           </div>
@@ -1689,6 +1813,7 @@ function Leaf(props: { block: LeafBlock; ctx: Ctx }) {
                         ? props.ctx.onTracker(item.key, clamp(n, effective()))
                         : props.ctx.onChange(item.key, clamp(n, effective()))
                     }
+                    onRoll={(dice) => props.ctx.onRoll(item.label, dice)}
                     maxEdit={
                       props.ctx.editing && props.ctx.onTrackerMax
                         ? {
@@ -1725,17 +1850,26 @@ function Leaf(props: { block: LeafBlock; ctx: Ctx }) {
                 >
                   <span {...sx(s.label)}>{item.label}</span>
                   <Show
-                    when={props.ctx.editing}
+                    when={props.ctx.editing && props.ctx.computed?.(item.key) === undefined}
                     fallback={
-                      <span
-                        {...sx(
-                          s.fieldValue,
-                          variant() === "inline" && s.fieldInlineValue,
-                          !values()[item.key] && s.empty,
-                        )}
+                      <Show
+                        when={props.ctx.computed?.(item.key) !== undefined}
+                        fallback={
+                          <span
+                            {...sx(
+                              s.fieldValue,
+                              variant() === "inline" && s.fieldInlineValue,
+                              !values()[item.key] && s.empty,
+                            )}
+                          >
+                            {String(values()[item.key] ?? "—")}
+                          </span>
+                        }
                       >
-                        {String(values()[item.key] ?? "—")}
-                      </span>
+                        <span {...sx(s.fieldValue, variant() === "inline" && s.fieldInlineValue)}>
+                          {formatNumber(props.ctx.computed?.(item.key) ?? 0)}
+                        </span>
+                      </Show>
                     }
                   >
                     <CommitInput
@@ -1862,6 +1996,28 @@ export function SheetBlocks(props: Props) {
   const current = () =>
     props.layout.pages.find((item) => item.id === (props.page ?? page())) ?? props.layout.pages[0];
   const band = () => (props.header ?? themeSkin().header) === "band";
+  // Derived values are computed here, from the layout and the values, and never stored.
+  // Trackers can live outside `values`; refs read them as the sheet shows them.
+  const refSource = createMemo(() => {
+    const merged: SheetValues = { ...props.values };
+    for (const item of layoutTrackers(props.layout))
+      merged[item.key] =
+        props.trackerValue?.(item) ?? num(props.values[item.key], item.start ?? item.max);
+    return merged;
+  });
+  const derived = createMemo(() => sheetDerived(props.layout, refSource()));
+  const computed = (key: string) =>
+    key in derived().values ? derived().values[key] : props.computed?.(key);
+  const parsed = new Map<string, Expr | null>();
+  const derivedCell = (column: ListColumn, row: ListRow) => {
+    if (!column.expr) return undefined;
+    if (!parsed.has(column.expr)) {
+      const result = parseExpr(column.expr);
+      parsed.set(column.expr, result.ok ? result.value : null);
+    }
+    const expr = parsed.get(column.expr);
+    return expr ? evaluate(expr, sheetScope(props.layout, refSource(), row)) : undefined;
+  };
   const ctx = (): Ctx => ({
     values: props.values,
     onChange: props.onChange,
@@ -1875,7 +2031,8 @@ export function SheetBlocks(props: Props) {
     trackerMax: props.trackerMax,
     onTracker: props.onTracker,
     onTrackerMax: props.onTrackerMax,
-    computed: props.computed,
+    computed,
+    derivedCell,
     readOnly: props.readOnly,
     compendium: props.compendium,
     onOpenEntry: props.onOpenEntry,

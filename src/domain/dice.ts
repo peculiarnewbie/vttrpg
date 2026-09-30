@@ -1,3 +1,4 @@
+import { DICE_LIMITS, rollText } from "./dice-notation";
 import type {
   CharacterValue,
   DiceGroup,
@@ -11,13 +12,13 @@ import type {
 
 export type Rng = () => number;
 
-export const MAX_DICE = 10;
+export const MAX_DICE = DICE_LIMITS.dice;
 
 export const countDice = (dice: readonly DiceGroup[]) =>
   dice.reduce((total, group) => total + Math.max(0, group.count), 0);
 
 /** Clamp a dice pool to at most `max` total dice (first groups win). */
-export const capDice = (dice: readonly DiceGroup[], max = MAX_DICE): DiceGroup[] => {
+export const capDice = (dice: readonly DiceGroup[], max: number = MAX_DICE): DiceGroup[] => {
   const capped: DiceGroup[] = [];
   let remaining = max;
   for (const group of dice) {
@@ -36,7 +37,8 @@ export const capDice = (dice: readonly DiceGroup[], max = MAX_DICE): DiceGroup[]
 export const parseRollCommand = (input: string): string | null => {
   const match = /^\/roll\s*(.*)$/i.exec(input.trim());
   if (!match) return null;
-  return match[1].replace(/\s+/g, "").toLowerCase() || null;
+  // Refs are case-sensitive; the notation parser accepts `D20` as well as `d20`.
+  return match[1].replace(/\s+/g, "") || null;
 };
 
 const defaultRng: Rng = () => Math.random();
@@ -172,7 +174,8 @@ export const evaluateRoll = (
 };
 
 /**
- * Parse a free-form dice expression such as `2d6`, `1d20+5`, or `2d6 + 1d8 - 1`.
+ * Legacy parser for unsigned dice pools and a static bonus. It skips negative
+ * dice terms and unsupported notation; new callers should use rollText.
  */
 export const parseDiceExpression = (input: string): { dice: DiceGroup[]; staticBonus: number } => {
   const normalized = input.replace(/\s+/g, "").toLowerCase();
@@ -188,7 +191,7 @@ export const parseDiceExpression = (input: string): { dice: DiceGroup[]; staticB
     if (match) {
       const count = match[1] === "" ? 1 : Number(match[1]);
       const sides = Number(match[2]);
-      if (count > 0 && sides > 0) dice.push({ count, sides });
+      if (sign === 1 && count > 0 && sides > 0) dice.push({ count, sides });
       continue;
     }
     const flat = Number(token);
@@ -199,15 +202,6 @@ export const parseDiceExpression = (input: string): { dice: DiceGroup[]; staticB
 };
 
 export const rollExpression = (input: string, rng: Rng = defaultRng): RollResult => {
-  const { dice, staticBonus } = parseDiceExpression(input);
-  const rolled = rollDice(dice, rng);
-  const modifiers: RollModifierPart[] =
-    staticBonus !== 0 ? [{ label: "static", value: staticBonus }] : [];
-  const total = sumDice(rolled) + staticBonus;
-  return {
-    notation: diceExpression(dice, modifiers),
-    dice: rolled,
-    modifiers,
-    total,
-  };
+  const result = rollText(input, { rng });
+  return result.ok ? result.value : { notation: input.trim(), dice: [], modifiers: [], total: 0 };
 };

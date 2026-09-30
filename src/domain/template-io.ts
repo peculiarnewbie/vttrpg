@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import { SaveTemplateInput, type SheetTemplate } from "./schemas";
 import { layoutTrackers, type SheetLayout } from "./sheet-layout";
+import { DERIVED_LIMITS, parseExpr } from "./derived";
 
 /** Shared limits for saved and imported layouts. Group containers count as blocks. */
 export const layoutLimitsError = (layout: SheetLayout | undefined): string | undefined => {
@@ -21,6 +22,28 @@ export const layoutLimitsError = (layout: SheetLayout | undefined): string | und
   for (const tracker of layoutTrackers(layout)) {
     if (keys.has(tracker.key)) return "Layout tracker keys must be unique";
     keys.add(tracker.key);
+  }
+  const derived = layout.derived ?? [];
+  if (derived.length > DERIVED_LIMITS.count)
+    return `Layout must have at most ${DERIVED_LIMITS.count} derived values`;
+  const derivedKeys = new Set<string>();
+  for (const item of derived) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(item.key))
+      return `Derived "${item.label}" needs a key with letters, digits or underscores, starting with a letter or underscore`;
+    if (derivedKeys.has(item.key)) return "Layout derived keys must be unique";
+    derivedKeys.add(item.key);
+    if (!item.label.trim() || item.label.length > 60)
+      return "Derived labels must be non-empty and at most 60 characters";
+    const parsed = parseExpr(item.expr);
+    if (!parsed.ok) return `Derived "${item.label}": ${parsed.error}`;
+  }
+  for (const block of blocks) {
+    if (block.type !== "list") continue;
+    for (const column of block.columns) {
+      if (column.kind !== "derived") continue;
+      const parsed = parseExpr(column.expr ?? "");
+      if (!parsed.ok) return `Derived column "${column.label}": ${parsed.error}`;
+    }
   }
   return undefined;
 };

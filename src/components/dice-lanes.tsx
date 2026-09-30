@@ -5,7 +5,7 @@ import { Show, For, createEffect, createSignal, onCleanup, onSettled } from "sol
 import type { ChatMessage, RollResult } from "../domain/schemas";
 
 import { showDiceTotals } from "../client/dice-display";
-import { styles } from "./styles.stylex";
+import { RollView, rollGroups, rolledDiceCount } from "./roll-view";
 import { sx } from "../theme/sx";
 
 const PALETTE = [
@@ -34,10 +34,21 @@ const colorFor = (memberId: string) => {
   return color;
 };
 
+/** Every group's dice, thrown as they came up. Big pools skip the throw and just show. */
 const predeterminedNotation = (roll: RollResult) =>
-  roll.dice
-    .map((group) => `${group.results.length}d${group.sides}@${group.results.join(",")}`)
-    .join("+");
+  rolledDiceCount(roll) > MAX_THROWN
+    ? ""
+    : rollGroups(roll)
+        .flatMap((group) => group.dice)
+        .filter((die) => die.results.length > 0)
+        .map((die) => `${die.results.length}d${die.sides}@${die.results.join(",")}`)
+        .join("+");
+
+const MAX_THROWN = 20;
+const MAX_THROW_MS = 8000;
+
+const reducedMotion = () =>
+  typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -52,7 +63,11 @@ function DiceLane(props: {
 }) {
   const [ready, setReady] = createSignal(false);
   const [result, setResult] = createSignal<RollResult | null>(null);
-  const [queue, setQueue] = createSignal<ChatMessage[]>([]);
+  // The queue is a plain array: Solid 2 applies signal writes on the next flush,
+  // so a signal read right after queueing would still be empty. `waiting` only
+  // drives rendering.
+  const queue: ChatMessage[] = [];
+  const [waiting, setWaiting] = createSignal(0);
   const processed = new Set<string>();
   let box: DiceBox | undefined;
   let busy = false;
@@ -60,7 +75,9 @@ function DiceLane(props: {
 
   // Pre-warm the physics box as soon as the lane exists, so its first roll
   // starts instantly instead of waiting on WebGL/theme initialisation.
+  // With reduced motion there is no throw: results show straight away.
   onSettled(() => {
+    if (reducedMotion()) return;
     try {
       box = new DiceBox(`#ttrpg-dice-lane-${props.memberId}`, {
         assetPath: "/dice/",
@@ -102,7 +119,7 @@ function DiceLane(props: {
 
   const pump = async () => {
     if (busy) return;
-    const message = queue()[0];
+    const message = queue[0];
     if (!message) return;
     busy = true;
     if (clearTimer) {
@@ -116,10 +133,11 @@ function DiceLane(props: {
     }
     setResult(null);
     try {
-      const isReady = await waitReady();
-      if (isReady && box && message.roll) {
+      const thrown = message.roll && !reducedMotion() ? predeterminedNotation(message.roll) : "";
+      if (thrown && box && (await waitReady())) {
         try {
-          await box.roll(predeterminedNotation(message.roll));
+          // A throw that never settles (a lost WebGL context, a slow GPU) mustn't hold back the result.
+          await Promise.race([box.roll(thrown), sleep(MAX_THROW_MS)]);
         } catch {
           // reveal anyway
         }
@@ -134,7 +152,8 @@ function DiceLane(props: {
       props.onDone(message.id);
     } finally {
       processed.add(message.id);
-      setQueue((prev) => prev.slice(1));
+      queue.shift();
+      setWaiting(queue.length);
       busy = false;
       // Keep the dice on the table for a while, then sweep them away.
       clearTimer = setTimeout(() => {
@@ -145,25 +164,25 @@ function DiceLane(props: {
         }
         setResult(null);
       }, 10000);
-      if (queue().length > 0) void pump();
+      if (queue.length > 0) void pump();
     }
   };
 
   createEffect(
     () => props.messages.map((message) => message.id).join(","),
     () => {
-      setQueue((prev) => {
-        const queued = new Set(prev.map((message) => message.id));
-        const added = props.messages.filter(
+      const queued = new Set(queue.map((message) => message.id));
+      queue.push(
+        ...props.messages.filter(
           (message) => !processed.has(message.id) && !queued.has(message.id),
-        );
-        return added.length > 0 ? [...prev, ...added] : prev;
-      });
+        ),
+      );
+      setWaiting(queue.length);
       void pump();
     },
   );
 
-  const active = () => queue().length > 0 || result() !== null;
+  const active = () => waiting() > 0 || result() !== null;
 
   return (
     <div
@@ -176,26 +195,7 @@ function DiceLane(props: {
       <Show when={result()}>
         {(roll) => (
           <div class="ttrpg-dice-total ttrpg-dice-lane-total">
-            <div {...sx(styles.rollResult)}>
-              <div {...sx(styles.rowWrap)}>
-                <For each={roll().dice}>
-                  {(die) => (
-                    <For each={die.results}>
-                      {(value) => (
-                        <span {...sx(styles.die)}>
-                          <span>{value}</span>
-                          <sub {...sx(styles.dieLabel)}>d{die.sides}</sub>
-                        </span>
-                      )}
-                    </For>
-                  )}
-                </For>
-              </div>
-              <Show when={showDiceTotals()}>
-                <span class="ttrpg-dice-total-label">Total {roll().total}</span>
-              </Show>
-              <span class="ttrpg-dice-total-label">{roll().notation}</span>
-            </div>
+            <RollView roll={roll()} showTotal={showDiceTotals()} />
           </div>
         )}
       </Show>

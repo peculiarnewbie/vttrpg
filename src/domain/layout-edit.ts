@@ -282,3 +282,7 @@ export const layoutKeys = (layout: SheetLayout): string[] =>
         return [];
     }
   });
+
+/** Computed keys are separate: visibility conditions currently read stored values only. */
+export const derivedKeys = (layout: SheetLayout): string[] =>
+  (layout.derived ?? []).map((item) => item.key);
