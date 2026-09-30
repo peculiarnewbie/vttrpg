@@ -104,6 +104,15 @@ export const moveBlock = (layout: SheetLayout, id: string, delta: -1 | 1): Sheet
     };
   });
 
+/** Dissolve a group, leaving its blocks where the group was. */
+export const ungroupBlock = (layout: SheetLayout, id: string): SheetLayout =>
+  mapPages(layout, (page) => ({
+    ...page,
+    blocks: page.blocks.flatMap((block): LayoutBlock[] =>
+      block.id === id && block.type === "group" ? [...block.blocks] : [block],
+    ),
+  }));
+
 /** Where a dragged block lands: a page, optionally a group on it, before a sibling or at the end. */
 export type BlockDestination = { pageId: string; groupId?: string; beforeId?: string };
 

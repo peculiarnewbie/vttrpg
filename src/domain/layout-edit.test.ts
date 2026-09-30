@@ -14,6 +14,7 @@ import {
   parentGroup,
   removeBlock,
   removePage,
+  ungroupBlock,
   updateBlock,
 } from "./layout-edit";
 import { SheetLayout } from "./sheet-layout";
@@ -96,6 +97,14 @@ describe("layout edits", () => {
     expect(new Set(all).size).toBe(all.length);
     expect(Schema.decodeUnknownResult(SheetLayout)(layout)._tag).toBe("Success");
     expect(layoutLimitsError(layout)).toBeUndefined();
+  });
+
+  it("ungroups in place, keeping the group's blocks in order", () => {
+    const layout = ungroupBlock(bastionlandClassic, "defence");
+    expect(ids(layout).slice(0, 4)).toEqual(["virtues", "guard", "standing", "property"]);
+    expect(findBlock(layout, "defence")).toBeUndefined();
+    expect(allBlocks(layout)).toHaveLength(allBlocks(bastionlandClassic).length - 1);
+    expect(ungroupBlock(bastionlandClassic, "guard")).toEqual(bastionlandClassic);
   });
 
   it("never nests groups", () => {

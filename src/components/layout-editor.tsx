@@ -15,6 +15,7 @@ import {
   removePage,
   renamePage,
   slugKey,
+  ungroupBlock,
   updateBlock,
 } from "../domain/layout-edit";
 import {
@@ -89,6 +90,20 @@ const e = stylex.create({
     ":hover": { backgroundColor: colors.surfaceHover },
   },
   rowDragging: { opacity: 0.35 },
+  confirm: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: "6px",
+    paddingInline: "8px",
+    paddingBlock: "6px",
+    fontSize: "12px",
+    backgroundColor: colors.dangerMuted,
+    borderBottomWidth: "1px",
+    borderBottomStyle: "solid",
+    borderBottomColor: colors.border,
+  },
+  confirmText: { flex: 1, minWidth: "140px" },
   handle: {
     flexShrink: 0,
     width: "16px",
@@ -360,7 +375,11 @@ function TextInput(props: { label: string; value: string; onInput: (value: strin
   );
 }
 
-function Inspector(props: { block: LayoutBlock; onChange: (block: LayoutBlock) => void }) {
+function Inspector(props: {
+  block: LayoutBlock;
+  onChange: (block: LayoutBlock) => void;
+  onUngroup: () => void;
+}) {
   const b = () => props.block;
   const patch = (partial: Record<string, unknown>) =>
     props.onChange({ ...props.block, ...partial } as LayoutBlock);
@@ -426,11 +445,22 @@ function Inspector(props: { block: LayoutBlock; onChange: (block: LayoutBlock) =
         </Match>
         <Match when={b().type === "group" && b()}>
           {(block) => (
-            <TextInput
-              label="Title (optional)"
-              value={(block() as { title?: string }).title ?? ""}
-              onInput={(title) => patch({ title: title || undefined })}
-            />
+            <>
+              <TextInput
+                label="Title (optional)"
+                value={(block() as { title?: string }).title ?? ""}
+                onInput={(title) => patch({ title: title || undefined })}
+              />
+              <span {...sx(e.hint)}>
+                A group stacks its blocks in one grid cell, so a tall column can sit beside a short
+                one.
+              </span>
+              <div {...sx(e.bar)}>
+                <button {...sx(styles.button, styles.buttonSmall)} onClick={props.onUngroup}>
+                  Ungroup (keep its blocks)
+                </button>
+              </div>
+            </>
           )}
         </Match>
         <Match when={b().type === "trackers" && b()}>
@@ -634,6 +664,20 @@ export function LayoutEditor(props: {
   const selectedGroup = () => {
     const current = block();
     return current?.type === "group" ? current.id : undefined;
+  };
+  const [confirmRemove, setConfirmRemove] = createSignal<string | null>(null);
+  const remove = (id: string) => {
+    const gone = findBlock(props.layout, id);
+    const ids = gone?.type === "group" ? [id, ...gone.blocks.map((child) => child.id)] : [id];
+    setConfirmRemove(null);
+    if (ids.includes(selected() ?? "")) setSelected(null);
+    props.onChange(removeBlock(props.layout, id));
+  };
+  const ungroup = (id: string) => {
+    const group = findBlock(props.layout, id);
+    setConfirmRemove(null);
+    props.onChange(ungroupBlock(props.layout, id));
+    setSelected(group?.type === "group" ? (group.blocks[0]?.id ?? null) : null);
   };
   const add = (type: BlockType) => {
     const created = newBlock(props.layout, type);
@@ -869,8 +913,10 @@ export function LayoutEditor(props: {
         aria-label={`Remove ${rowProps.item.id}`}
         onClick={(event) => {
           event.stopPropagation();
-          if (selected() === rowProps.item.id) setSelected(null);
-          props.onChange(removeBlock(props.layout, rowProps.item.id));
+          const item = rowProps.item;
+          // Deleting a group takes its blocks with it, so ask first.
+          if (item.type === "group" && item.blocks.length) setConfirmRemove(item.id);
+          else remove(item.id);
         }}
       >
         ×
@@ -970,6 +1016,35 @@ export function LayoutEditor(props: {
               {(item) => (
                 <>
                   <Row item={item} />
+                  <Show when={confirmRemove() === item.id && item.type === "group" && item}>
+                    {(group) => (
+                      <div {...sx(e.confirm)} role="alertdialog" aria-label="Delete group">
+                        <span {...sx(e.confirmText)}>
+                          Delete {group().title ? `“${group().title}”` : "this group"} and its{" "}
+                          {group().blocks.length} {group().blocks.length === 1 ? "block" : "blocks"}
+                          ?
+                        </span>
+                        <button
+                          {...sx(styles.button, styles.buttonSmall)}
+                          onClick={() => ungroup(group().id)}
+                        >
+                          Ungroup instead
+                        </button>
+                        <button
+                          {...sx(styles.button, styles.buttonSmall, styles.buttonDanger)}
+                          onClick={() => remove(group().id)}
+                        >
+                          Delete all
+                        </button>
+                        <button
+                          {...sx(styles.button, styles.buttonSmall)}
+                          onClick={() => setConfirmRemove(null)}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                  </Show>
                   <Show when={item.type === "group" && item}>
                     {(group) => (
                       <div {...sx(e.groupKids)}>
@@ -1059,6 +1134,7 @@ export function LayoutEditor(props: {
             {(current) => (
               <Inspector
                 block={current()}
+                onUngroup={() => ungroup(current().id)}
                 onChange={(next) =>
                   props.onChange(updateBlock(props.layout, current().id, () => next))
                 }
