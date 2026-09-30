@@ -9,6 +9,7 @@ import {
   insertBlock,
   layoutKeys,
   moveBlock,
+  moveBlockTo,
   newBlock,
   parentGroup,
   removeBlock,
@@ -31,6 +32,46 @@ describe("layout edits", () => {
       "standing",
       "guard",
     ]);
+  });
+
+  it("drops blocks before siblings, into and out of groups, and onto other pages", () => {
+    const page = "knight";
+    const before = moveBlockTo(bastionlandClassic, "property", {
+      pageId: page,
+      beforeId: "virtues",
+    });
+    expect(ids(before)[0]).toBe("property");
+    const into = moveBlockTo(bastionlandClassic, "property", {
+      pageId: page,
+      groupId: "defence",
+      beforeId: "guard",
+    });
+    expect(parentGroup(into, "property")?.blocks.map((b) => b.id)).toEqual([
+      "property",
+      "guard",
+      "standing",
+    ]);
+    const out = moveBlockTo(into, "guard", { pageId: page });
+    expect(ids(out).at(-1)).toBe("guard");
+    expect(parentGroup(out, "guard")).toBeUndefined();
+    const paged = addPage(bastionlandClassic, "Gear");
+    const moved = moveBlockTo(paged, "property", { pageId: paged.pages[1].id });
+    expect(moved.pages[1].blocks.map((b) => b.id)).toEqual(["property"]);
+    expect(findBlock(moved, "property")).toBeDefined();
+    expect(allBlocks(moved)).toHaveLength(allBlocks(paged).length);
+  });
+
+  it("keeps groups top-level and ignores drops onto the block itself", () => {
+    const layout = moveBlockTo(bladesInTheDark, "insight", {
+      pageId: bladesInTheDark.pages[0].id,
+      groupId: "prowess",
+    });
+    expect(parentGroup(layout, "insight")).toBeUndefined();
+    expect(ids(layout).at(-1)).toBe("insight");
+    expect(
+      moveBlockTo(bastionlandClassic, "virtues", { pageId: "knight", beforeId: "virtues" }),
+    ).toBe(bastionlandClassic);
+    expect(moveBlockTo(bastionlandClassic, "virtues", { pageId: "nope" })).toBe(bastionlandClassic);
   });
 
   it("updates and removes blocks wherever they live", () => {

@@ -108,7 +108,9 @@ numbered slots…). The template sets each block's default; a character's owner 
 pick their own with **Style** on the sheet. Trackers keep their values in the
 character's trackers, so per-character maxima and instant clicks work as before.
 
-DMs edit layouts in **World settings → Sheet templates**: reorder, duplicate, and
+DMs edit layouts in **World settings → Sheet templates**: drag blocks to reorder
+them, move them into or out of groups, or drop them on another page's tab (touch
+drags by the ⠿ handle; with the handle focused, arrow keys reorder); duplicate and
 remove blocks, edit their contents, preview at panel or wide width, or edit the
 layout as JSON. Templates can start from a premade layout (Mythic Bastionland
 Classic and Compact, Mothership, Blades in the Dark) and be exported or imported as

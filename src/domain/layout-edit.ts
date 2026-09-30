@@ -104,6 +104,48 @@ export const moveBlock = (layout: SheetLayout, id: string, delta: -1 | 1): Sheet
     };
   });
 
+/** Where a dragged block lands: a page, optionally a group on it, before a sibling or at the end. */
+export type BlockDestination = { pageId: string; groupId?: string; beforeId?: string };
+
+/**
+ * Move a block anywhere: across pages, into or out of groups. Groups never nest,
+ * so a group always lands at the top level. Unknown targets fall back to the end
+ * of the page rather than dropping the block.
+ */
+export const moveBlockTo = (
+  layout: SheetLayout,
+  id: string,
+  dest: BlockDestination,
+): SheetLayout => {
+  const block = findBlock(layout, id);
+  const page = layout.pages.find((item) => item.id === dest.pageId);
+  if (!block || !page || dest.beforeId === id || dest.groupId === id) return layout;
+  const group =
+    block.type === "group"
+      ? undefined
+      : page.blocks.find(
+          (item): item is GroupBlock => item.id === dest.groupId && item.type === "group",
+        );
+  const place = <B extends LayoutBlock>(blocks: readonly B[], item: B): B[] => {
+    const index = dest.beforeId ? blocks.findIndex((b) => b.id === dest.beforeId) : -1;
+    return index < 0
+      ? [...blocks, item]
+      : [...blocks.slice(0, index), item, ...blocks.slice(index)];
+  };
+  return mapPages(removeBlock(layout, id), (item) => {
+    if (item.id !== dest.pageId) return item;
+    if (!group) return { ...item, blocks: place(item.blocks, block) };
+    return {
+      ...item,
+      blocks: item.blocks.map((b) =>
+        b.id === group.id && b.type === "group"
+          ? { ...b, blocks: place(b.blocks, block as LeafBlock) }
+          : b,
+      ),
+    };
+  });
+};
+
 /** Append a block to a page, or into a group when `groupId` is given (groups hold leaves only). */
 export const insertBlock = (
   layout: SheetLayout,

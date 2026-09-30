@@ -1,13 +1,15 @@
 import * as stylex from "@stylexjs/stylex";
 import * as Schema from "effect/Schema";
-import { For, Match, Show, Switch, createSignal } from "solid-js";
+import { For, Match, Show, Switch, createSignal, onCleanup } from "solid-js";
 import {
   addPage,
   blockTypes,
   duplicateBlock,
   findBlock,
   insertBlock,
+  type BlockDestination,
   moveBlock,
+  moveBlockTo,
   newBlock,
   removeBlock,
   removePage,
@@ -65,7 +67,14 @@ const e = stylex.create({
     cursor: "pointer",
   },
   pageTabOn: { borderColor: colors.accent, color: colors.accent },
-  outline: { display: "flex", flexDirection: "column", ...hair, borderRadius: skin.controlRadius },
+  pageTabDrop: { borderColor: colors.accent, backgroundColor: colors.accentMuted },
+  outline: {
+    position: "relative",
+    display: "flex",
+    flexDirection: "column",
+    ...hair,
+    borderRadius: skin.controlRadius,
+  },
   row: {
     display: "flex",
     alignItems: "center",
@@ -75,8 +84,56 @@ const e = stylex.create({
     borderBottomWidth: "1px",
     borderBottomStyle: "solid",
     borderBottomColor: colors.border,
-    cursor: "pointer",
+    cursor: { default: "pointer", "@media (pointer: fine)": "grab" },
+    userSelect: "none",
     ":hover": { backgroundColor: colors.surfaceHover },
+  },
+  rowDragging: { opacity: 0.35 },
+  handle: {
+    flexShrink: 0,
+    width: "16px",
+    height: "22px",
+    padding: 0,
+    borderWidth: 0,
+    backgroundColor: "transparent",
+    color: colors.textFaint,
+    fontSize: "13px",
+    lineHeight: 1,
+    cursor: "grab",
+    touchAction: "none",
+    ":hover": { color: colors.text },
+  },
+  // Where the dragged block will land; indented when it lands inside a group.
+  dropLine: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    height: "2px",
+    marginTop: "-1px",
+    backgroundColor: colors.accent,
+    pointerEvents: "none",
+    zIndex: 2,
+  },
+  dropLineInside: { left: "14px" },
+  ghost: {
+    position: "fixed",
+    zIndex: 1000,
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    maxWidth: "280px",
+    paddingInline: "8px",
+    paddingBlock: "4px",
+    ...hair,
+    borderColor: colors.accent,
+    borderRadius: skin.controlRadius,
+    backgroundColor: colors.surfaceRaised,
+    boxShadow: "0 6px 18px rgba(0,0,0,0.25)",
+    pointerEvents: "none",
+    fontSize: "13px",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
   },
   // A group is scaffolding, not content: a quiet header and a bracket around its blocks.
   groupKind: { color: colors.textFaint },
@@ -602,17 +659,188 @@ export function LayoutEditor(props: {
     setPageId(decoded.success.pages[0]?.id ?? "");
   };
 
-  const Row = (rowProps: { item: LayoutBlock; first: boolean; last: boolean }) => (
+  /*
+   * Drag to reorder. Pointer events (not HTML5 drag and drop) so touch works:
+   * a mouse can grab anywhere on a row, touch uses the handle so the list still
+   * scrolls. Rows carry data attributes the drop maths reads back from the DOM.
+   */
+  let outline: HTMLDivElement | undefined;
+  type Drop = { dest: BlockDestination; top?: number; inside?: boolean };
+  const [dragging, setDragging] = createSignal<{ id: string; x: number; y: number } | null>(null);
+  const [drop, setDrop] = createSignal<Drop | null>(null);
+  let pending: { id: string; x: number; y: number } | undefined;
+  let swallowClick = false;
+  let scrollSpeed = 0;
+  let scrollFrame = 0;
+
+  const autoScroll = () => {
+    if (scrollSpeed) window.scrollBy(0, scrollSpeed);
+    scrollFrame = requestAnimationFrame(autoScroll);
+  };
+
+  const findDrop = (id: string, x: number, y: number): Drop | null => {
+    const tab = document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-page-tab]");
+    if (tab) {
+      const target = tab.dataset.pageTab!;
+      return target === page().id ? null : { dest: { pageId: target } };
+    }
+    if (!outline) return null;
+    const box = outline.getBoundingClientRect();
+    const isGroup = findBlock(props.layout, id)?.type === "group";
+    const rows = [...outline.querySelectorAll<HTMLElement>("[data-row]")]
+      .filter((row) => row.dataset.row !== id && row.dataset.group !== id)
+      .map((row) => ({
+        row: row.dataset.row ?? "",
+        group: row.dataset.group || undefined,
+        kind: row.dataset.kind,
+        rect: row.getBoundingClientRect(),
+      }));
+    const pageId = page().id;
+    if (isGroup) {
+      // A group moves as a unit among top-level blocks.
+      const units = rows
+        .filter((row) => !row.group)
+        .map((row) => {
+          const kids = rows.filter((kid) => kid.group === row.row);
+          const bottom = kids.length ? kids[kids.length - 1].rect.bottom : row.rect.bottom;
+          return { id: row.row, top: row.rect.top, bottom };
+        });
+      const next = units.find((unit) => y < (unit.top + unit.bottom) / 2);
+      const last = units[units.length - 1];
+      return {
+        dest: { pageId, beforeId: next?.id },
+        top: (next ? next.top : (last?.bottom ?? box.top)) - box.top,
+      };
+    }
+    const index = rows.findIndex((row) => y < (row.rect.top + row.rect.bottom) / 2);
+    const next = index < 0 ? undefined : rows[index];
+    const prev = index < 0 ? rows[rows.length - 1] : rows[index - 1];
+    if (next?.group)
+      return {
+        dest: {
+          pageId,
+          groupId: next.group,
+          beforeId: next.kind === "empty" ? undefined : next.row,
+        },
+        top: next.rect.top - box.top,
+        inside: true,
+      };
+    // Between a group's last block and the next top-level block: over the lower
+    // half of the group's last row keeps it in the group, over the next row's
+    // upper half (or below everything) takes it out.
+    const openGroup = prev?.group || (prev?.kind === "group" ? prev.row : undefined);
+    if (prev && openGroup && y < prev.rect.bottom)
+      return {
+        dest: { pageId, groupId: openGroup },
+        top: prev.rect.bottom - box.top,
+        inside: true,
+      };
+    return {
+      dest: { pageId, beforeId: next?.row },
+      top: (next ? next.rect.top : (prev?.rect.bottom ?? box.top)) - box.top,
+    };
+  };
+
+  const endDrag = (commit: boolean) => {
+    const current = dragging();
+    const target = drop();
+    pending = undefined;
+    setDragging(null);
+    setDrop(null);
+    scrollSpeed = 0;
+    cancelAnimationFrame(scrollFrame);
+    document.body.style.cursor = "";
+    if (!current) return;
+    swallowClick = true;
+    setTimeout(() => (swallowClick = false));
+    if (!commit || !target) return;
+    props.onChange(moveBlockTo(props.layout, current.id, target.dest));
+    setSelected(current.id);
+    if (target.dest.pageId !== page().id) setPageId(target.dest.pageId);
+  };
+
+  const onKey = (event: KeyboardEvent) => {
+    if (event.key === "Escape" && dragging()) endDrag(false);
+  };
+  window.addEventListener("keydown", onKey);
+  onCleanup(() => {
+    window.removeEventListener("keydown", onKey);
+    cancelAnimationFrame(scrollFrame);
+  });
+
+  const dragHandlers = (id: string) => ({
+    onPointerDown: (event: PointerEvent) => {
+      const target = event.target as Element;
+      if (event.button !== 0 || target.closest("button:not([data-handle])")) return;
+      if (event.pointerType !== "mouse" && !target.closest("[data-handle]")) return;
+      pending = { id, x: event.clientX, y: event.clientY };
+      (event.currentTarget as Element).setPointerCapture(event.pointerId);
+    },
+    onPointerMove: (event: PointerEvent) => {
+      if (!pending) return;
+      if (!dragging()) {
+        if (Math.hypot(event.clientX - pending.x, event.clientY - pending.y) < 4) return;
+        document.body.style.cursor = "grabbing";
+        scrollFrame = requestAnimationFrame(autoScroll);
+      }
+      setDragging({ id: pending.id, x: event.clientX, y: event.clientY });
+      setDrop(findDrop(pending.id, event.clientX, event.clientY));
+      const edge = 48;
+      scrollSpeed =
+        event.clientY < edge
+          ? -Math.ceil((edge - event.clientY) / 4)
+          : event.clientY > window.innerHeight - edge
+            ? Math.ceil((event.clientY - window.innerHeight + edge) / 4)
+            : 0;
+    },
+    onPointerUp: () => (pending ? endDrag(true) : undefined),
+    onPointerCancel: () => endDrag(false),
+  });
+
+  const Row = (rowProps: { item: LayoutBlock; group?: string }) => (
     <div
-      {...sx(e.row, selected() === rowProps.item.id && e.rowOn)}
+      {...sx(
+        e.row,
+        selected() === rowProps.item.id && e.rowOn,
+        dragging()?.id === rowProps.item.id && e.rowDragging,
+      )}
       role="button"
       tabindex={0}
       aria-pressed={selected() === rowProps.item.id ? "true" : "false"}
-      onClick={() => setSelected(rowProps.item.id)}
+      data-row={rowProps.item.id}
+      data-group={rowProps.group}
+      data-kind={rowProps.item.type === "group" ? "group" : "leaf"}
+      {...dragHandlers(rowProps.item.id)}
+      onClick={() => {
+        if (!swallowClick) setSelected(rowProps.item.id);
+      }}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") setSelected(rowProps.item.id);
+        if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+          event.preventDefault();
+          props.onChange(
+            moveBlock(props.layout, rowProps.item.id, event.key === "ArrowUp" ? -1 : 1),
+          );
+        }
       }}
     >
+      <button
+        {...sx(e.handle)}
+        data-handle
+        aria-label={`Reorder ${rowProps.item.id}`}
+        title="Drag to move · arrow keys reorder"
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+          event.preventDefault();
+          event.stopPropagation();
+          props.onChange(
+            moveBlock(props.layout, rowProps.item.id, event.key === "ArrowUp" ? -1 : 1),
+          );
+        }}
+      >
+        ⠿
+      </button>
       <span {...sx(e.kind, rowProps.item.type === "group" && e.groupKind)}>
         {rowProps.item.type}
       </span>
@@ -626,28 +854,6 @@ export function LayoutEditor(props: {
           </span>
         )}
       </Show>
-      <button
-        {...sx(e.icon)}
-        aria-label={`Move ${rowProps.item.id} up`}
-        disabled={rowProps.first}
-        onClick={(event) => {
-          event.stopPropagation();
-          props.onChange(moveBlock(props.layout, rowProps.item.id, -1));
-        }}
-      >
-        ↑
-      </button>
-      <button
-        {...sx(e.icon)}
-        aria-label={`Move ${rowProps.item.id} down`}
-        disabled={rowProps.last}
-        onClick={(event) => {
-          event.stopPropagation();
-          props.onChange(moveBlock(props.layout, rowProps.item.id, 1));
-        }}
-      >
-        ↓
-      </button>
       <button
         {...sx(e.icon)}
         aria-label={`Duplicate ${rowProps.item.id}`}
@@ -713,7 +919,12 @@ export function LayoutEditor(props: {
                 <button
                   role="tab"
                   aria-selected={item.id === page().id ? "true" : "false"}
-                  {...sx(e.pageTab, item.id === page().id && e.pageTabOn)}
+                  data-page-tab={item.id}
+                  {...sx(
+                    e.pageTab,
+                    item.id === page().id && e.pageTabOn,
+                    drop()?.dest.pageId === item.id && item.id !== page().id && e.pageTabDrop,
+                  )}
                   onClick={() => setPageId(item.id)}
                 >
                   {item.title || "Untitled"}
@@ -754,30 +965,25 @@ export function LayoutEditor(props: {
               </button>
             </label>
           </div>
-          <div {...sx(e.outline)} aria-label="Blocks">
+          <div {...sx(e.outline)} aria-label="Blocks" ref={(el) => (outline = el)}>
             <For each={page().blocks}>
-              {(item, index) => (
+              {(item) => (
                 <>
-                  <Row
-                    item={item}
-                    first={index() === 0}
-                    last={index() === page().blocks.length - 1}
-                  />
+                  <Row item={item} />
                   <Show when={item.type === "group" && item}>
                     {(group) => (
                       <div {...sx(e.groupKids)}>
                         <For each={group().blocks}>
-                          {(child, childIndex) => (
-                            <Row
-                              item={child}
-                              first={childIndex() === 0}
-                              last={childIndex() === group().blocks.length - 1}
-                            />
-                          )}
+                          {(child) => <Row item={child} group={group().id} />}
                         </For>
                         <Show when={!group().blocks.length}>
-                          <span {...sx(e.groupEmpty)}>
-                            Empty. Select the group, then add a block to it.
+                          <span
+                            {...sx(e.groupEmpty)}
+                            data-row=""
+                            data-group={group().id}
+                            data-kind="empty"
+                          >
+                            Empty. Drag blocks here, or select the group and add one.
                           </span>
                         </Show>
                       </div>
@@ -790,6 +996,31 @@ export function LayoutEditor(props: {
               <span {...sx(e.hint)} style={{ padding: "8px" }}>
                 No blocks on this page yet.
               </span>
+            </Show>
+            <Show when={drop()?.top !== undefined && drop()}>
+              {(target) => (
+                <div
+                  {...sx(e.dropLine, target().inside && e.dropLineInside)}
+                  style={{ top: `${target().top}px` }}
+                />
+              )}
+            </Show>
+            <Show when={dragging()}>
+              {(drag) => (
+                <Show when={findBlock(props.layout, drag().id)}>
+                  {(item) => (
+                    <div
+                      {...sx(e.ghost)}
+                      style={{ left: `${drag().x + 14}px`, top: `${drag().y + 10}px` }}
+                    >
+                      <span {...sx(e.kind)} style={{ width: "auto" }}>
+                        {item().type}
+                      </span>
+                      {summarize(item())}
+                    </div>
+                  )}
+                </Show>
+              )}
             </Show>
           </div>
           <div {...sx(e.bar)}>
