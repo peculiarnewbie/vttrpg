@@ -82,7 +82,9 @@ const e = stylex.create({
   rowOn: { backgroundColor: colors.accentMuted },
   kind: {
     flexShrink: 0,
-    width: "64px",
+    width: "80px",
+    overflow: "hidden",
+    whiteSpace: "nowrap",
     fontFamily: fonts.display,
     fontSize: "10px",
     textTransform: skin.headTransform,
