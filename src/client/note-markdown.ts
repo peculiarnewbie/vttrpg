@@ -1,3 +1,5 @@
+import { ENTRY_LINK, splitEntryLinks } from "../domain/entry-links";
+
 const escapeHtml = (text: string) =>
   text.replace(/[&<>"']/g, (char) => {
     switch (char) {
@@ -14,19 +16,23 @@ const escapeHtml = (text: string) =>
     }
   });
 
-/** Resolves `[[Entry name]]` to an entry id the reader may open, or undefined. */
-export type EntryLinkResolver = (name: string) => string | undefined;
+/** Resolves a name or id link to an entry id the reader may open, or undefined. */
+export type EntryLinkResolver = (link: { name: string; id?: string }) => string | undefined;
 
 function inline(text: string, entryLink?: EntryLinkResolver): string {
-  const pattern =
-    /\[\[([^[\]\n]{1,120})\]\]|`([^`]+)`|\*\*([^*]+)\*\*|\*([^*]+)\*|\[([^\]]+)\]\(([^\s)]+)\)/g;
+  const pattern = new RegExp(
+    ENTRY_LINK.source + /|`([^`]+)`|\*\*([^*]+)\*\*|\*([^*]+)\*|\[([^\]]+)\]\(([^\s)]+)\)/.source,
+    "g",
+  );
   let result = "";
   let offset = 0;
   for (const match of text.matchAll(pattern)) {
     result += escapeHtml(text.slice(offset, match.index));
     if (match[1] !== undefined) {
-      const name = match[1].trim();
-      const id = entryLink?.(name);
+      const part = splitEntryLinks(match[0])[0];
+      if (part.kind === "text") continue;
+      const name = part.kind === "ref" ? part.label : part.name;
+      const id = entryLink?.(part.kind === "ref" ? { name, id: part.id } : { name });
       result += id
         ? `<button type="button" class="ttrpg-entry-link" data-entry-id="${escapeHtml(id)}">${escapeHtml(name)}</button>`
         : `<span class="ttrpg-entry-missing">${escapeHtml(name)}</span>`;

@@ -1,4 +1,4 @@
-import type { CompendiumEntry } from "./compendium";
+import { isEntryId } from "./entry-id";
 
 /*
  * `[[Entry name]]` in chat, notes, and entry descriptions links to a compendium
@@ -19,32 +19,41 @@ export type LinkPart =
   | { kind: "ref"; id: string; label: string };
 
 /** `[[ref:id|Label]]`; `|` and brackets are removed from the label. */
-export const formatRefLink = (_id: string, _label: string): string => {
-  throw new Error("not implemented");
-};
+export const formatRefLink = (id: string, label: string): string =>
+  `[[ref:${id}|${label.replace(/[|[\]]/g, "")}]]`;
 
-/** Matches `[[name]]`: 1–120 characters, no brackets or line breaks inside. */
-export const ENTRY_LINK = /\[\[([^[\]\n]{1,120})\]\]/g;
+/** Name links have 1–120 characters; ref links also allow the longer id prefix. */
+export const ENTRY_LINK = /\[\[((?:ref:[^[\]\n]+\|[^[\]\n]*)|[^[\]\n]{1,120})\]\]/g;
 
 export const splitEntryLinks = (text: string): LinkPart[] => {
   const parts: LinkPart[] = [];
   let offset = 0;
   for (const match of text.matchAll(ENTRY_LINK)) {
     if (match.index > offset) parts.push({ kind: "text", text: text.slice(offset, match.index) });
-    parts.push({ kind: "link", name: match[1].trim() });
+    const name = match[1].trim();
+    const separator = name.indexOf("|");
+    const id = name.slice(4, separator);
+    if (name.startsWith("ref:") && separator >= 0 && isEntryId(id)) {
+      parts.push({ kind: "ref", id, label: name.slice(separator + 1).trim() });
+    } else {
+      parts.push({ kind: "link", name: name.startsWith("ref:") ? name.slice(4).trim() : name });
+    }
     offset = match.index + match[0].length;
   }
   if (offset < text.length) parts.push({ kind: "text", text: text.slice(offset) });
   return parts;
 };
 
-const normalize = (text: string) =>
+export const normalizeName = (text: string) =>
   text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
 
 /** The entry a link names (case-, accent-, and spacing-insensitive). */
-export const findEntryByName = (entries: readonly CompendiumEntry[], name: string) => {
-  const wanted = normalize(name);
-  return wanted ? entries.find((entry) => normalize(entry.name) === wanted) : undefined;
+export const findEntryByName = <T extends { name: string }>(
+  entries: readonly T[],
+  name: string,
+) => {
+  const wanted = normalizeName(name);
+  return wanted ? entries.find((entry) => normalizeName(entry.name) === wanted) : undefined;
 };
 
 /** The unfinished `[[query` just before the caret, if the writer is typing a link. */
@@ -57,8 +66,14 @@ export const linkQueryAt = (text: string, caret: number) => {
 };
 
 /** Replace the typed `[[query` with a finished link and put the caret after it. */
-export const insertLink = (text: string, caret: number, start: number, name: string) => {
-  const link = `[[${name}]]`;
+export const insertLink = (
+  text: string,
+  caret: number,
+  start: number,
+  name: string,
+  id?: string,
+) => {
+  const link = id === undefined ? `[[${name}]]` : formatRefLink(id, name);
   const after = text.slice(caret).replace(/^\]\]/, "");
   return { text: text.slice(0, start) + link + after, caret: start + link.length };
 };

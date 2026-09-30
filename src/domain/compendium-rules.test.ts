@@ -138,7 +138,15 @@ describe("compendium entry rules", () => {
             dice: "table decides",
             tags: ["old"],
             list: [
-              { name: "Shield", cost: 0, dice: "?", tags: [], ready: true, _entry: "ent_shield" },
+              {
+                name: "Shield",
+                cost: 0,
+                dice: "?",
+                tags: [],
+                ready: true,
+                _entry: "ent_shield",
+                _rev: 1,
+              },
               {},
             ],
           },
@@ -171,6 +179,9 @@ describe("compendium entry rules", () => {
     { fields: { list: ["row"] } },
     { fields: { list: [{ unknown: "value" }] } },
     { fields: { list: [{ _entry: 1 }] } },
+    { fields: { list: [{ _rev: "1" }] } },
+    { fields: { list: [{ _rev: -1 }] } },
+    { fields: { list: [{ _rev: 1.5 }] } },
     { fields: { list: [{ name: 1 }] } },
     { fields: { list: [{ cost: "1" }] } },
     { fields: { list: [{ cost: -Infinity }] } },
@@ -180,6 +191,19 @@ describe("compendium entry rules", () => {
     { fields: { list: [{ tags: Array(51).fill("tag") }] } },
   ])("rejects invalid entry values: %j", (invalid) => {
     expect(entryError({ ...entry, ...invalid }, type)).toBeTypeOf("string");
+  });
+
+  it("validates supplied world ids against their entry type", () => {
+    expect(entryError({ ...entry, id: "world/item/sword" }, type)).toBeUndefined();
+    for (const id of [
+      "",
+      "ent_sword",
+      "srd52/item/sword",
+      "world/spell/sword",
+      "world/item/Bad",
+    ]) {
+      expect(entryError({ ...entry, id }, type)).toContain("Entry id");
+    }
   });
 
   it("accepts boundary sizes and measures JSON as UTF-8 bytes", () => {
@@ -227,19 +251,69 @@ describe("compendium pack rules", () => {
     { entries: [{ ...pack.entries[0], id: " " }] },
     { entries: [{ ...pack.entries[0], body: "x".repeat(12001) }] },
     { types: Array.from({ length: 51 }, (_, i) => ({ ...type, id: `type_${i}` })) },
-    { entries: Array.from({ length: 2001 }, (_, i) => ({ ...pack.entries[0], id: `ent_${i}` })) },
+    {
+      entries: Array.from({ length: compendiumLimits.entries + 1 }, (_, i) => ({
+        ...pack.entries[0],
+        id: `ent_${i}`,
+      })),
+    },
     { name: "x".repeat(compendiumLimits.packBytes) },
   ])("rejects invalid packs: %j", (invalid) => {
     expect(packError({ ...pack, ...invalid })).toBeTypeOf("string");
   });
 
-  it("accepts exactly 50 types and 2000 entries", () => {
+  it("accepts exactly 50 types and the entry limit", () => {
     expect(
       packError({
         ...pack,
         types: [type, ...Array.from({ length: 49 }, (_, i) => ({ ...type, id: `type_${i}` }))],
-        entries: Array.from({ length: 2000 }, (_, i) => ({ ...pack.entries[0], id: `ent_${i}` })),
+        entries: Array.from({ length: compendiumLimits.entries }, (_, i) => ({
+          ...pack.entries[0],
+          id: `ent_${i}`,
+        })),
       }),
     ).toBeUndefined();
+  });
+
+  it("accepts arbitrary non-empty legacy ids, but requires world ids of the entry's own type in version 2", () => {
+    for (const id of [
+      "ent_sword",
+      "old-id",
+      "Old / legacy",
+      "srd52/item/sword",
+      "world/spell/sword",
+    ]) {
+      expect(packError({ ...pack, entries: [{ ...pack.entries[0], id }] })).toBeUndefined();
+      expect(packError({ ...pack, version: 2, entries: [{ ...pack.entries[0], id }] })).toContain(
+        "Entry id",
+      );
+    }
+    expect(
+      packError({ ...pack, version: 2, entries: [{ ...pack.entries[0], id: "world/item/sword" }] }),
+    ).toBeUndefined();
+    expect(
+      packError({ ...pack, version: 2, entries: [{ ...pack.entries[0], id: " " }] }),
+    ).toContain("must not be empty");
+  });
+
+  it("reports the configured entry limit", () => {
+    expect(
+      packError({
+        ...pack,
+        entries: Array.from({ length: compendiumLimits.entries + 1 }, (_, i) => ({
+          ...pack.entries[0],
+          id: `ent_${i}`,
+        })),
+      }),
+    ).toBe(`A pack can have at most ${compendiumLimits.entries} entries`);
+  });
+
+  it("counts legacy ids toward the entry byte limit", () => {
+    expect(
+      packError({
+        ...pack,
+        entries: [{ ...pack.entries[0], id: "x".repeat(compendiumLimits.entryBytes) }],
+      }),
+    ).toBe("Entry JSON must be at most 16 KB");
   });
 });

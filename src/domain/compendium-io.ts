@@ -4,10 +4,10 @@ import { CompendiumPack, compendiumLimits, type Compendium } from "./compendium"
 export const exportPack = (compendium: Compendium, name: string): string => {
   const pack: CompendiumPack = {
     format: "ttrpg-pack",
-    version: 1,
+    version: 2,
     name,
     types: compendium.types,
-    entries: compendium.entries.map(({ updatedAt: _updatedAt, ...entry }) => entry),
+    entries: compendium.entries.map(({ updatedAt: _updatedAt, rev: _rev, ...entry }) => entry),
   };
   return JSON.stringify(pack, null, 2);
 };
@@ -37,7 +37,9 @@ export const parsePack = (
   const header = Schema.decodeUnknownResult(Schema.Struct({ format: Schema.String }))(parsed);
   if (header._tag === "Failure" || header.success.format !== "ttrpg-pack")
     return { ok: false, error: "Expected ttrpg-pack format" };
-  const version = Schema.decodeUnknownResult(Schema.Struct({ version: Schema.Literal(1) }))(parsed);
+  const version = Schema.decodeUnknownResult(Schema.Struct({ version: Schema.Literals([1, 2]) }))(
+    parsed,
+  );
   if (version._tag === "Failure") return { ok: false, error: "Unsupported pack version" };
   const decoded = Schema.decodeUnknownResult(CompendiumPack)(parsed);
   return decoded._tag === "Failure"

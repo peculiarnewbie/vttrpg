@@ -20,10 +20,12 @@ const columnValue = (
       return Array.isArray(value) && value.every((tag) => typeof tag === "string")
         ? [...value]
         : undefined;
+    case "derived":
+      return undefined;
   }
 };
 
-const copyColumns = (
+export const copyColumns = (
   values: Readonly<Record<string, CharacterValue>>,
   columns: readonly ListColumn[],
 ): ListRow => {
@@ -38,6 +40,7 @@ const copyColumns = (
 export const rowFromEntry = (entry: CompendiumEntry, columns: readonly ListColumn[]): ListRow => ({
   ...copyColumns({ ...entry.fields, name: entry.name }, columns),
   _entry: entry.id,
+  ...(entry.rev === undefined ? {} : { _rev: entry.rev }),
 });
 
 export const rowsFromEntryList = (
@@ -49,7 +52,13 @@ export const rowsFromEntryList = (
   if (!Array.isArray(value)) return [];
   return value.flatMap((row) =>
     typeof row === "object" && row !== null && !Array.isArray(row)
-      ? [{ ...copyColumns(row, columns), _entry: entry.id }]
+      ? [
+          {
+            ...copyColumns(row, columns),
+            _entry: entry.id,
+            ...(entry.rev === undefined ? {} : { _rev: entry.rev }),
+          },
+        ]
       : [],
   );
 };
@@ -72,9 +81,10 @@ export const entryFieldsForDisplay = (
   });
 
 /** The entry revision a copied row was taken at (`_rev`), if it recorded one. */
-export const revOf = (_row: ListRow): number | undefined => {
-  throw new Error("not implemented");
-};
+export const revOf = (row: ListRow): number | undefined =>
+  typeof row._rev === "number" && Number.isSafeInteger(row._rev) && row._rev >= 0
+    ? row._rev
+    : undefined;
 
 export const sourceOf = (row: ListRow): string | undefined =>
   typeof row._entry === "string" && row._entry ? row._entry : undefined;

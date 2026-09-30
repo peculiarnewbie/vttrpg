@@ -20,14 +20,21 @@ export type EntryIdParts = {
   readonly slug: string;
 };
 
+// As loose as type ids (compendium-rules.ts), so every existing type can own entries.
+const validPart = (part: string) => part.length <= SLUG_MAX && /^[a-z0-9][a-z0-9_-]*$/.test(part);
+
 /** `source/type/slug`. Throws if a part isn't a valid slug (a programming error). */
-export const entryId = (_source: string, _typeId: string, _slug: string): string => {
-  throw new Error("not implemented");
+export const entryId = (source: string, typeId: string, slug: string): string => {
+  if (![source, typeId, slug].every(validPart)) throw new Error("Invalid entry id parts");
+  return `${source}/${typeId}/${slug}`;
 };
 
 /** The parts of a valid entry id, else `undefined` (old `ent_…` ids included). */
-export const parseEntryId = (_id: string): EntryIdParts | undefined => {
-  throw new Error("not implemented");
+export const parseEntryId = (id: string): EntryIdParts | undefined => {
+  const parts = id.split("/");
+  if (parts.length !== 3 || !parts.every(validPart)) return undefined;
+  const [source, typeId, slug] = parts;
+  return { source, typeId, slug };
 };
 
 export const isEntryId = (id: string): boolean => parseEntryId(id) !== undefined;
@@ -38,11 +45,22 @@ export const isEntryId = (id: string): boolean => parseEntryId(id) !== undefined
  * without leaving a trailing hyphen. Names with nothing usable ("???", "竜")
  * give "entry".
  */
-export const slugify = (_name: string): string => {
-  throw new Error("not implemented");
-};
+export const slugify = (name: string): string =>
+  name
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, SLUG_MAX)
+    .replace(/-+$/g, "") || "entry";
 
 /** `base`, else `base-2`, `base-3`… — the first that isn't `taken` (still within SLUG_MAX). */
-export const uniqueSlug = (_base: string, _taken: (slug: string) => boolean): string => {
-  throw new Error("not implemented");
+export const uniqueSlug = (base: string, taken: (slug: string) => boolean): string => {
+  if (!taken(base)) return base;
+  for (let n = 2; ; n++) {
+    const suffix = `-${n}`;
+    const candidate = base.slice(0, SLUG_MAX - suffix.length).replace(/[-_]+$/g, "") + suffix;
+    if (!taken(candidate)) return candidate;
+  }
 };

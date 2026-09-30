@@ -85,8 +85,8 @@ export function EntryCard(props: {
   entries?: readonly CompendiumEntry[];
   onOpenEntry?: (entryId: string) => void;
 }) {
-  const link = (name: string) =>
-    props.entries ? findEntryByName(props.entries, name)?.id : undefined;
+  const link = (link: { name: string; id?: string }) =>
+    link.id ?? (props.entries ? findEntryByName(props.entries, link.name)?.id : undefined);
   const open = (event: MouseEvent) => {
     const target = (event.target as Element).closest<HTMLElement>("[data-entry-id]");
     if (target?.dataset.entryId) props.onOpenEntry?.(target.dataset.entryId);

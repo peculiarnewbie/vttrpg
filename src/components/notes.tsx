@@ -36,8 +36,9 @@ export function NotesPanel(props: {
   let loadVersion = 0;
   let editVersion = 0;
 
-  const entryLink = (name: string) =>
-    props.compendium ? findEntryByName(props.compendium.entries(), name)?.id : undefined;
+  const entryLink = (link: { name: string; id?: string }) =>
+    link.id ??
+    (props.compendium ? findEntryByName(props.compendium.entries(), link.name)?.id : undefined);
   const openLink = (event: MouseEvent) => {
     const link = (event.target as Element).closest<HTMLElement>("[data-entry-id]");
     if (link?.dataset.entryId) props.onOpenEntry?.(link.dataset.entryId);

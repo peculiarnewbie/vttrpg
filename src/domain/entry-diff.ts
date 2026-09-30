@@ -1,5 +1,6 @@
 import type { CompendiumEntry } from "./compendium";
 import type { ListColumn, ListRow } from "./sheet-layout";
+import { copyColumns, revOf, sourceOf } from "./compendium-rows";
 
 /*
  * Copied list rows remember their entry (`_entry`) and its revision (`_rev`).
@@ -29,11 +30,29 @@ export type RowUpdate = {
  * (applying it just records the revision). Derived columns never count.
  */
 export const rowUpdate = (
-  _row: ListRow,
-  _entry: CompendiumEntry,
-  _columns: readonly ListColumn[],
+  row: ListRow,
+  entry: CompendiumEntry,
+  columns: readonly ListColumn[],
 ): RowUpdate | undefined => {
-  throw new Error("not implemented");
+  const rev = revOf(row);
+  if (
+    sourceOf(row) !== entry.id ||
+    rev === undefined ||
+    entry.rev === undefined ||
+    entry.rev <= rev
+  )
+    return undefined;
+  const copied = copyColumns({ ...entry.fields, name: entry.name }, columns);
+  const changes = columns.flatMap((column) => {
+    const from = row[column.key];
+    const to = copied[column.key];
+    const same =
+      Array.isArray(from) && Array.isArray(to)
+        ? from.length === to.length && from.every((value, index) => value === to[index])
+        : from === to;
+    return to === undefined || same ? [] : [{ key: column.key, label: column.label, from, to }];
+  });
+  return { rev: entry.rev, changes };
 };
 
 /**
@@ -42,9 +61,13 @@ export const rowUpdate = (
  * other extra keys are kept.
  */
 export const applyRowUpdate = (
-  _row: ListRow,
-  _entry: CompendiumEntry,
-  _columns: readonly ListColumn[],
+  row: ListRow,
+  entry: CompendiumEntry,
+  columns: readonly ListColumn[],
 ): ListRow => {
-  throw new Error("not implemented");
+  return {
+    ...row,
+    ...copyColumns({ ...entry.fields, name: entry.name }, columns),
+    ...(entry.rev === undefined ? {} : { _rev: entry.rev }),
+  };
 };
