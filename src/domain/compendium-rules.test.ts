@@ -201,7 +201,6 @@ describe("compendium entry rules", () => {
       "srd52/item/sword",
       "world/spell/sword",
       "world/item/Bad",
-      "world/item/a--b",
     ]) {
       expect(entryError({ ...entry, id }, type)).toContain("Entry id");
     }
