@@ -120,6 +120,27 @@ and can be converted; their formulas and roll modifiers stay in effect. On the
 sheet, **Edit** makes fields, lists, and plain stats editable in place, saving
 each value as you leave it. Layouts are prototyped at `/lab/systems`.
 
+## Compendium
+
+Each world has its own compendium of typed entries with fields and markdown
+bodies. Only DMs edit types and entries; public entries are visible to every
+member, while DM-only entries stay hidden from players. DMs export and import
+`ttrpg-pack` JSON to move content between worlds; re-importing updates matching
+ids. Presets contain entry types only — no copyrighted game content is shipped.
+
+- **World settings → Compendium**: define entry types (a Knight has an Ability and
+  a Property list), add a premade system's types, create the types your sheet
+  templates refer to, and export or import packs.
+- **Compendium tab** in the tools panel: search and filter entries, read them as
+  cards (dice in their lists roll), and — for DMs — write, reveal, hide, and
+  delete them.
+- **On sheets**, an `entry` block picks one entry (a character's Knight) and shows
+  it live, so compendium edits reach every sheet that links it. Picking can
+  _offer_ to copy the entry's lists into the sheet (a Knight's starting
+  Property); it never does so on its own. Lists with a `source` gain
+  "+ From compendium", which copies an entry into a row the player can change;
+  the row remembers its entry and links back to it.
+
 ## Realtime protocol
 
 The client opens `/api/worlds/:id/ws`, which the Worker authenticates and

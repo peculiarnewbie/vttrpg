@@ -6,6 +6,8 @@ import { api, ApiError, type WorldBootstrap } from "../client/api";
 import { connectWorld, type RealtimeController, type RealtimeStatus } from "../client/realtime";
 import { useSession } from "../client/session";
 import { CharacterSheets } from "../components/character-sheets";
+import { CompendiumPanel, EntryCard } from "../components/compendium";
+import { createCompendium } from "../client/compendium";
 import { Chat } from "../components/chat";
 import { DiceLanes } from "../components/dice-lanes";
 import { NotesPanel } from "../components/notes";
@@ -22,6 +24,7 @@ import {
   Menu,
   MenuItem,
   MenuToggle,
+  Modal,
   Spinner,
   ThemeMenuItems,
 } from "../components/ui";
@@ -40,7 +43,7 @@ import type {
 } from "../domain/schemas";
 import { sx } from "../theme/sx";
 
-type Tab = "sheets" | "notes";
+type Tab = "sheets" | "notes" | "compendium";
 
 const upsert = <T extends { id: string }>(items: T[], item: T) => {
   const index = items.findIndex((existing) => existing.id === item.id);
@@ -104,6 +107,9 @@ export default function WorldPage() {
   const [presence, setPresence] = createSignal<PresenceMember[]>([]);
   const [activeRolls, setActiveRolls] = createSignal<ChatMessage[]>([]);
   const [tab, setTab] = createSignal<Tab>("sheets");
+  const compendium = createCompendium(params.id);
+  // An entry opened from a sheet shows over the table; the Compendium tab keeps its own place.
+  const [openEntry, setOpenEntry] = createSignal<string | null>(null);
   const [error, setError] = createSignal("");
   const [status, setStatus] = createSignal<RealtimeStatus>("connecting");
 
@@ -163,12 +169,16 @@ export default function WorldPage() {
           if (next === "open") {
             controller?.send({ type: "cursors.subscribe", enabled: cursorsEnabled() });
             void refreshNotes();
+            void compendium.refresh();
           }
         },
         onFrame: (frame) => {
           switch (frame.type) {
             case "notes.updated":
               void refreshNotes();
+              break;
+            case "compendium.updated":
+              void compendium.refresh();
               break;
             case "cursor":
               if (cursorsEnabled()) {
@@ -321,7 +331,13 @@ export default function WorldPage() {
   const tabs: { id: Tab; label: string }[] = [
     { id: "sheets", label: "Characters" },
     { id: "notes", label: "Notes" },
+    { id: "compendium", label: "Compendium" },
   ];
+  /** A labelled public roll from a sheet or compendium card ("Longsword · d8"). */
+  const rollLabelled = (notation: string, label: string) => {
+    if (status() === "open")
+      controller?.send({ type: "roll.dice", notation, label, visibility: "public" });
+  };
 
   return (
     <div {...sx(styles.app, b.world)}>
@@ -501,7 +517,7 @@ export default function WorldPage() {
                             type="button"
                             role="tab"
                             aria-selected={tab() === item.id ? "true" : "false"}
-                            {...sx(styles.tab, tab() === item.id && styles.tabActive)}
+                            {...sx(styles.tab, b.toolsTab, tab() === item.id && styles.tabActive)}
                             onClick={() => setTab(item.id)}
                           >
                             {item.label}
@@ -534,15 +550,9 @@ export default function WorldPage() {
                         onTicker={ticker}
                         onValue={setCharacterValue}
                         onLayoutPref={setLayoutPref}
-                        onRollDice={(notation, label) => {
-                          if (status() === "open")
-                            controller?.send({
-                              type: "roll.dice",
-                              notation,
-                              label,
-                              visibility: "public",
-                            });
-                        }}
+                        onRollDice={rollLabelled}
+                        compendium={compendium}
+                        onOpenEntry={setOpenEntry}
                         onSave={saveCharacter}
                         onDelete={deleteCharacter}
                         onUploadAvatar={uploadAvatar}
@@ -557,6 +567,15 @@ export default function WorldPage() {
                         onNotes={setNotes}
                       />
                     </div>
+                    <Show when={tab() === "compendium"}>
+                      <CompendiumPanel
+                        worldId={params.id}
+                        isDm={isDm()}
+                        compendium={compendium}
+                        onRoll={(label, dice) => rollLabelled(dice, label)}
+                        onSetup={() => navigate(`/worlds/${params.id}/settings?section=compendium`)}
+                      />
+                    </Show>
                   </div>
                 </aside>
               </div>
@@ -564,6 +583,25 @@ export default function WorldPage() {
           )}
         </Show>
       </div>
+      <Modal
+        when={!!openEntry() && !!compendium.entry(openEntry()!)}
+        title={compendium.typeById(compendium.entry(openEntry()!)?.typeId ?? "")?.name ?? "Entry"}
+        onClose={() => setOpenEntry(null)}
+      >
+        <Show when={compendium.entry(openEntry() ?? "")}>
+          {(entry) => (
+            <Show when={compendium.typeById(entry().typeId)}>
+              {(type) => (
+                <EntryCard
+                  entry={entry()}
+                  type={type()}
+                  onRoll={(label, dice) => rollLabelled(dice, label)}
+                />
+              )}
+            </Show>
+          )}
+        </Show>
+      </Modal>
     </div>
   );
 }

@@ -365,6 +365,8 @@ export type ClientFrame = Infer<typeof ClientFrame>;
 export const ServerFrame = Schema.Union([
   BoardFocus,
   Schema.Struct({ type: Schema.Literal("notes.updated") }),
+  /** The compendium changed; clients refetch GET /compendium (it is filtered per member). */
+  Schema.Struct({ type: Schema.Literal("compendium.updated") }),
   Schema.Struct({ type: Schema.Literal("cursor"), cursor: LiveCursor }),
   Schema.Struct({
     type: Schema.Literal("board"),

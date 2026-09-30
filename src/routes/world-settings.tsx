@@ -1,19 +1,22 @@
-import { useNavigate, useParams } from "@solidjs/router";
+import { useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import { For, Show, createSignal, onSettled } from "solid-js";
 import { api, ApiError, type WorldBootstrap } from "../client/api";
 import { useSession } from "../client/session";
+import { createCompendium } from "../client/compendium";
 import { BuilderPanel } from "../components/builder";
+import { CompendiumSettings } from "../components/compendium-settings";
 import { MembersPanel } from "../components/members";
 import { styles } from "../components/styles.stylex";
 import { Button, ErrorBanner, Spinner, TopBar } from "../components/ui";
 import type { SheetTemplate, WorldMember } from "../domain/schemas";
 import { sx } from "../theme/sx";
 
-type Section = "members" | "templates";
+type Section = "members" | "templates" | "compendium";
 
 const sections: { id: Section; label: string }[] = [
   { id: "members", label: "Members" },
   { id: "templates", label: "Sheet templates" },
+  { id: "compendium", label: "Compendium" },
 ];
 
 /** DM-only setup that doesn't belong in the in-session tools panel. */
@@ -24,7 +27,10 @@ export default function WorldSettings() {
   const [boot, setBoot] = createSignal<WorldBootstrap | null>(null);
   const [members, setMembers] = createSignal<WorldMember[]>([]);
   const [templates, setTemplates] = createSignal<SheetTemplate[]>([]);
-  const [section, setSection] = createSignal<Section>("members");
+  const [search] = useSearchParams();
+  const requested = sections.find((item) => item.id === search.section)?.id;
+  const [section, setSection] = createSignal<Section>(requested ?? "members");
+  const compendium = createCompendium(params.id);
   const [error, setError] = createSignal("");
   const backToTable = () => navigate(`/worlds/${params.id}`);
 
@@ -47,6 +53,7 @@ export default function WorldSettings() {
         setBoot(bootstrap);
         setMembers(bootstrap.members);
         setTemplates(bootstrap.templates);
+        void compendium.refresh();
       } catch (err) {
         setError(err instanceof ApiError ? err.message : "Could not load world");
       }
@@ -100,6 +107,15 @@ export default function WorldSettings() {
                 worldId={params.id}
                 templates={templates()}
                 onTemplates={setTemplates}
+                entryTypes={compendium.types()}
+              />
+            </Show>
+            <Show when={section() === "compendium"}>
+              <CompendiumSettings
+                worldId={params.id}
+                worldName={world().world.name}
+                templates={templates()}
+                compendium={compendium}
               />
             </Show>
           </main>

@@ -514,6 +514,13 @@ export const boardStyles = stylex.create({
     paddingInline: space.x1,
   },
   panelTabs: { display: "flex", gap: space.x1, minWidth: 0, overflowX: "auto" },
+  // Three tabs must fit a 340px panel even in themes with wide letter spacing.
+  toolsTab: {
+    paddingInline: "5px",
+    whiteSpace: "nowrap",
+    fontSize: "12px",
+    letterSpacing: `min(${skin.headTracking}, 0.04em)`,
+  },
   unread: {
     fontFamily: fonts.numeric,
     borderRadius: radii.sm,

@@ -17,6 +17,7 @@ import { Button, ErrorBanner, Field, Input } from "./ui";
 import { LayoutEditor } from "./layout-editor";
 import { layoutFromTemplate } from "../domain/layout-from-template";
 import { presetTemplates } from "../domain/preset-templates";
+import type { EntryType } from "../domain/compendium";
 import { exportTemplate, importTemplate } from "../domain/template-io";
 import { styles } from "./styles.stylex";
 import { sx } from "../theme/sx";
@@ -261,6 +262,7 @@ export function BuilderPanel(props: {
   worldId: string;
   templates: SheetTemplate[];
   onTemplates: (templates: SheetTemplate[]) => void;
+  entryTypes?: readonly EntryType[];
 }) {
   const [draft, setDraft] = createSignal<SaveTemplateInput>(
     props.templates[0] ? toDraft(props.templates[0]) : emptyTemplate(),
@@ -424,7 +426,11 @@ export function BuilderPanel(props: {
           }
         >
           {(layout) => (
-            <LayoutEditor layout={layout()} onChange={(next) => patch({ layout: next })} />
+            <LayoutEditor
+              layout={layout()}
+              onChange={(next) => patch({ layout: next })}
+              entryTypes={props.entryTypes}
+            />
           )}
         </Show>
 

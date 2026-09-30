@@ -2,6 +2,7 @@ import { canSeeNote } from "../domain/note-permissions";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { layoutLimitsError } from "../domain/template-io";
+import { CompendiumPack, EntryType, SaveEntryInput, compendiumLimits } from "../domain/compendium";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import type { HttpServerError } from "effect/unstable/http/HttpServerError";
 import {
@@ -963,7 +964,81 @@ const DeleteNote = HttpRouter.route(
   ),
 );
 
+// ---------------------------------------------------------------------------
+// Compendium
+// ---------------------------------------------------------------------------
+
+const compendiumRoute = (
+  method: "GET" | "PUT" | "POST" | "DELETE",
+  suffix: string,
+  schema?: Schema.ConstraintDecoder<unknown>,
+) =>
+  HttpRouter.route(
+    method,
+    `/api/worlds/:id/compendium${suffix}`,
+    route(
+      Effect.gen(function* () {
+        const { member, stub, world } = yield* loadWorld(
+          method === "GET" && !suffix ? undefined : ["dm"],
+        );
+        const params = yield* HttpRouter.params;
+        const path = `compendium${suffix.replace(":typeId", encodeURIComponent(params.typeId ?? "")).replace(":entryId", encodeURIComponent(params.entryId ?? ""))}`;
+        let body: string | undefined;
+        if (schema) {
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          const text = yield* request.text;
+          if (
+            suffix === "/import" &&
+            new TextEncoder().encode(text).byteLength > compendiumLimits.packBytes
+          )
+            return yield* Effect.fail(
+              new BadRequest({ message: "Pack JSON must be at most 4 MB" }),
+            );
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(text);
+          } catch {
+            return yield* Effect.fail(new BadRequest({ message: "Invalid JSON body" }));
+          }
+          const decoded = Schema.decodeUnknownResult(schema)(parsed);
+          if (decoded._tag === "Failure")
+            return yield* Effect.fail(new BadRequest({ message: "Invalid compendium data" }));
+          body = JSON.stringify(decoded.success);
+        }
+        const response = yield* Effect.promise(() =>
+          stub.fetch(
+            new Request(`https://do/internal/${path}`, {
+              method,
+              headers: {
+                "content-type": "application/json",
+                "x-ttrpg-member-id": member.id,
+                "x-ttrpg-member-name": member.displayName,
+                "x-ttrpg-role": member.role,
+                "x-ttrpg-world-name": encodeURIComponent(world.name),
+              },
+              ...(body === undefined ? {} : { body }),
+            }),
+          ),
+        );
+        if (response.status === 204) return HttpServerResponse.empty({ status: 204 });
+        const result: unknown = yield* Effect.promise(() => response.json());
+        return json(result, response.status);
+      }),
+    ),
+  );
+
+const CompendiumRoutes = [
+  compendiumRoute("GET", ""),
+  compendiumRoute("PUT", "/types/:typeId", EntryType),
+  compendiumRoute("DELETE", "/types/:typeId"),
+  compendiumRoute("POST", "/entries", SaveEntryInput),
+  compendiumRoute("DELETE", "/entries/:entryId"),
+  compendiumRoute("GET", "/export"),
+  compendiumRoute("POST", "/import", CompendiumPack),
+];
+
 export const Api = HttpRouter.addAll([
+  ...CompendiumRoutes,
   Me,
   GoogleDev,
   Login,
