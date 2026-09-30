@@ -69,7 +69,13 @@ wildcard matches paths under these directories. Keep `src/domain/*`, `workers/co
 watch paths too (their default `*` already includes them).
 
 Cloudflare manages the build token; credentials do not belong in the repo.
-The token must permit the corpus D1 migrations and R2/DO deployment.
+The token must permit the corpus D1 migrations and R2/DO deployment. The
+default Workers Builds token does not include D1 access. Under **My Profile →
+API Tokens**, edit the selected token and add **Account → D1 → Edit** for the
+existing account, retaining its deployment permissions. These connections use
+**Workers Builds - 2024-10-13 13:15**. Missing D1 permission causes migrations
+to fail with Cloudflare error `7403`; after saving the permission, retry the
+failed corpus builds from each Worker's **Deployments → Builds** view.
 
 After **both corpus deployments succeed**, the table can bind `CORPUS` to
 `ttrpg-corpus` / `ttrpg-corpus-preview`, entrypoint `CorpusEntrypoint`, and
