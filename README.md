@@ -6,6 +6,10 @@ sheets, a dice engine, and notes. Each **world** is its own Durable Object
 
 Built with **Cloudflare Workers + Effect + Solid.js + StyleX**.
 
+What 1.0 is (and is deliberately not) is written down in
+[docs/v1-scope.md](docs/v1-scope.md); the content architecture for D&D-scale
+compendiums is in [docs/corpus.md](docs/corpus.md).
+
 ## Features (POC)
 
 - **Worlds** — register a world; it gets a Durable Object and `world/<id>` R2 prefix

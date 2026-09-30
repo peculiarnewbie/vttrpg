@@ -4,6 +4,13 @@ A small virtual tabletop that lives entirely on Cloudflare: per-world Durable
 Objects, R2 file storage, D1 accounts/world registry, realtime chat, flexible
 character sheets, a dice engine, and notes.
 
+## Product scope
+
+Read [docs/v1-scope.md](docs/v1-scope.md) before adding features. The app holds
+state, shows content, and rolls dice; it never automates rules — no movement,
+targeting, automatic stat updates, outcome evaluation ("success", "hit"), or
+rule enforcement. Content at scale follows [docs/corpus.md](docs/corpus.md).
+
 ## Stack
 
 - **Wrangler** — Worker configuration and deployment, including D1, R2, Durable Objects, and assets
