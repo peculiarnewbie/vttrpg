@@ -181,7 +181,7 @@ it("upgrades populated text-only FTS indexes once and keeps both indexes in sync
   );
   expect(index.rev).toBe(saved.rev);
   expect(await db.exec("SELECT value FROM settings WHERE key = 'compendium_fts_version'")).toEqual([
-    { value: "2" },
+    { value: "3" },
   ]);
   // A sentinel posting would disappear if initialization rebuilt the index again.
   await db.exec(`INSERT INTO compendium_fts (rowid, id, name_words, tags_key, text_key)
