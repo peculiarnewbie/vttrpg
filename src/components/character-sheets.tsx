@@ -4,7 +4,7 @@ import { api } from "../client/api";
 import { computeStats } from "../domain/dice";
 import { effectiveLayout } from "../domain/layout-from-template";
 import { trackerDefinitions } from "../domain/trackers-definitions";
-import { SheetBlocks } from "./sheet-blocks";
+import { SheetBlocks, type CompendiumLookup } from "./sheet-blocks";
 import type {
   Character,
   CharacterValue,
@@ -431,6 +431,9 @@ type Props = {
   onLayoutPref: (characterId: string, blockId: string, variant: string | null) => void;
   /** A roll that isn't one of the template's roll definitions, e.g. a Property row's d8. */
   onRollDice: (notation: string, label: string) => void;
+  /** The world's compendium, for entry blocks and "from compendium" lists. */
+  compendium?: CompendiumLookup;
+  onOpenEntry?: (entryId: string) => void;
   onSave: (input: SaveCharacterInput) => Promise<void>;
   onDelete: (characterId: string) => Promise<void>;
   onUploadAvatar: (characterId: string, file: File) => Promise<void>;
@@ -764,6 +767,9 @@ export function CharacterSheets(props: Props) {
                         props.onLayoutPref(character().id, blockId, variant)
                       }
                       onRoll={(label, dice) => rollFromSheet(character(), sheet(), label, dice)}
+                      readOnly={!canEdit(character())}
+                      compendium={props.compendium}
+                      onOpenEntry={props.onOpenEntry}
                     />
                   </div>
                 )}

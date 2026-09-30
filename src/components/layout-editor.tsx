@@ -1,8 +1,10 @@
 import * as stylex from "@stylexjs/stylex";
 import * as Schema from "effect/Schema";
 import { For, Match, Show, Switch, createSignal, onCleanup } from "solid-js";
+import type { EntryType } from "../domain/compendium";
 import {
   addPage,
+  allBlocks,
   blockTypes,
   duplicateBlock,
   findBlock,
@@ -243,6 +245,7 @@ const e = stylex.create({
   json: { minHeight: "360px", fontFamily: fonts.mono, fontSize: "12px" },
   error: { color: colors.danger, fontSize: "12px" },
   hint: { fontSize: "12px", color: colors.textMuted },
+  check: { display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "12px" },
 });
 
 const summarize = (block: LayoutBlock): string => {
@@ -380,12 +383,41 @@ function Inspector(props: {
   block: LayoutBlock;
   onChange: (block: LayoutBlock) => void;
   onUngroup: () => void;
+  entryTypes: readonly EntryType[];
+  /** The layout's lists, for an entry block's "fill" targets. */
+  lists: readonly { key: string; title?: string }[];
 }) {
   const b = () => props.block;
   const patch = (partial: Record<string, unknown>) =>
     props.onChange({ ...props.block, ...partial } as LayoutBlock);
   const variants = () => blockVariants[b().type] as readonly string[];
   const spans = ["", "1", "2", "3", "4", "5", "6"];
+  const entryTypeSelect = (
+    label: string,
+    value: string,
+    onChange: (id: string) => void,
+    none?: string,
+  ) => (
+    <label {...sx(e.field)}>
+      {label}
+      <select
+        {...sx(styles.select, e.small)}
+        value={value}
+        onChange={(event) => onChange(event.currentTarget.value)}
+      >
+        <Show when={none !== undefined}>
+          <option value="">{none}</option>
+        </Show>
+        <Show when={none === undefined && !value}>
+          <option value="">Choose a type…</option>
+        </Show>
+        <For each={props.entryTypes}>{(type) => <option value={type.id}>{type.name}</option>}</For>
+        <Show when={value && !props.entryTypes.some((type) => type.id === value)}>
+          <option value={value}>{value} (not in the compendium)</option>
+        </Show>
+      </select>
+    </label>
+  );
   const spanSelect = (key: "span" | "wide", label: string) => (
     <label {...sx(e.field)}>
       {label}
@@ -579,6 +611,104 @@ function Inspector(props: {
                   onChange={(columns) => patch({ columns })}
                   make={() => ({ key: `col_${Date.now() % 10000}`, label: "Column", kind: "text" })}
                 />
+                {entryTypeSelect(
+                  "Add rows from the compendium",
+                  list().source?.entryType ?? "",
+                  (id) => patch({ source: id ? { entryType: id } : undefined }),
+                  "No",
+                )}
+                <Show when={list().source}>
+                  <span {...sx(e.hint)}>
+                    Rows copy the entry's name into a “name” column and fields into columns with the
+                    same key. Players can change their copy.
+                  </span>
+                </Show>
+              </>
+            );
+          }}
+        </Match>
+        <Match when={b().type === "entry" && b()}>
+          {(block) => {
+            const entry = () => block() as Extract<LayoutBlock, { type: "entry" }>;
+            const type = () => props.entryTypes.find((item) => item.id === entry().entryType);
+            const shown = () => entry().show ?? type()?.fields.map((field) => field.key) ?? [];
+            const toggleShown = (key: string) => {
+              const next = shown().includes(key)
+                ? shown().filter((item) => item !== key)
+                : (type()?.fields ?? [])
+                    .map((field) => field.key)
+                    .filter((item) => item === key || shown().includes(item));
+              patch({ show: next });
+            };
+            const fillFor = (from: string) =>
+              entry().fill?.find((fill) => fill.from === from)?.to ?? "";
+            const setFill = (from: string, to: string) => {
+              const rest = (entry().fill ?? []).filter((fill) => fill.from !== from);
+              const next = to ? [...rest, { from, to }] : rest;
+              patch({ fill: next.length ? next : undefined });
+            };
+            return (
+              <>
+                <div {...sx(e.pair)}>
+                  {entryTypeSelect("Entry type", entry().entryType, (id) =>
+                    patch({ entryType: id, show: undefined, fill: undefined }),
+                  )}
+                  <TextInput
+                    label="Label"
+                    value={entry().label ?? ""}
+                    onInput={(label) => patch({ label: label || undefined })}
+                  />
+                </div>
+                <TextInput label="Key" value={entry().key} onInput={(key) => patch({ key })} />
+                <Show
+                  when={type()}
+                  fallback={
+                    <span {...sx(e.hint)}>
+                      Pick an entry type. Set types up in World settings → Compendium.
+                    </span>
+                  }
+                >
+                  {(current) => (
+                    <>
+                      <div {...sx(e.field)}>
+                        Show on the sheet
+                        <div {...sx(e.bar)}>
+                          <For each={current().fields}>
+                            {(field) => (
+                              <label {...sx(e.check)}>
+                                <input
+                                  type="checkbox"
+                                  checked={shown().includes(field.key)}
+                                  onChange={() => toggleShown(field.key)}
+                                />
+                                {field.label}
+                              </label>
+                            )}
+                          </For>
+                        </div>
+                      </div>
+                      <For each={current().fields.filter((field) => field.kind === "list")}>
+                        {(field) => (
+                          <label {...sx(e.field)}>
+                            After picking, offer to copy {field.label} into
+                            <select
+                              {...sx(styles.select, e.small)}
+                              value={fillFor(field.key)}
+                              onChange={(event) => setFill(field.key, event.currentTarget.value)}
+                            >
+                              <option value="">Don't offer</option>
+                              <For each={props.lists}>
+                                {(list) => (
+                                  <option value={list.key}>{list.title ?? list.key}</option>
+                                )}
+                              </For>
+                            </select>
+                          </label>
+                        )}
+                      </For>
+                    </>
+                  )}
+                </Show>
               </>
             );
           }}
@@ -649,6 +779,8 @@ function Inspector(props: {
 export function LayoutEditor(props: {
   layout: SheetLayout;
   onChange: (layout: SheetLayout) => void;
+  /** The world's compendium types, for entry blocks and list sources. */
+  entryTypes?: readonly EntryType[];
 }) {
   const [pageId, setPageId] = createSignal(props.layout.pages[0]?.id ?? "");
   const [selected, setSelected] = createSignal<string | null>(null);
@@ -1135,6 +1267,10 @@ export function LayoutEditor(props: {
             {(current) => (
               <Inspector
                 block={current()}
+                entryTypes={props.entryTypes ?? []}
+                lists={allBlocks(props.layout).flatMap((item) =>
+                  item.type === "list" ? [{ key: item.key, title: item.title }] : [],
+                )}
                 onUngroup={() => ungroup(current().id)}
                 onChange={(next) =>
                   props.onChange(updateBlock(props.layout, current().id, () => next))

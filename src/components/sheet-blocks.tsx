@@ -27,6 +27,14 @@ import {
   type TrackerItem,
   type VariantOverrides,
 } from "../domain/sheet-layout";
+import type { CompendiumEntry, EntryType } from "../domain/compendium";
+import {
+  entryFieldsForDisplay,
+  rowFromEntry,
+  rowsFromEntryList,
+  sourceOf,
+} from "../domain/compendium-rows";
+import { searchEntries } from "../domain/compendium-search";
 import { colors, fonts, radii, skin } from "../theme/tokens.stylex";
 import { useTheme } from "../theme/theme-context";
 import { sx } from "../theme/sx";
@@ -126,6 +134,7 @@ const s = stylex.create({
   },
   picker: { position: "relative" },
   pickerButton: { cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "3px" },
+  pickerEnd: { left: "auto", right: 0, maxWidth: "calc(100vw - 24px)" },
   pickerPanel: {
     position: "absolute",
     zIndex: 30,
@@ -492,6 +501,58 @@ const s = stylex.create({
   },
   boxOn: { backgroundColor: skin.pipOn },
   text: { fontFamily: fonts.body, whiteSpace: "pre-wrap", ...underline, paddingBottom: "3px" },
+  // compendium entries
+  entry: { display: "flex", flexDirection: "column", gap: "3px" },
+  entryHead: { display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: "6px" },
+  entryName: {
+    padding: 0,
+    borderWidth: 0,
+    backgroundColor: "transparent",
+    color: colors.text,
+    fontFamily: fonts.body,
+    fontSize: "13px",
+    fontWeight: 700,
+    textAlign: "left",
+    textDecorationLine: { default: "none", ":hover": "underline" },
+    textDecorationStyle: "dotted",
+    textUnderlineOffset: "3px",
+    cursor: "pointer",
+  },
+  entryLinked: { fontWeight: "inherit" },
+  entrySpacer: { flex: 1 },
+  entryField: { display: "flex", flexDirection: "column", gap: "1px" },
+  entryText: { fontFamily: fonts.body, whiteSpace: "pre-wrap", lineHeight: 1.35 },
+  entryRows: { display: "flex", flexDirection: "column" },
+  entryMissing: { color: colors.textFaint, fontStyle: "italic" },
+  offer: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: "6px",
+    padding: "4px 6px",
+    ...hair,
+    borderColor: colors.accent,
+    borderRadius: skin.controlRadius,
+    backgroundColor: colors.accentMuted,
+    fontSize: "12px",
+  },
+  search: { marginBottom: "2px" },
+  option: {
+    display: "flex",
+    alignItems: "baseline",
+    gap: "6px",
+    padding: "4px 6px",
+    borderWidth: 0,
+    borderRadius: skin.controlRadius,
+    backgroundColor: { default: "transparent", ":hover": colors.surfaceHover },
+    color: colors.text,
+    fontFamily: fonts.body,
+    fontSize: "13px",
+    textAlign: "left",
+    cursor: "pointer",
+  },
+  optionTags: { marginLeft: "auto", fontSize: "11px", color: colors.textFaint },
+  hint: { padding: "4px 6px", fontSize: "12px", color: colors.textFaint, fontStyle: "italic" },
   rolls: { display: "flex", flexWrap: "wrap", gap: "4px" },
   roll: {
     display: "inline-flex",
@@ -543,6 +604,19 @@ type Props = {
   onTrackerMax?: (key: string, max: number | null) => void;
   /** Stats derived from other values (legacy formulas); these are never edited directly. */
   computed?: (key: string) => number | undefined;
+  /** Viewers who can't edit this character: compendium pickers are hidden. */
+  readOnly?: boolean;
+  /** The world's compendium, for entry blocks and lists with a source. */
+  compendium?: CompendiumLookup;
+  /** Show an entry's full card (the sheet only shows a summary). */
+  onOpenEntry?: (entryId: string) => void;
+};
+
+/** What the sheet reads from the world's compendium (src/client/compendium.ts provides it). */
+export type CompendiumLookup = {
+  entry: (id: string) => CompendiumEntry | undefined;
+  typeById: (id: string) => EntryType | undefined;
+  entriesOfType: (typeId: string) => readonly CompendiumEntry[];
 };
 
 const scalar = (value: SheetValues[string]) =>
@@ -797,6 +871,8 @@ type Ctx = Omit<
   "layout" | "name" | "subtitle" | "header" | "showName" | "page" | "onPage"
 > & {
   mode: GridMode;
+  /** The layout's list at `key`, for filling it from an entry. */
+  listBlock: (key: string) => Extract<LeafBlock, { type: "list" }> | undefined;
 };
 
 const Heading = (props: { text: string }) => (
@@ -1024,12 +1100,12 @@ const emptyCell = (column: ListColumn): ListRow[string] =>
  * Edits a list block's rows in place: every cell is an input that commits on
  * blur; rows can be added and removed. Always a table, whatever the variant.
  */
-function ListEditor(props: {
-  block: Extract<LeafBlock, { type: "list" }>;
+export function ListEditor(props: {
+  block: Pick<Extract<LeafBlock, { type: "list" }>, "key" | "title" | "columns">;
   rows: readonly ListRow[];
-  ctx: Ctx;
+  onSave: (rows: readonly ListRow[]) => void;
 }) {
-  const save = (rows: readonly ListRow[]) => props.ctx.onChange(props.block.key, rows);
+  const save = (rows: readonly ListRow[]) => props.onSave(rows);
   const setCell = (index: number, key: string, value: ListRow[string]) =>
     save(props.rows.map((row, i) => (i === index ? { ...row, [key]: value } : row)));
   const blank = (): ListRow =>
@@ -1138,14 +1214,39 @@ function List(props: { block: Extract<LeafBlock, { type: "list" }>; variant: str
       props.block.key,
       rows().map((row, i) => (i === index ? { ...row, [key]: row[key] !== true } : row)),
     );
+  // A row copied from the compendium links back to its entry from its first cell.
+  const linked = (index: number) => {
+    const row = rows()[index];
+    const id = row && sourceOf(row);
+    return id && props.ctx.onOpenEntry && props.ctx.compendium?.entry(id) ? id : undefined;
+  };
   const cell = (index: number, column: ListColumn) => (
-    <Cell
-      column={column}
-      row={rows()[index]}
-      onRoll={rollRow(index)}
-      onToggle={() => toggle(index, column.key)}
-    />
+    <Show
+      when={column === first && linked(index)}
+      fallback={
+        <Cell
+          column={column}
+          row={rows()[index]}
+          onRoll={rollRow(index)}
+          onToggle={() => toggle(index, column.key)}
+        />
+      }
+    >
+      {(id) => (
+        <button
+          {...sx(s.entryName, s.entryLinked)}
+          title="Open in the compendium"
+          onClick={() => props.ctx.onOpenEntry?.(id())}
+        >
+          {String(rows()[index]?.[column.key] ?? "")}
+        </button>
+      )}
+    </Show>
   );
+  const source = () =>
+    props.block.source && props.ctx.compendium && !props.ctx.readOnly
+      ? props.block.source.entryType
+      : undefined;
   const template = () =>
     props.block.columns
       .map((column) =>
@@ -1161,7 +1262,11 @@ function List(props: { block: Extract<LeafBlock, { type: "list" }>; variant: str
       <Show when={props.block.title}>{(title) => <Heading text={title()} />}</Show>
       <Switch>
         <Match when={props.ctx.editing}>
-          <ListEditor block={props.block} rows={rows()} ctx={props.ctx} />
+          <ListEditor
+            block={props.block}
+            rows={rows()}
+            onSave={(next) => props.ctx.onChange(props.block.key, next)}
+          />
         </Match>
         <Match when={props.variant === "cards"}>
           <div {...sx(s.cards)}>
@@ -1213,7 +1318,266 @@ function List(props: { block: Extract<LeafBlock, { type: "list" }>; variant: str
           </div>
         </Match>
       </Switch>
+      <Show when={source()}>
+        {(typeId) => (
+          <EntryPicker
+            trigger="+ From compendium"
+            label={props.ctx.compendium?.typeById(typeId())?.plural ?? "Entries"}
+            entries={props.ctx.compendium?.entriesOfType(typeId()) ?? []}
+            onPick={(entry) =>
+              props.ctx.onChange(props.block.key, [
+                ...rows(),
+                rowFromEntry(entry, props.block.columns),
+              ])
+            }
+          />
+        )}
+      </Show>
     </>
+  );
+}
+
+/** A searchable popover of compendium entries. */
+function EntryPicker(props: {
+  trigger: string;
+  label: string;
+  /** Open leftward from the button (it sits at the right edge of the block). */
+  alignEnd?: boolean;
+  entries: readonly CompendiumEntry[];
+  onPick: (entry: CompendiumEntry) => void;
+}) {
+  const [open, setOpen] = createSignal(false);
+  const [query, setQuery] = createSignal("");
+  const id = createUniqueId();
+  let root: HTMLDivElement | undefined;
+  onSettled(() => {
+    const outside = (event: PointerEvent) => {
+      if (open() && root && !root.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (open() && event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", escape);
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("keydown", escape);
+    });
+  });
+  const results = () => searchEntries(props.entries, query()).slice(0, 60);
+  return (
+    <div {...sx(s.picker)} ref={(element) => (root = element)}>
+      <button
+        {...sx(s.addRow)}
+        aria-haspopup="dialog"
+        aria-expanded={open() ? "true" : "false"}
+        aria-controls={id}
+        onClick={() => {
+          setQuery("");
+          setOpen(!open());
+        }}
+      >
+        {props.trigger}
+      </button>
+      <Show when={open()}>
+        <div
+          id={id}
+          {...sx(s.pickerPanel, props.alignEnd && s.pickerEnd)}
+          role="dialog"
+          aria-label={props.label}
+        >
+          <input
+            {...sx(s.input, s.search)}
+            ref={(element) => queueMicrotask(() => element.focus())}
+            aria-label={`Search ${props.label.toLowerCase()}`}
+            placeholder={`Search ${props.label.toLowerCase()}…`}
+            value={query()}
+            onInput={(event) => setQuery(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && results()[0]) {
+                props.onPick(results()[0]);
+                setOpen(false);
+              }
+            }}
+          />
+          <div role="listbox" aria-label={props.label}>
+            <For each={results()}>
+              {(entry) => (
+                <button
+                  role="option"
+                  aria-selected="false"
+                  {...sx(s.option)}
+                  onClick={() => {
+                    props.onPick(entry);
+                    setOpen(false);
+                  }}
+                >
+                  {entry.name}
+                  <Show when={entry.tags.length}>
+                    <span {...sx(s.optionTags)}>{entry.tags.join(" · ")}</span>
+                  </Show>
+                </button>
+              )}
+            </For>
+            <Show when={!results().length}>
+              <span {...sx(s.hint)}>
+                {props.entries.length
+                  ? "No matches."
+                  : `No ${props.label.toLowerCase()} in the compendium yet.`}
+              </span>
+            </Show>
+          </div>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+/** One entry field on a sheet: text as prose, tags inline, list rows as short lines. */
+function EntryValue(props: {
+  field: EntryType["fields"][number];
+  value: CompendiumEntry["fields"][string];
+}) {
+  const rows = () => (Array.isArray(props.value) ? props.value : []) as readonly ListRow[];
+  return (
+    <Switch fallback={<span {...sx(s.entryText)}>{String(props.value)}</span>}>
+      <Match when={props.field.kind === "tags" && Array.isArray(props.value)}>
+        <span>
+          <For each={props.value as readonly string[]}>
+            {(tag) => <span {...sx(s.tag)}>{tag}</span>}
+          </For>
+        </span>
+      </Match>
+      <Match when={props.field.kind === "list"}>
+        <span {...sx(s.entryRows)}>
+          <For each={rows()}>
+            {(row) => (
+              <span>
+                {(props.field.columns ?? [])
+                  .map((column) => row[column.key])
+                  .filter((value) => value !== undefined && value !== "" && value !== false)
+                  .map((value) => (Array.isArray(value) ? value.join(", ") : String(value)))
+                  .join(" · ")}
+              </span>
+            )}
+          </For>
+        </span>
+      </Match>
+    </Switch>
+  );
+}
+
+/**
+ * A compendium entry picked for this character, shown live: edits to the entry
+ * show up here. Picking can offer to copy the entry's lists (a Knight's starting
+ * Property) into the sheet; it never does so on its own.
+ */
+function EntryBlock(props: {
+  block: Extract<LeafBlock, { type: "entry" }>;
+  variant: string;
+  ctx: Ctx;
+}) {
+  const [offer, setOffer] = createSignal<CompendiumEntry | null>(null);
+  const id = () => {
+    const value = props.ctx.values[props.block.key];
+    return typeof value === "string" && value ? value : undefined;
+  };
+  const lookup = () => props.ctx.compendium;
+  const entry = () => (id() ? lookup()?.entry(id()!) : undefined);
+  const type = () => lookup()?.typeById(props.block.entryType);
+  const label = () => props.block.label ?? type()?.name ?? "Entry";
+  const canPick = () => !props.ctx.readOnly && !!lookup() && !!type();
+  const fills = (picked: CompendiumEntry) =>
+    (props.block.fill ?? []).flatMap((fill) => {
+      const list = props.ctx.listBlock(fill.to);
+      const rows = list ? rowsFromEntryList(picked, fill.from, list.columns) : [];
+      return rows.length ? [{ to: fill.to, title: list?.title ?? fill.to, rows }] : [];
+    });
+  const pick = (picked: CompendiumEntry) => {
+    props.ctx.onChange(props.block.key, picked.id);
+    setOffer(fills(picked).length ? picked : null);
+  };
+  const acceptOffer = () => {
+    const picked = offer();
+    if (!picked) return;
+    for (const fill of fills(picked)) {
+      const existing = (props.ctx.values[fill.to] as readonly ListRow[] | undefined) ?? [];
+      props.ctx.onChange(fill.to, [...existing, ...fill.rows]);
+    }
+    setOffer(null);
+  };
+  const offerText = () => {
+    const picked = offer();
+    if (!picked) return "";
+    const parts = fills(picked).map((fill) => `${fill.title} (${fill.rows.length})`);
+    return `Add ${picked.name}'s ${parts.join(" and ")} to the sheet?`;
+  };
+  const name = () => (
+    <Show
+      when={entry()}
+      fallback={
+        <span {...sx(s.entryMissing)}>{id() ? "Not in the compendium" : canPick() ? "" : "—"}</span>
+      }
+    >
+      {(current) => (
+        <button
+          {...sx(s.entryName)}
+          title="Open in the compendium"
+          onClick={() => props.ctx.onOpenEntry?.(current().id)}
+        >
+          {current().name}
+        </button>
+      )}
+    </Show>
+  );
+  const picker = () => (
+    <Show when={canPick()}>
+      <EntryPicker
+        trigger={entry() ? "Change" : `Choose ${label().toLowerCase()}…`}
+        alignEnd
+        label={type()?.plural ?? type()?.name ?? label()}
+        entries={lookup()?.entriesOfType(props.block.entryType) ?? []}
+        onPick={pick}
+      />
+    </Show>
+  );
+  return (
+    <div {...sx(s.entry)}>
+      <div {...sx(s.entryHead)}>
+        <span {...sx(s.label)}>{label()}</span>
+        {name()}
+        <span {...sx(s.entrySpacer)} />
+        {picker()}
+      </div>
+      <Show when={lookup() && !type() && !props.ctx.readOnly}>
+        <span {...sx(s.entryMissing)}>
+          This world's compendium has no “{props.block.entryType}” entry type yet.
+        </span>
+      </Show>
+      <Show when={props.variant !== "line" && entry() && type()}>
+        {(current) => (
+          <For each={entryFieldsForDisplay(entry()!, current(), props.block.show)}>
+            {(item) => (
+              <div {...sx(s.entryField)}>
+                <span {...sx(s.label)}>{item.field.label}</span>
+                <EntryValue field={item.field} value={item.value} />
+              </div>
+            )}
+          </For>
+        )}
+      </Show>
+      <Show when={offer()}>
+        <div {...sx(s.offer)} role="status">
+          <span {...sx(s.entrySpacer)}>{offerText()}</span>
+          <button {...sx(s.addRow)} onClick={acceptOffer}>
+            Add
+          </button>
+          <button {...sx(s.addRow)} onClick={() => setOffer(null)}>
+            No thanks
+          </button>
+        </div>
+      </Show>
+    </div>
   );
 }
 
@@ -1408,6 +1772,9 @@ function Leaf(props: { block: LeafBlock; ctx: Ctx }) {
           </div>
         )}
       </Match>
+      <Match when={b.type === "entry" && b}>
+        {(block) => <EntryBlock block={block()} variant={variant()} ctx={props.ctx} />}
+      </Match>
     </Switch>
   );
 }
@@ -1478,7 +1845,17 @@ export function SheetBlocks(props: Props) {
     onTracker: props.onTracker,
     onTrackerMax: props.onTrackerMax,
     computed: props.computed,
+    readOnly: props.readOnly,
+    compendium: props.compendium,
+    onOpenEntry: props.onOpenEntry,
     mode: gridMode(width()),
+    listBlock: (key) => {
+      for (const page of props.layout.pages)
+        for (const block of page.blocks)
+          for (const inner of block.type === "group" ? block.blocks : [block])
+            if (inner.type === "list" && inner.key === key) return inner;
+      return undefined;
+    },
   });
   return (
     <div {...sx(s.sheet)} ref={(element) => (root = element)} data-grid-mode={ctx().mode}>
