@@ -61,6 +61,10 @@ const matchesKind = (value: unknown, kind: ListColumnKind | "longtext"): boolean
     case "derived":
       // Computed from the row, never stored.
       return false;
+    case "select":
+      return typeof value === "string";
+    case "progress":
+      return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 40;
   }
 };
 
@@ -81,8 +85,9 @@ export const entryError = (entry: SaveEntryInput, type: EntryType): string | und
   for (const [key, value] of Object.entries(entry.fields)) {
     const field = type.fields.find((candidate) => candidate.key === key);
     if (!field) return `Unknown entry field: ${key}`;
+    // TODO(p3-domain): validate select/set/reference/actions/progression/oracle values.
     if (field.kind !== "list") {
-      if (!matchesKind(value, field.kind))
+      if (!matchesKind(value, field.kind as ListColumnKind | "longtext"))
         return `Invalid value for ${field.label} (${field.kind})`;
       continue;
     }

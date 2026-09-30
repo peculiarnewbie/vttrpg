@@ -13,7 +13,9 @@ const loadoutFields = (key: string) => {
     ? list.columns
         .filter((column) => column.key !== "name")
         .flatMap(({ key, label, kind }) =>
-          kind === "check" || kind === "derived" ? [] : [{ key, label, kind }],
+          kind === "check" || kind === "derived" || kind === "progress"
+            ? []
+            : [{ key, label, kind }],
         )
     : [];
 };

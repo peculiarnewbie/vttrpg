@@ -90,6 +90,18 @@ export const RollResult = Schema.Struct({
   total: Schema.Int,
   /** Present when the notation has several groups; the fields above repeat the first. */
   groups: Schema.optional(Schema.Array(RollGroup)),
+  /** An oracle roll: the table rolled on and the row the total landed on (if any row covers it). */
+  table: Schema.optional(
+    Schema.Struct({
+      entryId: Schema.String,
+      entryName: Schema.String,
+      field: Schema.String,
+      fieldLabel: Schema.String,
+      row: Schema.optional(
+        Schema.Struct({ min: Schema.Int, max: Schema.Int, text: Schema.String }),
+      ),
+    }),
+  ),
 });
 export type RollResult = Infer<typeof RollResult>;
 
@@ -185,6 +197,13 @@ export const Character = Schema.Struct({
   /** The owner's chosen variant per layout block id (e.g. stats as bars). */
   layoutPrefs: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   avatarKey: Schema.optional(Schema.String),
+  /**
+   * `world`: a shared sheet (crew, steading) — every member may edit it and
+   * roll with it unless `locked`; `memberId` is who created it. Absent = `member`.
+   */
+  scope: Schema.optional(Schema.Literals(["member", "world"])),
+  /** Only the DM can edit a locked shared sheet. */
+  locked: Schema.optional(Schema.Boolean),
   createdAt: Schema.String,
   updatedAt: Schema.String,
 });
@@ -359,6 +378,20 @@ export const ClientFrame = Schema.Union([
     type: Schema.Literals(["character.save"]),
     character: Character,
   }),
+  /** Roll an entry's oracle field; the server rolls and looks the row up. Members who can see the entry. */
+  Schema.Struct({
+    type: Schema.Literal("roll.table"),
+    entryId: Schema.String,
+    field: Schema.String,
+    visibility: Visibility,
+    recipientMemberIds: Schema.optional(Schema.Array(Schema.String)),
+  }),
+  /** Lock or unlock a shared sheet. DM only. */
+  Schema.Struct({
+    type: Schema.Literal("character.lock"),
+    characterId: Schema.String,
+    locked: Schema.Boolean,
+  }),
   Schema.Struct({
     type: Schema.Literals(["ticker.set"]),
     characterId: Schema.String,
@@ -497,6 +530,8 @@ export const SaveCharacterInput = Schema.Struct({
   memberId: Schema.optional(Schema.String),
   values: Schema.Record(Schema.String, CharacterValue),
   tickerMax: Schema.optional(Schema.Record(Schema.String, Schema.Int)),
+  /** Set on create; a sheet's scope doesn't change afterwards. */
+  scope: Schema.optional(Schema.Literals(["member", "world"])),
 });
 export type SaveCharacterInput = Infer<typeof SaveCharacterInput>;
 

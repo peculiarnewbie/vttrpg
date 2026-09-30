@@ -38,6 +38,12 @@ const kindLabels: Record<EntryField["kind"], string> = {
   dice: "Dice",
   tags: "Tags",
   list: "List",
+  select: "One of…",
+  set: "Any of…",
+  reference: "Other entries",
+  actions: "Actions",
+  progression: "Progression by level",
+  oracle: "Oracle table",
 };
 
 const emptyType = (): EntryType => ({ id: "", name: "", fields: [] });

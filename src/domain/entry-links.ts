@@ -13,10 +13,17 @@ import { isEntryId } from "./entry-id";
  * shows if the entry is gone). `[[Name]]` still works, resolved by name.
  */
 
+/*
+ * `[[r:2d6+1|Damage]]` (or `[[r:2d6+1]]`) is an inline roll: text shows the
+ * label (or the notation) as a button that rolls it. Notation that doesn't
+ * parse stays plain text.
+ */
+
 export type LinkPart =
   | { kind: "text"; text: string }
   | { kind: "link"; name: string }
-  | { kind: "ref"; id: string; label: string };
+  | { kind: "ref"; id: string; label: string }
+  | { kind: "roll"; notation: string; label?: string };
 
 /** `[[ref:id|Label]]`; `|` and brackets are removed from the label. */
 export const formatRefLink = (id: string, label: string): string =>

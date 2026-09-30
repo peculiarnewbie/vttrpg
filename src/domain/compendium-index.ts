@@ -22,5 +22,12 @@ export const IndexRow = Schema.Struct({
   visibility: EntryVisibility,
   rev: Schema.Int,
   updatedAt: Schema.String,
+  /** Values of the type's `filters`, by field key (see EntryType.filters). */
+  facets: Schema.optional(
+    Schema.Record(
+      Schema.String,
+      Schema.Union([Schema.Number, Schema.String, Schema.Boolean, Schema.Array(Schema.String)]),
+    ),
+  ),
 });
 export type IndexRow = typeof IndexRow.Type;

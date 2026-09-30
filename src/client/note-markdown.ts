@@ -31,6 +31,12 @@ function inline(text: string, entryLink?: EntryLinkResolver): string {
     if (match[1] !== undefined) {
       const part = splitEntryLinks(match[0])[0];
       if (part.kind === "text") continue;
+      // TODO(p3-domain): inline rolls render as buttons carrying data-roll.
+      if (part.kind === "roll") {
+        result += escapeHtml(part.label ?? part.notation);
+        offset = match.index + match[0].length;
+        continue;
+      }
       const name = part.kind === "ref" ? part.label : part.name;
       const id = entryLink?.(part.kind === "ref" ? { name, id: part.id } : { name });
       result += id

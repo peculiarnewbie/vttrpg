@@ -12,10 +12,22 @@ import * as Schema from "effect/Schema";
 
 export const GRID_COLUMNS = 6;
 
-export const TrackerDisplay = Schema.Literals(["auto", "pips", "bar", "number", "clock"]);
+/** `progress`: ten boxes of four ticks (Ironsworn); the value counts ticks, so `max` is 40. */
+export const TrackerDisplay = Schema.Literals([
+  "auto",
+  "pips",
+  "bar",
+  "number",
+  "clock",
+  "progress",
+]);
 export type TrackerDisplay = typeof TrackerDisplay.Type;
 
-/** `derived` columns are computed per row from `expr` (e.g. `@row.qty * @row.weight`) and not editable. */
+/**
+ * `derived` columns are computed per row from `expr` (e.g. `@row.qty * @row.weight`)
+ * and not editable. `select` picks one of `options`. `progress` is a ten-box
+ * track counted in ticks (0–40), like a Starforged vow.
+ */
 export const ListColumnKind = Schema.Literals([
   "text",
   "number",
@@ -23,6 +35,8 @@ export const ListColumnKind = Schema.Literals([
   "tags",
   "check",
   "derived",
+  "select",
+  "progress",
 ]);
 export type ListColumnKind = typeof ListColumnKind.Type;
 
@@ -36,7 +50,7 @@ export const blockVariants = {
   checks: ["boxes", "tags"],
   text: ["plain"],
   rolls: ["buttons"],
-  entry: ["card", "line"],
+  entry: ["card", "line", "progression"],
   group: ["plain", "framed"],
 } as const;
 export type BlockType = keyof typeof blockVariants;
@@ -95,6 +109,8 @@ export const ListColumn = Schema.Struct({
   kind: ListColumnKind,
   /** For `derived` columns: an expression over `@row.column` and sheet values. */
   expr: Schema.optional(Schema.String),
+  /** For `select` columns. */
+  options: Schema.optional(Schema.Array(Schema.String)),
 });
 export type ListColumn = typeof ListColumn.Type;
 
@@ -134,6 +150,13 @@ const leafBlocks = [
     columns: Schema.Array(ListColumn),
     /** Render this many rows even when empty (inventory slots, harm lines). */
     slots: Schema.optional(Schema.Int),
+    /**
+     * A number column holding how many slots a row takes (Cairn's bulky items
+     * take 2). The slots variant draws the row across that many slots and
+     * counts them; a row without a size takes 1. Display only — nothing stops
+     * a player from overfilling.
+     */
+    slotSize: Schema.optional(Schema.String),
     /**
      * Rows can be added from compendium entries of this type: the entry's name
      * fills a `name` column and fields fill columns with the same key. Rows are
@@ -185,6 +208,13 @@ const leafBlocks = [
      * the character's list at `to` (a Knight's starting Property).
      */
     fill: Schema.optional(Schema.Array(Schema.Struct({ from: Schema.String, to: Schema.String }))),
+    /**
+     * For the `progression` variant: the entry's progression field and the
+     * sheet value holding the character's level. The sheet shows that field's
+     * rows up to the level; `fill` from the same field offers to copy the rows
+     * a level-up adds. Nothing is applied or checked on its own.
+     */
+    progression: Schema.optional(Schema.Struct({ field: Schema.String, level: Schema.String })),
   }),
 ] as const;
 
@@ -227,6 +257,11 @@ export const DerivedValue = Schema.Struct({
 export type DerivedValue = typeof DerivedValue.Type;
 
 export const SheetLayout = Schema.Struct({
+  /**
+   * `shared`: sheets that belong to the table rather than one player — a crew,
+   * a steading, a ship. Every member can edit them unless the DM locks one.
+   */
+  subject: Schema.optional(Schema.Literals(["character", "shared"])),
   system: Schema.String,
   /** Name of this arrangement, e.g. "Classic" or "Compact"; a system can ship several. */
   name: Schema.String,
