@@ -6,10 +6,11 @@ character sheets, a dice engine, and notes.
 
 ## Product scope
 
-Read [docs/v1-scope.md](docs/v1-scope.md) before adding features. The app holds
-state, shows content, and rolls dice; it never automates rules — no movement,
-targeting, automatic stat updates, outcome evaluation ("success", "hit"), or
-rule enforcement. Content at scale follows [docs/corpus.md](docs/corpus.md).
+Read [docs/v1-scope.md](docs/v1-scope.md) before adding features. The app helps
+players make rolls (content, notation, derived display values) and never
+handles a roll's side effects — no movement, targeting, automatic stat updates,
+outcome evaluation ("success", "hit"), or rule enforcement; the DM and players
+manage those. Content at scale follows [docs/corpus.md](docs/corpus.md).
 
 ## Stack
 

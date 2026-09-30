@@ -2,7 +2,11 @@
 
 Tabletop is a place for a group to keep and share a game: sheets, content,
 dice, chat, notes, and a mood board. It is deliberately **not** a rules engine.
-The table interprets; the app holds state, shows content, and rolls dice.
+
+The principle: **the app helps you make a roll; it never handles the roll's
+side effects.** Getting to the dice — the content, the notation, the values a
+sheet derives — is ours. What the roll then means and changes — hits, damage,
+spent resources, conditions — is managed by the DM and players.
 
 This document fixes what 1.0 includes and — just as important — what it never
 will. The corpus architecture that backs it is in [corpus.md](./corpus.md).
@@ -46,7 +50,7 @@ the compendium (entry types, entries, libraries, links, overrides); a
 dedicated compendium page for browsing; importers for the first-party
 libraries and for content people write themselves.
 
-**Roll helpers.** Anything that turns content into dice on the table:
+**Roll helpers.** Everything that gets a player to the dice:
 
 - Click to roll dice written in content: sheet rolls, list-row dice, dice in
   entry cards and monster actions, labelled with what was rolled
@@ -54,13 +58,17 @@ libraries and for content people write themselves.
 - Compose notation from a sheet's current values when the author says so
   (d20 + a modifier field); advantage, keep-highest, dice pools.
 - Roll on a table (an oracle) and show the row the dice landed on.
-- Derived display values the sheet author defines (a modifier shown from a
-  score) — shown, never written back.
+- Derived display values the sheet author defines — a modifier from a score,
+  a total from several fields — shown on the sheet and usable in roll
+  notation. They are computed from other values, never stored or written back.
 
 The chat shows dice and totals. It never says what a result means: no
 "success", "strong hit", "hit", or "save failed".
 
 ## Out of scope, permanently
+
+These are all side effects of rolls, or rules around them. The DM and players
+manage them; the app only holds whatever values they set.
 
 - **Movement and measurement**: grids that enforce distance, movement
   allowances, reach, line of sight, areas of effect.
@@ -75,9 +83,9 @@ The chat shows dice and totals. It never says what a result means: no
 - **Combat automation**: initiative that advances itself, turn enforcement,
   effect durations.
 
-When a request lands near this line, the test is: does the app _show_ content
-or roll dice the player asked for (in), or does it _decide or change_ game
-state on the table's behalf (out)?
+When a request lands near this line, the test is: does it help someone make a
+roll or read content (in), or does it act on a roll's result — deciding what
+happened or changing game state on the table's behalf (out)?
 
 ## Decided along the way
 
