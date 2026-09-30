@@ -411,7 +411,11 @@ export const ServerFrame = Schema.Union([
     requestId: Schema.optional(Schema.String),
   }),
   Schema.Struct({ type: Schema.Literals(["presence"]), members: Schema.Array(PresenceMember) }),
-  Schema.Struct({ type: Schema.Literals(["error"]), message: Schema.String }),
+  Schema.Struct({
+    type: Schema.Literals(["error"]),
+    message: Schema.String,
+    code: Schema.optional(Schema.String),
+  }),
 ]);
 export type ServerFrame = Infer<typeof ServerFrame>;
 
