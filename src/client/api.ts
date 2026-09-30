@@ -1,5 +1,13 @@
 import * as Schema from "effect/Schema";
 import {
+  Compendium,
+  CompendiumEntry,
+  CompendiumPack,
+  EntryType,
+  ImportPackResult,
+  type SaveEntryInput,
+} from "../domain/compendium";
+import {
   BoardAssetId,
   BoardSnapshot,
   SceneList,
@@ -58,6 +66,43 @@ export type WorldBootstrap = {
 };
 
 export const api = {
+  getCompendium: async (worldId: string) =>
+    Schema.decodeUnknownSync(Compendium)(await request(`/api/worlds/${worldId}/compendium`)),
+  saveEntryType: async (worldId: string, input: EntryType) =>
+    Schema.decodeUnknownSync(EntryType)(
+      await request(`/api/worlds/${worldId}/compendium/types/${encodeURIComponent(input.id)}`, {
+        method: "PUT",
+        body: JSON.stringify(input),
+      }),
+    ),
+  deleteEntryType: async (worldId: string, typeId: string): Promise<void> => {
+    await request(`/api/worlds/${worldId}/compendium/types/${encodeURIComponent(typeId)}`, {
+      method: "DELETE",
+    });
+  },
+  saveEntry: async (worldId: string, input: SaveEntryInput) =>
+    Schema.decodeUnknownSync(CompendiumEntry)(
+      await request(`/api/worlds/${worldId}/compendium/entries`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    ),
+  deleteEntry: async (worldId: string, entryId: string): Promise<void> => {
+    await request(`/api/worlds/${worldId}/compendium/entries/${encodeURIComponent(entryId)}`, {
+      method: "DELETE",
+    });
+  },
+  exportCompendium: async (worldId: string) =>
+    Schema.decodeUnknownSync(CompendiumPack)(
+      await request(`/api/worlds/${worldId}/compendium/export`),
+    ),
+  importCompendium: async (worldId: string, input: CompendiumPack) =>
+    Schema.decodeUnknownSync(ImportPackResult)(
+      await request(`/api/worlds/${worldId}/compendium/import`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    ),
   listScenes: async (worldId: string) =>
     Schema.decodeUnknownSync(SceneList)(await request(`/api/worlds/${worldId}/scenes`)),
   createScene: async (worldId: string, input: typeof CreateSceneInput.Type) =>
