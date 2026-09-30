@@ -1,10 +1,7 @@
 // @vitest-environment node
 import * as Schema from "effect/Schema";
-import { build, stop } from "esbuild";
-import { Miniflare, convertV4MiniflareOptions } from "miniflare";
+import { startTabletop, type Tabletop, type CallOptions } from "../test/miniflare";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { readFile } from "node:fs/promises";
-import { ServerFrame } from "../domain/schemas";
 import {
   Compendium,
   CompendiumEntry,
@@ -14,50 +11,18 @@ import {
   type SaveEntryInput,
 } from "../domain/compendium";
 
-let mf: Miniflare;
+let tabletop: Tabletop;
+let mf: Tabletop["mf"];
 let cookie = "";
 let worldId = "";
 let playerCookie = "";
-const call = (path: string, options: { method?: string; body?: unknown; cookie?: string } = {}) =>
-  mf.dispatchFetch(`https://tabletop.test/api${path}`, {
-    method: options.method ?? "GET",
-    headers: { cookie: options.cookie ?? cookie, "content-type": "application/json" },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-  });
+const call = (path: string, options: CallOptions = {}) => tabletop.call(path, options);
 beforeAll(async () => {
-  const bundle = await build({
-    entryPoints: ["src/worker.ts"],
-    bundle: true,
-    write: false,
-    format: "esm",
-    platform: "browser",
-    external: ["cloudflare:workers", "node:*"],
-    target: "es2022",
+  tabletop = await startTabletop({
+    cookie: () => cookie,
   });
-  mf = new Miniflare(
-    convertV4MiniflareOptions({
-      name: "tabletop",
-      modules: true,
-      script: bundle.outputFiles[0].text,
-      compatibilityDate: "2026-03-22",
-      compatibilityFlags: ["nodejs_compat"],
-      durableObjects: { WORLDS: { className: "WorldDO", useSQLite: true } },
-      d1Databases: ["DB"],
-      r2Buckets: ["BUCKET"],
-    }),
-  );
-  const db = await mf.getD1Database("DB");
-  const migration = await readFile("src/migrations/0001_initial.sql", "utf8");
-  for (const sql of migration
-    .split(";")
-    .map((part) => part.trim())
-    .filter(Boolean))
-    await db.prepare(sql).run();
-  const signin = await call("/auth/google", {
-    method: "POST",
-    body: { email: "dm@example.test", displayName: "DM" },
-  });
-  cookie = signin.headers.get("set-cookie")!.split(";")[0];
+  mf = tabletop.mf;
+  cookie = await tabletop.signin("dm@example.test", "DM");
 }, 30000);
 beforeEach(async () => {
   const world = await call("/worlds", { method: "POST", body: { name: "Compendium test 界" } });
@@ -67,15 +32,10 @@ beforeEach(async () => {
     body: { displayName: "Player", role: "player", kind: "invite", email: "player@example.test" },
   });
   expect(membership.status).toBe(201);
-  const player = await call("/auth/google", {
-    method: "POST",
-    body: { email: "player@example.test", displayName: "Player" },
-  });
-  playerCookie = player.headers.get("set-cookie")!.split(";")[0];
+  playerCookie = await tabletop.signin("player@example.test", "Player");
 }, 30000);
 afterAll(async () => {
-  await mf?.dispose();
-  await stop();
+  await tabletop?.dispose();
 });
 
 const type: EntryType = {
@@ -291,16 +251,11 @@ describe("compendium through real Worker, D1 and SQLite DO", () => {
   });
 
   it("broadcasts only the invalidation frame to a connected player after every write", async () => {
-    const response = await mf.dispatchFetch(`https://tabletop.test/api/worlds/${worldId}/ws`, {
-      headers: { cookie: playerCookie, Upgrade: "websocket" },
+    const { socket, frames } = await tabletop.connect({
+      worldId,
+      cookie: playerCookie,
+      missingSocketMessage: "Missing socket",
     });
-    const socket = response.webSocket;
-    if (!socket) throw new Error("Missing socket");
-    const frames: ServerFrame[] = [];
-    socket.addEventListener("message", (event) =>
-      frames.push(Schema.decodeUnknownSync(ServerFrame)(JSON.parse(String(event.data)))),
-    );
-    socket.accept();
     const updates = () => frames.filter((frame) => frame.type === "compendium.updated");
     try {
       await expect.poll(() => frames.some((frame) => frame.type === "hello")).toBe(true);

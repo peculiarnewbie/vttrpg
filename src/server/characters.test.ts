@@ -1,56 +1,22 @@
 // @vitest-environment node
 import * as Schema from "effect/Schema";
-import { build, stop } from "esbuild";
-import { Miniflare, convertV4MiniflareOptions } from "miniflare";
+import { startTabletop, type Tabletop, type CallOptions } from "../test/miniflare";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { readFile } from "node:fs/promises";
-import { Character, SheetTemplate, ServerFrame, type ClientFrame } from "../domain/schemas";
+import { Character, SheetTemplate } from "../domain/schemas";
 
-let mf: Miniflare;
+let tabletop: Tabletop;
+let mf: Tabletop["mf"];
 let cookie = "";
 let worldId = "";
 let playerCookie = "";
-const call = (path: string, options: { method?: string; body?: unknown; cookie?: string } = {}) =>
-  mf.dispatchFetch(`https://tabletop.test/api${path}`, {
-    method: options.method ?? "GET",
-    headers: { cookie: options.cookie ?? cookie, "content-type": "application/json" },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-  });
+const call = (path: string, options: CallOptions = {}) => tabletop.call(path, options);
 beforeAll(async () => {
-  const bundle = await build({
-    entryPoints: ["src/worker.ts"],
-    bundle: true,
-    write: false,
-    format: "esm",
-    platform: "browser",
-    external: ["cloudflare:workers", "node:*"],
-    target: "es2022",
+  tabletop = await startTabletop({
+    cookie: () => cookie,
+    unsafeInspectDurableObjects: true,
   });
-  mf = new Miniflare(
-    convertV4MiniflareOptions({
-      name: "tabletop",
-      unsafeInspectDurableObjects: true,
-      modules: true,
-      script: bundle.outputFiles[0].text,
-      compatibilityDate: "2026-03-22",
-      compatibilityFlags: ["nodejs_compat"],
-      durableObjects: { WORLDS: { className: "WorldDO", useSQLite: true } },
-      d1Databases: ["DB"],
-      r2Buckets: ["BUCKET"],
-    }),
-  );
-  const db = await mf.getD1Database("DB");
-  const migration = await readFile("src/migrations/0001_initial.sql", "utf8");
-  for (const sql of migration
-    .split(";")
-    .map((part) => part.trim())
-    .filter(Boolean))
-    await db.prepare(sql).run();
-  const signin = await call("/auth/google", {
-    method: "POST",
-    body: { email: "dm@example.test", displayName: "DM" },
-  });
-  cookie = signin.headers.get("set-cookie")!.split(";")[0];
+  mf = tabletop.mf;
+  cookie = await tabletop.signin("dm@example.test", "DM");
 }, 30000);
 beforeEach(async () => {
   const world = await call("/worlds", { method: "POST", body: { name: "Character test" } });
@@ -60,15 +26,10 @@ beforeEach(async () => {
     body: { displayName: "Player", role: "player", kind: "invite", email: "player@example.test" },
   });
   expect(membership.status).toBe(201);
-  const player = await call("/auth/google", {
-    method: "POST",
-    body: { email: "player@example.test", displayName: "Player" },
-  });
-  playerCookie = player.headers.get("set-cookie")!.split(";")[0];
+  playerCookie = await tabletop.signin("player@example.test", "Player");
 }, 30000);
 afterAll(async () => {
-  await mf?.dispose();
-  await stop();
+  await tabletop?.dispose();
 });
 
 const save = (body: unknown, authCookie = cookie) =>
@@ -90,18 +51,9 @@ const create = async (authCookie = cookie) => {
   return Schema.decodeUnknownSync(Character)(await response.json());
 };
 const connect = async (authCookie: string) => {
-  const response = await mf.dispatchFetch(`https://tabletop.test/api/worlds/${worldId}/ws`, {
-    headers: { cookie: authCookie, Upgrade: "websocket" },
-  });
-  const socket = response.webSocket;
-  if (!socket) throw new Error("Missing websocket");
-  const frames: ServerFrame[] = [];
-  socket.addEventListener("message", (event) =>
-    frames.push(Schema.decodeUnknownSync(ServerFrame)(JSON.parse(String(event.data)))),
-  );
-  socket.accept();
+  const { socket, frames, send } = await tabletop.connect({ worldId, cookie: authCookie });
   await expect.poll(() => frames.some((frame) => frame.type === "hello")).toBe(true);
-  return { socket, frames, send: (frame: ClientFrame) => socket.send(JSON.stringify(frame)) };
+  return { socket, frames, send };
 };
 
 describe("character authorization and tracker persistence", () => {
@@ -451,11 +403,7 @@ describe("rich character values", () => {
       method: "POST",
       body: { displayName: "Other", role: "player", kind: "invite", email: "other@example.test" },
     });
-    const signin = await call("/auth/google", {
-      method: "POST",
-      body: { email: "other@example.test", displayName: "Other" },
-    });
-    const otherCookie = signin.headers.get("set-cookie")!.split(";")[0];
+    const otherCookie = await tabletop.signin("other@example.test", "Other");
     const peer = await connect(playerCookie);
     const other = await connect(otherCookie);
     const gm = await connect(cookie);
