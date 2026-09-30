@@ -1,11 +1,12 @@
 import * as Schema from "effect/Schema";
 import { build, stop, type Plugin } from "esbuild";
-import { Miniflare, convertV4MiniflareOptions } from "miniflare";
+import { Miniflare, convertV4MiniflareOptions, type V4WorkerOptions } from "miniflare";
 import { readFile } from "node:fs/promises";
 import { expect } from "vitest";
 import { ServerFrame, type ClientFrame } from "../domain/schemas";
 
 export type CallOptions = { method?: string; body?: unknown; cookie?: string };
+type ScriptWorker = Extract<V4WorkerOptions, { script: string }>;
 
 type TabletopOptions = {
   name?: string;
@@ -14,7 +15,12 @@ type TabletopOptions = {
   bindings?: boolean;
   unsafeInspectDurableObjects?: boolean;
   plugins?: Plugin[];
-  // TODO: Add a workers option when a suite needs to boot a second worker.
+  workers?: (ScriptWorker & {
+    entryPoint?: string;
+    migrations?: { binding: string; path: string }[];
+  })[];
+  workerOptions?: Partial<ScriptWorker>;
+  corpus?: boolean;
 };
 
 export type Tabletop = Awaited<ReturnType<typeof startTabletop>>;
@@ -31,16 +37,73 @@ export async function startTabletop(options: TabletopOptions = {}) {
     plugins: options.plugins,
   });
   const bindings = options.bindings ?? true;
+  const additional = [...(options.workers ?? [])];
+  if (options.corpus) {
+    additional.push(
+      {
+        name: "corpus",
+        modules: true,
+        entryPoint: "workers/corpus/src/index.ts",
+        script: "",
+        compatibilityDate: "2026-03-22",
+        compatibilityFlags: ["nodejs_compat"],
+        durableObjects: { SOURCES: { className: "SourceDO", useSQLite: true } },
+        d1Databases: { CORPUS_DB: "corpus-registry" },
+        r2Buckets: { CORPUS_BUCKET: "corpus-snapshots" },
+        migrations: [{ binding: "CORPUS_DB", path: "workers/corpus/migrations/0001_initial.sql" }],
+      },
+      {
+        name: "corpus-test-client",
+        modules: true,
+        compatibilityDate: "2026-03-22",
+        script: `export default { async fetch(request, env) {
+        const { method, call } = await request.json();
+        try { return Response.json({ result: await env.CORPUS[method](call) }); }
+        catch (error) { return Response.json({ error: error.message }, { status: 400 }); }
+      } };`,
+        serviceBindings: { CORPUS: { name: "corpus", entrypoint: "CorpusEntrypoint" } },
+      },
+    );
+  }
+  const workers = await Promise.all(
+    additional.map(async ({ entryPoint, migrations: _migrations, ...worker }) => {
+      if (!entryPoint) return worker;
+      const output = await build({
+        entryPoints: [entryPoint],
+        bundle: true,
+        write: false,
+        format: "esm",
+        platform: "browser",
+        external: ["cloudflare:workers", "node:*"],
+        target: "es2022",
+      });
+      return { ...worker, script: output.outputFiles[0].text };
+    }),
+  );
+  const name = options.name ?? "tabletop";
   const mf = new Miniflare(
     convertV4MiniflareOptions({
-      name: options.name ?? "tabletop",
-      modules: true,
-      script: bundle.outputFiles[0].text,
-      compatibilityDate: "2026-03-22",
-      compatibilityFlags: ["nodejs_compat"],
-      durableObjects: { WORLDS: { className: "WorldDO", useSQLite: true } },
-      ...(options.unsafeInspectDurableObjects ? { unsafeInspectDurableObjects: true } : {}),
-      ...(bindings ? { d1Databases: ["DB"], r2Buckets: ["BUCKET"] } : {}),
+      workers: [
+        {
+          name,
+          modules: true,
+          script: bundle.outputFiles[0].text,
+          compatibilityDate: "2026-03-22",
+          compatibilityFlags: ["nodejs_compat"],
+          durableObjects: { WORLDS: { className: "WorldDO", useSQLite: true } },
+          ...(options.unsafeInspectDurableObjects ? { unsafeInspectDurableObjects: true } : {}),
+          ...(bindings ? { d1Databases: ["DB"], r2Buckets: ["BUCKET"] } : {}),
+          ...(options.corpus
+            ? {
+                serviceBindings: { CORPUS: { name: "corpus", entrypoint: "CorpusEntrypoint" } },
+                r2Buckets: { BUCKET: "BUCKET", CORPUS_BUCKET: "corpus-snapshots" },
+                bindings: { FLAGS: "corpus" },
+              }
+            : {}),
+          ...options.workerOptions,
+        },
+        ...workers,
+      ],
     }),
   );
   const dispose = async () => {
@@ -58,6 +121,17 @@ export async function startTabletop(options: TabletopOptions = {}) {
         await db.prepare(sql).run();
     } else {
       await mf.ready;
+    }
+    for (const worker of additional) {
+      for (const migration of worker.migrations ?? []) {
+        const db = await mf.getD1Database(migration.binding, worker.name);
+        const text = await readFile(migration.path, "utf8");
+        for (const sql of text
+          .split(";")
+          .map((part) => part.trim())
+          .filter(Boolean))
+          await db.prepare(sql).run();
+      }
     }
   } catch (error) {
     await dispose();
@@ -114,5 +188,15 @@ export async function startTabletop(options: TabletopOptions = {}) {
     };
     return { response, socket, frames, send, sync };
   };
-  return { mf, call, signin, connect, dispose };
+  const corpusCall = async <T>(method: string, call: unknown): Promise<T> => {
+    const bridge = await mf.getWorker("corpus-test-client");
+    const response = await bridge.fetch("https://corpus.test/", {
+      method: "POST",
+      body: JSON.stringify({ method, call }),
+    });
+    const data = (await response.json()) as { result?: T; error?: string };
+    if (!response.ok) throw new Error(data.error ?? "Corpus RPC failed");
+    return data.result as T;
+  };
+  return { mf, call, signin, connect, dispose, corpusCall };
 }

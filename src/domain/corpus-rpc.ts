@@ -46,7 +46,10 @@ export const SaveEntriesCall = Schema.Struct({
   ...SourceCall.fields,
   entries: Schema.Array(SaveEntryInput),
 });
-export const DeleteEntriesCall = Schema.Struct({ ...SourceCall.fields, ids: Schema.Array(Schema.String) });
+export const DeleteEntriesCall = Schema.Struct({
+  ...SourceCall.fields,
+  ids: Schema.Array(Schema.String),
+});
 export const ManifestCall = Schema.Struct({ ...SourceCall.fields, version: Schema.Int });
 
 /** Add methods compatibly; each RPC call validates its version and its whole input. */
