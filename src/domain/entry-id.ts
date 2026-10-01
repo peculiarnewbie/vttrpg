@@ -1,4 +1,6 @@
-import * as Schema from "effect/Schema";
+import { isSlug, SLUG_MAX } from "./constraints";
+
+export { SLUG_MAX };
 
 /*
  * Entry ids: `<source>/<type>/<slug>`, e.g. `world/knight/the-rust-knight` or
@@ -14,8 +16,6 @@ import * as Schema from "effect/Schema";
 
 export const WORLD_SOURCE = "world";
 
-export const SLUG_MAX = 60;
-
 export type EntryIdParts = {
   readonly source: string;
   readonly typeId: string;
@@ -23,7 +23,7 @@ export type EntryIdParts = {
 };
 
 // As loose as type ids (compendium-rules.ts), so every existing type can own entries.
-const validPart = (part: string) => part.length <= SLUG_MAX && /^[a-z0-9][a-z0-9_-]*$/.test(part);
+const validPart = isSlug;
 
 /** `source/type/slug`. Throws if a part isn't a valid slug (a programming error). */
 export const entryId = (source: string, typeId: string, slug: string): string => {
@@ -72,8 +72,3 @@ export const librarySource = (id: string): string | undefined => {
   const source = parseEntryId(id)?.source;
   return source === WORLD_SOURCE ? undefined : source;
 };
-
-/** Reuse the entry-id part rule at library management boundaries. */
-export const LibrarySourceId = Schema.String.check(
-  Schema.makeFilter((source) => validPart(source) && source !== WORLD_SOURCE),
-);

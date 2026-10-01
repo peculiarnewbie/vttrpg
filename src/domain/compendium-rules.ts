@@ -9,8 +9,10 @@ import type { ListColumn, ListColumnKind } from "./sheet-layout";
 import { isEntryId, parseEntryId, WORLD_SOURCE } from "./entry-id";
 import { notationRefs, parseNotation } from "./dice-notation";
 import { oracleRows } from "./oracle";
+import { fieldKeyPattern } from "./constraints";
 
-const slug = /^[a-z0-9][a-z0-9_-]{0,39}$/;
+/** Type ids, field and column keys. */
+const slug = fieldKeyPattern;
 const jsonBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
 
 const validOptions = (options: readonly string[] | undefined): boolean =>

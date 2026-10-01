@@ -28,7 +28,8 @@ import {
 } from "../domain/compendium";
 import { entryError } from "../domain/compendium-rules";
 import { entryFacets } from "../domain/entry-facets";
-import { librarySource, parseEntryId, LibrarySourceId } from "../domain/entry-id";
+import { librarySource, parseEntryId } from "../domain/entry-id";
+import { SourceSlug } from "../domain/constraints";
 import {
   EntryOverride,
   SaveOverrideInput,
@@ -545,7 +546,7 @@ export class WorldSources {
   ) {
     return yield* this.serial(
       Effect.gen({ self: this }, function* () {
-        if (!Schema.is(LibrarySourceId)(sourceId))
+        if (!Schema.is(SourceSlug)(sourceId))
           return yield* Effect.fail(new CorpusInvalid({ message: "Invalid library id" }));
         const decoded = Schema.decodeUnknownResult(EnableInput, { onExcessProperty: "error" })(
           input,
@@ -594,7 +595,7 @@ export class WorldSources {
     return yield* this.serial(
       Effect.gen({ self: this }, function* () {
         yield* this.requireAvailable();
-        if (!Schema.is(LibrarySourceId)(sourceId))
+        if (!Schema.is(SourceSlug)(sourceId))
           return yield* Effect.fail(new CorpusInvalid({ message: "Invalid library id" }));
         const rev = yield* this.transactionSync(() => {
           this.sql.exec("DELETE FROM world_sources WHERE source_id = ?", sourceId);

@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
-export const slugPattern = /^[a-z0-9][a-z0-9_-]{0,59}$/;
+export const SLUG_MAX = 60;
+export const slugPattern = new RegExp(`^[a-z0-9][a-z0-9_-]{0,${SLUG_MAX - 1}}$`);
 export const fieldKeyPattern = /^[a-z0-9][a-z0-9_-]{0,39}$/;
 export const sha256HexPattern = /^[a-f0-9]{64}$/;
 export const MAX_VERSION = 2_147_483_647;
