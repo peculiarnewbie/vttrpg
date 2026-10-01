@@ -86,3 +86,23 @@ Deployment order and settings follow Cloudflare's
 [service binding guide](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/),
 [build configuration](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/),
 and [build watch paths](https://developers.cloudflare.com/workers/ci-cd/builds/build-watch-paths/).
+
+## Publish the first-party libraries
+
+The corpus Worker's HTTP management routes are off in production
+(`corpus-admin`), so first-party libraries are published from a checkout with
+your Cloudflare login, straight to the corpus bucket and registry:
+
+```bash
+pnpm sources:fetch && pnpm bundles:build
+pnpm corpus:publish <srd52|starforged|cairn2e|blades> --env preview          # dry run: prints every write
+pnpm corpus:publish <srd52|starforged|cairn2e|blades> --env preview --yes
+pnpm corpus:publish <srd52|starforged|cairn2e|blades> --env production       # dry run
+pnpm corpus:publish <srd52|starforged|cairn2e|blades> --env production --yes
+```
+
+Sources and systems are owned by the account id `first-party`, which no one
+can sign in as. Each publish reserves the next version before uploading and
+writes the manifest last; a failed upload leaves that version reserved (it is
+never overwritten — publish again for the next one). Worlds pick new versions
+up on **Check for updates**, or automatically when they follow a library.

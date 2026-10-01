@@ -8,9 +8,15 @@
 > and put validation rules into the schemas. P5 changed course: clients cache
 > the synced world index in IndexedDB instead of downloading R2 snapshots
 > (the server already applies blocks, overrides and visibility).
-> **Next: P6 — first-party systems.** Its contract adds what P4 lacks for
-> publishing at SRD scale: listing/replacing a library's drafts, and text
-> search over library entries. P7 follows.
+> P6 (first-party systems) is built: four system definitions with sheets,
+> importers producing validated bundles (SRD 5.2: 1,597 entries; Starforged:
+> 442; Cairn 2e: 751; Blades SRD: 192), `pnpm corpus:publish` (writes R2 and
+> D1 with wrangler directly — the corpus HTTP routes stay off in production,
+> so P4's draft listing gap no longer blocks), searchable library text, a
+> Game system setup and `/legal`. Publishing the libraries to production is a
+> manual step. Known gaps: SRD 5.2 rules glossary/conditions (needs a source
+> whose licence is marked per document), Blades named playbooks (not in the
+> SRD). **Next: P7.**
 
 ## Context
 

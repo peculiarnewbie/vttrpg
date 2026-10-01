@@ -243,6 +243,50 @@ Libraries require the corpus service and the `corpus` feature flag. The app ship
 no copyrighted rules text or library art. Deployment order, resource names, and
 Workers Builds settings are in [docs/corpus-deployment.md](docs/corpus-deployment.md).
 
+## Game systems
+
+**World settings → Game system** starts a world from a system the app ships:
+its character sheets (as templates) and its library, or — where the library
+isn't published on this deployment — its entry types, for the DM to fill.
+
+| System                  | Sheets                                                                                                    | Library text                                                                                                  | Licence      |
+| ----------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ------------ |
+| Fifth Edition (SRD 5.2) | Character (derived modifiers, saves and skills from proficiency pips, spells, class features up to level) | SRD 5.2: spells, monsters, equipment, magic items, classes, subclasses, features, species, backgrounds, feats | CC BY 4.0    |
+| Ironsworn: Starforged   | Character, Starship (shared)                                                                              | Moves, assets, oracles, sample NPCs, setting truths                                                           | CC BY 4.0    |
+| Cairn (2nd edition)     | Character (10-slot inventory)                                                                             | Backgrounds and their tables, bestiary, spellbooks, relics, marketplace, rules                                | CC BY-SA 4.0 |
+| Blades in the Dark      | Scoundrel, Crew (shared)                                                                                  | Rules, special ability pool, crew abilities, crew upgrades                                                    | CC BY 3.0    |
+
+Sheets roll the way each game does and stop there: Starforged's action die
+rolls against two separate challenge dice, Blades' pools keep the highest die
+(two dice, keep the lower, at zero), oracle tables roll the die their rows span.
+What a result means is the table's call. `/legal` lists every library's licence
+and attribution; the libraries use the publishers' open text only — no art,
+and no endorsement implied.
+
+Gaps in the current text: the SRD 5.2 library has no rules glossary or
+conditions yet (Foundry's rules journals mix SRD and non-SRD text without
+licence markers, so they're excluded); the Blades SRD has no named playbooks or
+crews (it gives their shape only), so those are types the DM writes.
+
+### Building and publishing libraries
+
+Importers in `tools/importers/<name>/` turn pinned upstream text into a
+**bundle** (`src/domain/source-bundle.ts`), checked by one validator:
+
+```bash
+pnpm sources:fetch     # upstream text into ~/.cache/ttrpg-sources, pinned by commit
+pnpm bundles:build     # .cache/bundles/<source>.json, with counts and problems
+pnpm corpus:publish srd52 --local          # dry run against local dev state
+pnpm corpus:publish srd52 --local --yes    # publish locally (dev server stopped)
+pnpm corpus:publish srd52 --env preview    # dry run against preview; add --yes to publish
+```
+
+Publishing builds the snapshot with the corpus Worker's own code, uploads it
+with wrangler (manifest last) and registers the version. Entries keep their
+revision unless their content changed, so worlds pinned to the previous
+version see exactly what changed; an unchanged bundle publishes nothing.
+There is no default target: production needs `--env production`.
+
 ## Realtime protocol
 
 The client opens `/api/worlds/:id/ws`, which the Worker authenticates and
