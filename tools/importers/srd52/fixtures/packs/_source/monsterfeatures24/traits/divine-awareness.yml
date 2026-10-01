@@ -1,0 +1,22 @@
+_id: mmDivineAwarenes
+name: Divine Awareness
+type: feat
+system:
+  type:
+    value: monster
+    subtype: ""
+  activities: {}
+  uses:
+    spent: 0
+    recovery: []
+    max: ""
+  identifier: divine-awareness
+  source:
+    revision: 1
+    rules: "2024"
+  enchant: {}
+  prerequisites:
+    level: null
+  properties:
+    - trait
+  requirements: ""

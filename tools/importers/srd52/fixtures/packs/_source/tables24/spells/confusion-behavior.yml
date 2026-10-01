@@ -1,0 +1,5 @@
+_id: phbsplConfusionB
+name: Confusion Behavior
+replacement: true
+displayRoll: true
+formula: 1d10

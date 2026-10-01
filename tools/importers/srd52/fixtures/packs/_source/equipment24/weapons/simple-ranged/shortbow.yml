@@ -1,0 +1,144 @@
+name: Shortbow
+system:
+  description:
+    value: ""
+    chat: ""
+  price:
+    value: 25
+    denomination: gp
+  source:
+    custom: ""
+    rules: "2024"
+    license: CC-BY-4.0
+    book: ""
+  identified: true
+  unidentified:
+    description: ""
+  container: null
+  quantity: 1
+  weight:
+    value: 2
+    units: lb
+  rarity: ""
+  attunement: ""
+  attuned: false
+  equipped: false
+  cover: null
+  crewed: false
+  range:
+    value: 80
+    long: 320
+    units: ft
+    reach: null
+  uses:
+    max: ""
+    spent: 0
+    recovery: []
+  damage:
+    versatile:
+      number: null
+      denomination: null
+      bonus: ""
+      types: []
+      custom:
+        enabled: true
+        formula: ""
+      scaling:
+        mode: ""
+        number: null
+        formula: ""
+    base:
+      number: 1
+      denomination: 6
+      types:
+        - piercing
+      custom:
+        enabled: false
+      scaling:
+        number: 1
+      bonus: ""
+  armor:
+    value: null
+  hp:
+    value: null
+    max: null
+    dt: null
+    conditions: ""
+  type:
+    value: simpleR
+    baseItem: shortbow
+  magicalBonus: null
+  properties:
+    - amm
+    - two
+  proficient: null
+  activities:
+    XTpNEcni4iwfmaeA:
+      type: attack
+      activation:
+        type: action
+        value: 1
+        condition: ""
+        override: false
+      consumption:
+        targets: []
+        scaling:
+          allowed: false
+          max: ""
+        spellSlot: true
+      description:
+        chatFlavor: ""
+      duration:
+        concentration: false
+        value: ""
+        units: inst
+        special: ""
+        override: false
+      range:
+        value: "80"
+        units: ft
+        special: ""
+        override: false
+      target:
+        template:
+          count: ""
+          contiguous: false
+          type: ""
+          size: ""
+          width: ""
+          height: ""
+          units: ""
+        affects:
+          count: ""
+          type: ""
+          choice: false
+          special: ""
+        prompt: false
+        override: false
+      attack:
+        ability: ""
+        bonus: ""
+        critical:
+          threshold: null
+        flat: false
+        type:
+          value: ranged
+          classification: weapon
+      damage:
+        critical:
+          bonus: ""
+        includeBase: true
+        parts: []
+      uses:
+        spent: 0
+        recovery: []
+        max: ""
+      _id: XTpNEcni4iwfmaeA
+      name: ""
+      appliedEffects: []
+  ammunition:
+    type: arrow
+  mastery: vex
+  identifier: shortbow
+_id: phbwepShortbow00
+type: weapon
