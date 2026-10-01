@@ -57,6 +57,37 @@ function inline(text: string, entryLink?: EntryLinkResolver): string {
   return result + escapeHtml(text.slice(offset));
 }
 
+const TABLE_SEPARATOR = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
+/** Cells split on `|`, except escaped `\|` and pipes inside `[[ref:…|…]]` / `[[r:…|…]]` links. */
+const tableRow = (line: string) => {
+  const text = line.trim().replace(/^\|/, "").replace(/(?<!\\)\|$/, "");
+  const cells: string[] = [];
+  let cell = "";
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "\\" && text[i + 1] === "|") {
+      cell += "|";
+      i++;
+    } else if (text.startsWith("[[", i)) {
+      depth++;
+      cell += "[[";
+      i++;
+    } else if (text.startsWith("]]", i) && depth > 0) {
+      depth--;
+      cell += "]]";
+      i++;
+    } else if (text[i] === "|" && depth === 0) {
+      cells.push(cell.trim());
+      cell = "";
+    } else cell += text[i];
+  }
+  return [...cells, cell.trim()];
+};
+const startsTable = (lines: readonly string[], index: number) =>
+  lines[index]?.trimStart().startsWith("|") && TABLE_SEPARATOR.test(lines[index + 1] ?? "");
+const startsBlock = (lines: readonly string[], index: number) =>
+  /^(?:#{1,6} |[-*] |\d+\. |```|>)/.test(lines[index]) || startsTable(lines, index);
+
 // All user text is escaped; only the tags above and below can become HTML.
 export function renderNoteMarkdown(source: string, entryLink?: EntryLinkResolver): string {
   const lines = source.replace(/\r\n?/g, "\n").split("\n");
@@ -64,7 +95,26 @@ export function renderNoteMarkdown(source: string, entryLink?: EntryLinkResolver
   let index = 0;
   while (index < lines.length) {
     const line = lines[index++];
-    if (line.startsWith("```")) {
+    if (startsTable(lines, index - 1)) {
+      // GFM pipe table; an all-empty header row (common in rulebook tables) is dropped.
+      const header = tableRow(line);
+      index++;
+      const rows: string[][] = [];
+      while (index < lines.length && lines[index].trimStart().startsWith("|"))
+        rows.push(tableRow(lines[index++]));
+      const cells = (row: string[], tag: "th" | "td") =>
+        row.map((cell) => `<${tag}>${inline(cell, entryLink)}</${tag}>`).join("");
+      const head = header.some(Boolean) ? `<thead><tr>${cells(header, "th")}</tr></thead>` : "";
+      output.push(
+        `<table>${head}<tbody>${rows.map((row) => `<tr>${cells(row, "td")}</tr>`).join("")}</tbody></table>`,
+      );
+    } else if (line.startsWith(">")) {
+      const quoted = [line];
+      while (index < lines.length && lines[index].startsWith(">")) quoted.push(lines[index++]);
+      output.push(
+        `<blockquote>${renderNoteMarkdown(quoted.map((item) => item.replace(/^> ?/, "")).join("\n"), entryLink)}</blockquote>`,
+      );
+    } else if (line.startsWith("```")) {
       const code: string[] = [];
       while (index < lines.length && !lines[index].startsWith("```")) code.push(lines[index++]);
       if (index < lines.length) index++;
@@ -83,11 +133,7 @@ export function renderNoteMarkdown(source: string, entryLink?: EntryLinkResolver
       );
     } else if (line.trim()) {
       const paragraph = [line];
-      while (
-        index < lines.length &&
-        lines[index].trim() &&
-        !/^(?:#|[-*] |\d+\. |```)/.test(lines[index])
-      )
+      while (index < lines.length && lines[index].trim() && !startsBlock(lines, index))
         paragraph.push(lines[index++]);
       output.push(`<p>${paragraph.map((line) => inline(line, entryLink)).join("<br>")}</p>`);
     }

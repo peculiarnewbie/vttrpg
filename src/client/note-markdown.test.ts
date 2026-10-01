@@ -106,3 +106,31 @@ it("escapes roll notation, labels, and invalid links without dropping or duplica
     "<p>[[r:]] middle [[r:d0]] end</p>",
   );
 });
+
+it("renders pipe tables, dropping an empty header row, and blockquotes", () => {
+  expect(
+    renderNoteMarkdown(
+      [
+        "Roll for it:",
+        "| d6 | Result |",
+        "|:--:|--------|",
+        "| **1** | A [[r:1d4|small]] thing |",
+        "| 2 | x \\| y |",
+        "",
+        "|   |   |",
+        "| - | - |",
+        "| 1 | One |",
+        "",
+        "> You are an *artisan*.",
+        "> Second line.",
+      ].join("\n"),
+    ),
+  ).toBe(
+    [
+      "<p>Roll for it:</p>",
+      '<table><thead><tr><th>d6</th><th>Result</th></tr></thead><tbody><tr><td><strong>1</strong></td><td>A <button type="button" class="ttrpg-inline-roll" data-roll="1d4" data-label="small">small</button> thing</td></tr><tr><td>2</td><td>x | y</td></tr></tbody></table>',
+      "<table><tbody><tr><td>1</td><td>One</td></tr></tbody></table>",
+      "<blockquote><p>You are an <em>artisan</em>.<br>Second line.</p></blockquote>",
+    ].join("\n"),
+  );
+});
