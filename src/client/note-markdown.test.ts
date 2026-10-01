@@ -11,6 +11,9 @@ it("renders the supported markdown subset", () => {
   );
   expect(html).toContain("<ul><li>first</li><li>second</li></ul>");
   expect(html).toContain("<ol><li>ordered</li></ol>");
+  expect(renderNoteMarkdown("- outer\n  - inner **bold**\n- next")).toBe(
+    "<ul><li>outer<ul><li>inner <strong>bold</strong></li></ul></li><li>next</li></ul>",
+  );
   expect(html).toContain("<pre><code>&lt;a&gt;</code></pre>");
   expect(html).toContain('href="https://example.com"');
 });

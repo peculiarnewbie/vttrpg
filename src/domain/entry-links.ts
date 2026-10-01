@@ -30,9 +30,15 @@ export type LinkPart =
 export const formatRefLink = (id: string, label: string): string =>
   `[[ref:${id}|${label.replace(/[|[\]]/g, "")}]]`;
 
-/** `[[r:notation|Label]]`; label delimiters and newlines are removed. */
-export const formatRollLink = (notation: string, label?: string): string =>
-  `[[r:${notation}${label === undefined ? "" : `|${label.replace(/[|[\]\r\n]/g, "")}`}]]`;
+/**
+ * `[[r:notation|Label]]`; label delimiters and newlines are removed. A label
+ * that is itself notation is dropped: `[[r:1d6|1d6]]` reads back as two dice
+ * groups, and `[[r:1d6]]` already shows its notation.
+ */
+export const formatRollLink = (notation: string, label?: string): string => {
+  const text = label?.replace(/[|[\]\r\n]/g, "");
+  return `[[r:${notation}${text === undefined || (text.trim() && parseNotation(text.trim()).ok) ? "" : `|${text}`}]]`;
+};
 
 /** Name links have 1–120 characters; ref and roll links allow longer payloads. */
 export const ENTRY_LINK = /\[\[((?:ref:[^[\]\n]+\|[^[\]\n]*)|(?:r:[^[\]\n]*)|[^[\]\n]{1,120})\]\]/g;

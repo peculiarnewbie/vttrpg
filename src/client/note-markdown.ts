@@ -94,6 +94,28 @@ const startsTable = (lines: readonly string[], index: number) =>
 const startsBlock = (lines: readonly string[], index: number) =>
   /^(?:#{1,6} |[-*] |\d+\. |```|>)/.test(lines[index]) || startsTable(lines, index);
 
+const LIST_ITEM = /^( *)([-*]|\d+\.) (.*)$/;
+const NESTED_ITEM = /^ {2,}(?:[-*]|\d+\.) /;
+
+/** List lines → `<ul>`/`<ol>`, deeper indentation nesting inside the item above. */
+const list = (lines: readonly string[], entryLink?: EntryLinkResolver) => {
+  let html = "";
+  const open: { indent: number; tag: string }[] = [];
+  for (const line of lines) {
+    const [, spaces, marker, text] = line.match(LIST_ITEM)!;
+    const indent = spaces.length;
+    while (open.length > 1 && indent < open.at(-1)!.indent) html += `</li></${open.pop()!.tag}>`;
+    if (!open.length || indent > open.at(-1)!.indent) {
+      const tag = /\d/.test(marker) ? "ol" : "ul";
+      open.push({ indent, tag });
+      html += `<${tag}><li>`;
+    } else html += "</li><li>";
+    html += inline(text, entryLink);
+  }
+  while (open.length) html += `</li></${open.pop()!.tag}>`;
+  return html;
+};
+
 // All user text is escaped; only the tags above and below can become HTML.
 export function renderNoteMarkdown(source: string, entryLink?: EntryLinkResolver): string {
   const lines = source.replace(/\r\n?/g, "\n").split("\n");
@@ -129,14 +151,12 @@ export function renderNoteMarkdown(source: string, entryLink?: EntryLinkResolver
       const level = line.indexOf(" ");
       output.push(`<h${level}>${inline(line.slice(level + 1), entryLink)}</h${level}>`);
     } else if (/^(?:[-*] |\d+\. )/.test(line)) {
-      const ordered = /^\d/.test(line);
-      const pattern = ordered ? /^\d+\. / : /^[-*] /;
+      // Items of the same kind, and indented items under them (nested lists).
+      const pattern = /^\d/.test(line) ? /^\d+\. / : /^[-*] /;
       const items = [line];
-      while (index < lines.length && pattern.test(lines[index])) items.push(lines[index++]);
-      const tag = ordered ? "ol" : "ul";
-      output.push(
-        `<${tag}>${items.map((item) => `<li>${inline(item.replace(pattern, ""), entryLink)}</li>`).join("")}</${tag}>`,
-      );
+      while (index < lines.length && (pattern.test(lines[index]) || NESTED_ITEM.test(lines[index])))
+        items.push(lines[index++]);
+      output.push(list(items, entryLink));
     } else if (line.trim()) {
       const paragraph = [line];
       while (index < lines.length && lines[index].trim() && !startsBlock(lines, index))

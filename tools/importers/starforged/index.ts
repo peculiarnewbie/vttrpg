@@ -1,3 +1,4 @@
+import { formatRollLink } from "../../../src/domain/entry-links";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -207,7 +208,7 @@ export const importStarforgedFrom = (dir: string, revision: string): SourceBundl
       .replace(
         /\b(roll(?:ing)?\s+)(\d+d\d+(?:[+-]\d+)?)/gi,
         (_all, prefix: string, dice: string) =>
-          parseNotation(dice).ok ? `${prefix}[[r:${dice}|${dice}]]` : `${prefix}${dice}`,
+          parseNotation(dice).ok ? `${prefix}${formatRollLink(dice, dice)}` : `${prefix}${dice}`,
       )
       .trim();
   const rowText = (row: Oracle["rows"][number]) =>
@@ -224,7 +225,7 @@ export const importStarforgedFrom = (dir: string, revision: string): SourceBundl
           : [{ min: row.min, max: row.max, text: rowText(row) }],
       );
   const markdownTable = (table: Pick<Oracle, "rows" | "dice">, license: string, id: string) =>
-    `Roll [[r:${table.dice}|${table.dice}]].\n\n| Roll | Result |\n|---|---|\n${rows(
+    `Roll ${formatRollLink(table.dice, table.dice)}.\n\n| Roll | Result |\n|---|---|\n${rows(
       table,
       license,
       id,
@@ -302,9 +303,7 @@ export const importStarforgedFrom = (dir: string, revision: string): SourceBundl
           ...controlLines(control.controls, control._source?.license ?? inherited),
         ];
       });
-    const track = [text(item.requirement), ...controlLines(item.controls, license).map(text)]
-      .filter(Boolean)
-      .join("; ");
+    const track = controlLines(item.controls, license).map(text).filter(Boolean).join("; ");
     const options = Object.entries(item.options ?? {})
       .filter(([key, option]) => accepted(option, license, `${item._id}/options/${key}`))
       .map(
@@ -327,6 +326,7 @@ export const importStarforgedFrom = (dir: string, revision: string): SourceBundl
         ),
         {
           category: item.category,
+          ...(item.requirement ? { requirement: text(item.requirement) } : {}),
           track,
           abilities: item.abilities
             .filter((ability, index) =>
@@ -357,7 +357,9 @@ export const importStarforgedFrom = (dir: string, revision: string): SourceBundl
           ...path.map((collection) => text(collection.description ?? collection.summary)),
           text(item.summary),
           text(item.description),
-          item.dice === "1d100" ? "" : `Roll [[r:${item.dice}|${item.dice}]] on this table.`,
+          item.dice === "1d100"
+            ? ""
+            : `Roll ${formatRollLink(item.dice, item.dice)} on this table.`,
           item.recommended_rolls
             ? `Suggested rolls: ${item.recommended_rolls.min}–${item.recommended_rolls.max}.`
             : "",

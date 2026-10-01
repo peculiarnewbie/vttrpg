@@ -31,7 +31,7 @@ describe("Cairn Second Edition", () => {
       body: "> You are an artisan of the arcane, a smith of subtle forces. In the crucible of your workshop, the laws that govern this world are warped to suit your needs.",
       fields: {
         names: "Hestia, Basil, Rune, Prism, Ember, Quintess, Aludel, Mordant, Salaman, Jazia",
-        gear: "- [[r:3d6|3d6]] Gold Pieces\n- Rations (3 uses)\n- Lantern\n- Oil Can (6 uses)\n- Needle-knife (d6)\n- Protective Gloves (_petty_)",
+        gear: "- [[r:3d6]] Gold Pieces\n- Rations (3 uses)\n- Lantern\n- Oil Can (6 uses)\n- Needle-knife (d6)\n- Protective Gloves (_petty_)",
         tables: [
           "cairn2e/table/aurifex-what-went-horribly-wrong-afb8450f26",
           "cairn2e/table/aurifex-what-alchemical-marvel-is-the-product-of-93ccaea15b",
@@ -77,7 +77,7 @@ describe("Cairn Second Edition", () => {
       tags: [],
       visibility: "public",
       fields: {},
-      body: "Restore [[r:1d4|1d4]] STR per day to a creature you can touch. _Smells of vinegar and thyme. Turns red after use._",
+      body: "Restore [[r:1d4]] STR per day to a creature you can touch. _Smells of vinegar and thyme. Turns red after use._",
     });
     expect(entry("relic", "Betterwand")).toEqual({
       id: "cairn2e/relic/betterwand",
@@ -86,7 +86,7 @@ describe("Cairn Second Edition", () => {
       tags: [],
       visibility: "public",
       fields: { charges: "2 charges" },
-      body: "## Betterwand, 2 charges\n\n- Vibrates with increased intensity when pointed at the best of a series of objects.\n  - **Recharge**: Willingly accept a poor deal or trade while in possession of the wand.",
+      body: "2 charges\n\n- Vibrates with increased intensity when pointed at the best of a series of objects.\n  - **Recharge**: Willingly accept a poor deal or trade while in possession of the wand.",
     });
   });
 
@@ -118,7 +118,7 @@ describe("Cairn Second Edition", () => {
       max: 51,
       text: "Furious",
     });
-    expect(adjective.body).toContain("[[r:1d100|1d100]]");
+    expect(adjective.body).toContain("[[r:1d100]]");
     expect(entry("table", "Forest Names: Nouns").fields.table).toHaveLength(100);
     expect(entry("table", "Names Formula").fields.table).toHaveLength(6);
     expect(entry("rule", "Scars").fields).toEqual({ chapter: "Core Rules" });
@@ -146,7 +146,7 @@ describe("Cairn Second Edition", () => {
         { min: 12, max: 12, text: "Helpful" },
       ],
     });
-    expect(entry("table", "Reactions").body.startsWith("Roll [[r:2d6|2d6]].")).toBe(true);
+    expect(entry("table", "Reactions").body.startsWith("Roll [[r:2d6]].")).toBe(true);
     expect(entry("rule", "Reactions")).toEqual({
       id: "cairn2e/rule/players-guide-core-rules-reactions",
       typeId: "rule",
@@ -154,7 +154,7 @@ describe("Cairn Second Edition", () => {
       tags: [],
       visibility: "public",
       fields: { chapter: "Core Rules" },
-      body: "When the PCs encounter an NPC whose reaction to the party is not obvious, the Warden may roll [[r:2d6|2d6]] and consult the following table:\n\n|  |  |  |  |  |\n| --- | --- | --- | --- | --- |\n| 2 | 3-5 | 6-8 | 9-11 | 12 |\n| Hostile | Wary | Curious | Kind | Helpful |\n",
+      body: "When the PCs encounter an NPC whose reaction to the party is not obvious, the Warden may roll [[r:2d6]] and consult the following table:\n\n|  |  |  |  |  |\n| --- | --- | --- | --- | --- |\n| 2 | 3-5 | 6-8 | 9-11 | 12 |\n| Hostile | Wary | Curious | Kind | Helpful |\n",
     });
     expect(
       bundle.entries.some((entry) => entry.typeId === "table" && entry.name === "Scars Table"),
@@ -168,7 +168,7 @@ describe("Cairn Second Edition", () => {
       name: "Dungeon Die Drop Table",
       tags: [],
       visibility: "public",
-      body: "Roll [[r:1d6|1d6]].\n\n| **d6** | **Room** |\n| --- | --- |\n| **1** | Monster |\n| **2-3** | Lore |\n| **4** | Special |\n| **5-6** | Trap |\n",
+      body: "Roll [[r:1d6]].\n\n| **d6** | **Room** |\n| --- | --- |\n| **1** | Monster |\n| **2-3** | Lore |\n| **4** | Special |\n| **5-6** | Trap |\n",
       fields: {
         group: "Dungeon Seeds",
         table: [
@@ -230,7 +230,7 @@ describe("Cairn Second Edition", () => {
       expect(value.name, value.id).not.toMatch(/[*_`]/);
       expect(value.body).not.toContain("[[r:[[");
       if (value.typeId === "table") {
-        const notation = value.body.match(/\[\[r:(\d+)d(\d+)\|/)!;
+        const notation = value.body.match(/\[\[r:(\d+)d(\d+)\]\]/)!;
         expect(parseNotation(`${notation[1]}d${notation[2]}`).ok).toBe(true);
         let next = Number(notation[1]);
         for (const row of value.fields.table as readonly { min: number; max: number }[]) {

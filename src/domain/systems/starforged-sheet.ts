@@ -109,6 +109,7 @@ export const starforgedCharacter: SheetLayout = {
           columns: [
             { key: "name", label: "Asset", kind: "text" },
             { key: "category", label: "Category", kind: "text" },
+            { key: "requirement", label: "Requires", kind: "text" },
             { key: "track", label: "Track", kind: "text" },
           ],
         },

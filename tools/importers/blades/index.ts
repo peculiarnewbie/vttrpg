@@ -1,3 +1,4 @@
+import { formatRollLink } from "../../../src/domain/entry-links";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -181,7 +182,7 @@ function markdown(text: string): string {
       (label, count: string, offset: number, body: string) => {
         if (/^\*{0,3}\s+for each\b/i.test(body.slice(offset + label.length))) return label;
         const notation = `${count}d6kh${count === "0" ? "z" : "1"}`;
-        return parseNotation(notation).ok ? `[[r:${notation}|${label}]]` : label;
+        return parseNotation(notation).ok ? `${formatRollLink(notation, label)}` : label;
       },
     );
 }

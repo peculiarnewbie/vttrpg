@@ -1,3 +1,4 @@
+import { formatRollLink } from "../../../src/domain/entry-links";
 import { parseNotation } from "../../../src/domain/dice-notation";
 import { slugify } from "../../../src/domain/entry-id";
 
@@ -126,7 +127,7 @@ export const rollText = (text: string) =>
           )
             return dice;
           const notation = dice.replace(/\s/g, "");
-          return parseNotation(notation).ok ? `[[r:${notation}|${dice}]]` : dice;
+          return parseNotation(notation).ok ? `${formatRollLink(notation, dice)}` : dice;
         },
       );
     })

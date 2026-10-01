@@ -125,6 +125,12 @@ it("splits valid inline rolls, leaving invalid notation completely as text", () 
 it("formats roll links with safe labels and supports long valid notation", () => {
   expect(formatRollLink("2d6+1")).toBe("[[r:2d6+1]]");
   expect(formatRollLink("2d6+1", "[Damage]|\nroll")).toBe("[[r:2d6+1|Damageroll]]");
+  // A notation label would read back as a second dice group.
+  expect(formatRollLink("1d100", "d100")).toBe("[[r:1d100]]");
+  expect(splitEntryLinks(formatRollLink("1d6", "1d6"))).toEqual([
+    { kind: "roll", notation: "1d6" },
+  ]);
+  expect(formatRollLink("8d6", "8d6 fire")).toBe("[[r:8d6|8d6 fire]]");
   expect(splitEntryLinks(formatRollLink("d6", "Damage"))).toEqual([
     { kind: "roll", notation: "d6", label: "Damage" },
   ]);

@@ -91,12 +91,12 @@ describe("Starforged text importer", () => {
       { enabled: false },
       { enabled: false },
     ]);
-    expect(find("Bonded").fields.track).toContain("One time only");
+    expect(find("Bonded").fields.requirement).toContain("One time only");
   });
 
   it("keeps collection paths, two-column results, non-percentile dice and null-range notes", () => {
     expect(find("Atmosphere").fields.group).toBe("Planet Oracles › Desert World › Atmosphere");
-    expect(find("Sample Names").body).toContain("[[r:1d20|1d20]]");
+    expect(find("Sample Names").body).toContain("[[r:1d20]]");
     const table = find("Sample Names").fields.table;
     expect(table).toHaveLength(20);
     expect(Array.isArray(table) ? table[0] : undefined).toEqual({ min: 1, max: 1, text: "Abalos" });

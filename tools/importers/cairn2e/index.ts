@@ -3,7 +3,7 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join, posix } from "node:path";
 import { compendiumLimits } from "../../../src/domain/compendium";
 import { parseNotation } from "../../../src/domain/dice-notation";
-import { formatRefLink } from "../../../src/domain/entry-links";
+import { formatRefLink, formatRollLink } from "../../../src/domain/entry-links";
 import { SLUG_MAX, slugify } from "../../../src/domain/entry-id";
 import type { BundleEntry, SourceBundle } from "../../../src/domain/source-bundle";
 import { firstPartySystem } from "../../../src/domain/systems";
@@ -145,7 +145,7 @@ export function importCairn2eFrom(dir: string, revision: string): SourceBundle {
         "table",
         name,
         identity,
-        `Roll [[r:${dice}|${dice}]].\n\n${table.markdown}`,
+        `Roll ${formatRollLink(dice, dice)}.\n\n${table.markdown}`,
         { group, table: rows },
         table.anchor,
         3,
@@ -244,14 +244,17 @@ export function importCairn2eFrom(dir: string, revision: string): SourceBundle {
       if (page.path === "wardens-guide/reliquary") {
         for (const section of parts.filter((part) => part.anchor)) {
           typed.add(section);
-          const name = plain(section.name).split(/,|\s+\(/)[0];
+          const heading = section.name.split(/,|\s+\(/)[0];
+          const name = plain(heading);
           const charges = section.name.match(/\b\d+ (?:charges?|uses?)\b/)?.[0];
+          // The heading's tail ("(d8), 2 charges", "_petty_") opens the text; the name is the title.
+          const tail = section.name.slice(heading.length).replace(/^[\s,]+/, "");
           add(
             page,
             "relic",
             name,
             name,
-            `## ${section.name}\n\n${section.body}`,
+            tail ? `${tail}\n\n${section.body}` : section.body,
             charges ? { charges } : {},
             section.anchor,
             5,

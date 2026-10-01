@@ -1,3 +1,4 @@
+import { formatRollLink } from "../../../src/domain/entry-links";
 import { createRequire } from "node:module";
 import { parseNotation } from "../../../src/domain/dice-notation";
 import {
@@ -196,7 +197,7 @@ const inlineRoll = (
   if (["damage", "healing"].includes(command) && !/^\s*(?:\d|\(|@)/.test(args)) {
     return (
       damageParts(context, activity)
-        .map((part) => `[[r:${part.notation}|${part.label}]]`)
+        .map((part) => `${formatRollLink(part.notation, part.label)}`)
         .join(" plus ") ||
       label ||
       `${command} described by this feature`
@@ -220,11 +221,11 @@ const inlineRoll = (
     )?.[1];
   const notation = formula.replace(/\s/g, "");
   const rollLabel = label || args.split("#")[1] || `${formula}${type ? ` ${title(type)}` : ""}`;
-  if (parseNotation(notation).ok) return `[[r:${notation}|${rollLabel}]]`;
+  if (parseNotation(notation).ok) return `${formatRollLink(notation, rollLabel)}`;
   // Multipliers stay prose beside a roll the app can represent.
   const multiplied = /^(\d*d\d+)\s*\*\s*(\d+)$/.exec(formula);
   if (multiplied && parseNotation(multiplied[1]).ok)
-    return `[[r:${multiplied[1]}|${multiplied[1]}]] × ${multiplied[2]}`;
+    return `${formatRollLink(multiplied[1], multiplied[1])} × ${multiplied[2]}`;
   context.notes.rolls.add(`${text(context.doc.name)}: /${command} ${args}`);
   return label || readableFormula(formula || args);
 };
@@ -271,7 +272,7 @@ const enrich = (input: string, context: MarkdownContext): string =>
         const n = arithmetic(formula);
         if (n !== undefined) return label ? `${label}: ${n}` : String(n);
         if (parseNotation(formula).ok && /\d*d\d+/.test(formula))
-          return `[[r:${formula}|${label || formula}]]`;
+          return `${formatRollLink(formula, label || formula)}`;
         context.notes.lookups.add(`${text(context.doc.name)}: ${expression}`);
         return label || readableFormula(formula);
       },
@@ -352,12 +353,16 @@ export const markdown = (html: string, context: MarkdownContext): string => {
               .replace(
                 /\b(\d+d\d+)\s+((?:Acid|Bludgeoning|Cold|Fire|Force|Lightning|Necrotic|Piercing|Poison|Psychic|Radiant|Slashing|Thunder)\s+damage)/gi,
                 (_, dice: string, label: string) =>
-                  parseNotation(dice).ok ? `[[r:${dice}|${dice} ${label}]]` : `${dice} ${label}`,
+                  parseNotation(dice).ok
+                    ? `${formatRollLink(dice, `${dice} ${label}`)}`
+                    : `${dice} ${label}`,
               )
               .replace(
                 /(Hit Points equal to |regains? )(\d+d\d+)(?=\s+(?:plus|Hit Points))/gi,
                 (_, prefix: string, dice: string) =>
-                  parseNotation(dice).ok ? `${prefix}[[r:${dice}|${dice}]]` : `${prefix}${dice}`,
+                  parseNotation(dice).ok
+                    ? `${prefix}${formatRollLink(dice, dice)}`
+                    : `${prefix}${dice}`,
               ),
       )
       .join("")

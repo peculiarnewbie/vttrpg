@@ -64,7 +64,9 @@ export const starforgedEntryTypes: EntryType[] = [
     plural: "Assets",
     fields: [
       { key: "category", label: "Category", kind: "select", options: ASSET_CATEGORIES },
-      // Asset requirements or the companion/vehicle's condition meter, e.g. "Integrity 5".
+      // What the asset asks of you, e.g. "If you wield a heavy ranged personal weapon".
+      { key: "requirement", label: "Requirement", kind: "text" },
+      // The companion/vehicle's condition meter and its toggles, e.g. "Integrity 5".
       { key: "track", label: "Track", kind: "text" },
       {
         key: "abilities",
