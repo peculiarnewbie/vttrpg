@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { oracleListRows, oracleRow, oracleRows } from "./oracle";
+import { oracleDice, oracleListRows, oracleRow, oracleRows } from "./oracle";
 
 const first = { min: -2, max: 0, text: "First" };
 const last = { min: 3, max: 5, text: "Last" };
@@ -56,5 +56,22 @@ describe("oracle rows", () => {
       expect(oracleRow([last, first], total)).toBeUndefined();
     expect(oracleRow([last, first], 3.5)).toBe(last);
     expect(oracleRow([], 1)).toBeUndefined();
+  });
+});
+
+describe("oracleDice", () => {
+  const rows = (max: number, min = 1) => [
+    { min, max: Math.floor((min + max) / 2), text: "low" },
+    { min: Math.floor((min + max) / 2) + 1, max, text: "high" },
+  ];
+  it("rolls the die the rows span", () => {
+    expect(oracleDice("1d100", rows(20))).toBe("1d20");
+    expect(oracleDice("1d6", rows(100))).toBe("1d100");
+    expect(oracleDice("1d100", rows(10))).toBe("1d10");
+  });
+  it("keeps the field's dice otherwise", () => {
+    expect(oracleDice("2d6", rows(12, 2))).toBe("2d6");
+    expect(oracleDice("1d100", rows(7))).toBe("1d100");
+    expect(oracleDice("1d100", [])).toBe("1d100");
   });
 });

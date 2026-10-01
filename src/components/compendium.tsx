@@ -10,6 +10,7 @@ import type {
   SaveEntryInput,
 } from "../domain/compendium";
 import { entryError } from "../domain/compendium-rules";
+import { oracleDice, oracleRows } from "../domain/oracle";
 import { librarySource } from "../domain/entry-id";
 import { indexEntries, searchIndex } from "../domain/compendium-search";
 import type { CompendiumStore } from "../client/compendium-store";
@@ -155,6 +156,10 @@ const ids = (value: CharacterValue | undefined) =>
 
 /** An oracle table: its roll, and each row's range. What a row means is up to the table. */
 function OracleTable(props: { field: EntryField; rows: readonly ListRow[]; onRoll?: () => void }) {
+  const dice = () => {
+    const parsed = oracleRows(props.rows);
+    return parsed.ok ? oracleDice(props.field.dice, parsed.value) : props.field.dice;
+  };
   const range = (row: ListRow) =>
     row.min === row.max ? String(row.min) : `${String(row.min)}–${String(row.max)}`;
   return (
@@ -163,7 +168,7 @@ function OracleTable(props: { field: EntryField; rows: readonly ListRow[]; onRol
         <span {...sx(c.oracleTitle)}>{props.field.label}</span>
         <Show when={props.onRoll}>
           <button type="button" {...sx(c.oracleRoll)} onClick={() => props.onRoll?.()}>
-            Roll {props.field.dice}
+            Roll {dice()}
           </button>
         </Show>
       </div>

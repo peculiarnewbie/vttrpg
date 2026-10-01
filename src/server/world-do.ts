@@ -57,7 +57,7 @@ import {
   SceneMetadata,
 } from "../domain/board";
 import { newId, nowIso } from "./crypto";
-import { oracleRows, oracleRow } from "../domain/oracle";
+import { oracleDice, oracleRows, oracleRow } from "../domain/oracle";
 import { trackerDefinitions } from "../domain/trackers-definitions";
 
 /** The shared permission rule for HTTP and WebSocket character operations. */
@@ -1044,14 +1044,15 @@ class WorldOperations {
     if (!found) return yield* new NotFound({ message: "Entry not found" });
     const { entry, type } = found;
     const field = type.fields.find((field) => field.key === frame.field);
-    if (field?.kind !== "oracle" || !field.dice)
-      return yield* new NotFound({ message: "Oracle field not found" });
-    const parsed = parseNotation(field.dice);
+    if (field?.kind !== "oracle") return yield* new NotFound({ message: "Oracle field not found" });
+    const rows = oracleRows(entry.fields[field.key]);
+    if (!rows.ok) return yield* new BadRequest({ message: rows.error });
+    const dice = oracleDice(field.dice, rows.value);
+    if (!dice) return yield* new NotFound({ message: "Oracle field not found" });
+    const parsed = parseNotation(dice);
     if (!parsed.ok) return yield* new BadRequest({ message: parsed.error });
     if (notationRefs(parsed.value).length)
       return yield* new BadRequest({ message: "Oracle dice cannot use sheet references" });
-    const rows = oracleRows(entry.fields[field.key]);
-    if (!rows.ok) return yield* new BadRequest({ message: rows.error });
     const rolled = rollNotation(parsed.value);
     if (!rolled.ok) return yield* new BadRequest({ message: rolled.error });
     return this.createMessage({

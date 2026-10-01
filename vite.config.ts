@@ -17,6 +17,10 @@ export default defineConfig({
   server: {
     allowedHosts: true,
   },
+  // Importer fixtures are verbatim copies of upstream text; keep them as published.
+  fmt: {
+    ignorePatterns: ["tools/importers/*/fixtures/**"],
+  },
   test: {
     include: ["src/**/*.test.ts", "workers/**/*.test.ts", "tools/**/*.test.ts"],
     environment: "node",
