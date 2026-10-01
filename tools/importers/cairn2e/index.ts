@@ -158,6 +158,8 @@ export function importCairn2eFrom(dir: string, revision: string): SourceBundle {
 
   for (const page of readPages(dir)) {
     const parts = sections(page.body);
+    // Sections imported as a monster or relic aren't repeated as rules.
+    const typed = new Set<(typeof parts)[number]>();
     if (page.path.startsWith("backgrounds/")) {
       for (const table of tables(page.body).filter((table) => /Roll 1d6/i.test(table.heading)))
         addTable(page, table, page.title, true);
@@ -195,6 +197,7 @@ export function importCairn2eFrom(dir: string, revision: string): SourceBundle {
         for (const section of parts.filter(
           (part) => part.name !== "Monster Categories" && part.anchor,
         )) {
+          typed.add(section);
           const [stats, ...notes] = section.body.split("\n");
           const fields: { -readonly [K in keyof BundleEntry["fields"]]: BundleEntry["fields"][K] } =
             { armor: 0, attacks: [] };
@@ -240,8 +243,9 @@ export function importCairn2eFrom(dir: string, revision: string): SourceBundle {
       }
       if (page.path === "wardens-guide/reliquary") {
         for (const section of parts.filter((part) => part.anchor)) {
+          typed.add(section);
           const name = plain(section.name).split(/,|\s+\(/)[0];
-          const charges = section.name.match(/\b\d+ charges?\b/)?.[0];
+          const charges = section.name.match(/\b\d+ (?:charges?|uses?)\b/)?.[0];
           add(
             page,
             "relic",
@@ -293,11 +297,11 @@ export function importCairn2eFrom(dir: string, revision: string): SourceBundle {
       if (page.path !== "players-guide/marketplace" && page.path !== "wardens-guide/spellbooks") {
         for (const table of tables(page.body)) addTable(page, table, page.title);
       }
-      for (const section of parts) {
+      for (const section of parts.filter((part) => !typed.has(part))) {
         add(
           page,
           "rule",
-          section.name === "Introduction" ? `${page.title}: Introduction` : section.name,
+          section.name === "Introduction" ? `${page.title}: Introduction` : plain(section.name),
           `${page.path.replace(/\//g, "-")}-${section.name}${parts.filter((part) => part.name === section.name).length > 1 ? `-${section.body.match(/^#{3,6} (.+)$/m)?.[1] ?? digest(section.body.split("\n")[0])}` : ""}`,
           section.body,
           { chapter: page.title },

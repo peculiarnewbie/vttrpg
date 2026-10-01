@@ -4,6 +4,7 @@ import type { RollGroup, RollModifierPart, RollResult, RolledDie } from "../doma
 import { colors, fontSize, fonts, space } from "../theme/tokens.stylex";
 import { styles } from "./styles.stylex";
 import { sx } from "../theme/sx";
+import { renderNoteMarkdown } from "../client/note-markdown";
 
 /** Past this many dice, chips shrink and drop their per-die label so a pool stays a few lines. */
 const COMPACT_AT = 20;
@@ -77,7 +78,11 @@ export function RollView(props: { roll: RollResult; showTotal: boolean }) {
                   <span {...sx(v.tableRange)}>
                     {row().min === row().max ? row().min : `${row().min}–${row().max}`}
                   </span>{" "}
-                  {row().text}
+                  {/* Table text is markdown (bold item names, italic tags). */}
+                  <span
+                    class="ttrpg-note-markdown ttrpg-action-text"
+                    innerHTML={renderNoteMarkdown(row().text)}
+                  />
                 </span>
               )}
             </Show>

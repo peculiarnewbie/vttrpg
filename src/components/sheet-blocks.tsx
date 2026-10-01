@@ -1486,7 +1486,12 @@ function List(props: { block: Extract<LeafBlock, { type: "list" }>; variant: str
     );
   const indexes = () => Array.from({ length: count() }, (_, i) => i);
   const [first, ...rest] = props.block.columns;
-  const rowLabel = (index: number) => String(rows()[index]?.[first.key] ?? "");
+  // What names a row: its `name` column, else the first text column (a "Prep." check may come first).
+  const labelColumn =
+    props.block.columns.find((column) => column.key === "name") ??
+    props.block.columns.find((column) => column.kind === "text") ??
+    first;
+  const rowLabel = (index: number) => String(rows()[index]?.[labelColumn.key] ?? "");
   const rollRow = (index: number) => (dice: string) =>
     props.ctx.onRoll(rowLabel(index), dice, { key: props.block.key, index });
   // The block's own roll, offered on every filled row ("1d20 + @row.bonus").
@@ -1508,7 +1513,7 @@ function List(props: { block: Extract<LeafBlock, { type: "list" }>; variant: str
       props.block.key,
       rows().map((row, i) => (i === index ? { ...row, [key]: row[key] !== true } : row)),
     );
-  // A row copied from the compendium links back to its entry from its first cell.
+  // A row copied from the compendium links back to its entry from its label cell.
   const linked = (index: number) => {
     const row = rows()[index];
     const id = row && sourceOf(row);
@@ -1557,7 +1562,7 @@ function List(props: { block: Extract<LeafBlock, { type: "list" }>; variant: str
         : String(value);
   const cell = (index: number, column: ListColumn) => (
     <Show
-      when={column === first && linked(index)}
+      when={column === labelColumn && linked(index)}
       fallback={
         <Cell
           column={column}

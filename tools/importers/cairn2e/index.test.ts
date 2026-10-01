@@ -223,9 +223,11 @@ describe("Cairn Second Edition", () => {
     expect(report.counts.relic).toBeGreaterThan(30);
     expect(report.counts.item).toBeGreaterThan(70);
     expect(report.counts.table).toBeGreaterThan(100);
-    expect(report.counts.rule).toBeGreaterThan(150);
+    // Bestiary and reliquary sections are monsters and relics, not repeated as rules.
+    expect(report.counts.rule).toBeGreaterThan(120);
     expect(report.largest!.bytes).toBeLessThanOrEqual(16384);
     for (const value of full.entries) {
+      expect(value.name, value.id).not.toMatch(/[*_`]/);
       expect(value.body).not.toContain("[[r:[[");
       if (value.typeId === "table") {
         const notation = value.body.match(/\[\[r:(\d+)d(\d+)\|/)!;

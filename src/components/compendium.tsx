@@ -180,7 +180,11 @@ function OracleTable(props: { field: EntryField; rows: readonly ListRow[]; onRol
               <span {...sx(c.oracleRange)} role="cell">
                 {range(row)}
               </span>
-              <span role="cell">{String(row.text ?? "")}</span>
+              <span
+                role="cell"
+                class="ttrpg-note-markdown ttrpg-action-text"
+                innerHTML={renderNoteMarkdown(String(row.text ?? ""))}
+              />
             </div>
           )}
         </For>

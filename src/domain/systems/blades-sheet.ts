@@ -50,8 +50,10 @@ export const bladesScoundrel: SheetLayout = {
           type: "entry",
           key: "playbook_entry",
           entryType: "playbook",
-          label: "Playbook",
+          label: "Playbook sheet",
           variant: "line",
+          // The SRD has no playbooks: a DM-written one shows once linked (the picker shows while editing).
+          when: { key: "playbook_entry", is: "filled" },
         },
         ...rollable(scoundrel.blocks),
       ],
@@ -119,6 +121,7 @@ export const bladesCrew: SheetLayout = {
           entryType: "crew",
           label: "Crew type",
           variant: "line",
+          when: { key: "crew_entry", is: "filled" },
         },
         {
           id: "about",
