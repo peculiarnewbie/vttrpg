@@ -18,7 +18,7 @@ export default defineConfig({
     allowedHosts: true,
   },
   test: {
-    include: ["src/**/*.test.ts", "workers/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "workers/**/*.test.ts", "tools/**/*.test.ts"],
     environment: "node",
   },
 });
