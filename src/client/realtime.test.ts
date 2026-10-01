@@ -110,15 +110,43 @@ it("rejects after five seconds and still forwards a late reply", async () => {
   controller.close();
 });
 
-it("rejects searches while connecting, closed, or invalid without sending", async () => {
+it("holds frames and searches sent while connecting until the socket opens", async () => {
   const { controller, socket } = setup();
-  await expect(controller.search({ query: "rope" })).rejects.toThrow("not open");
+  controller.send({ type: "cursor", position: null });
+  controller.send({
+    type: "chat",
+    content: "early",
+    kind: "ooc",
+    visibility: "public",
+    recipientMemberIds: [],
+  });
+  const search = controller.search({ query: "rope" });
+  expect(socket.send).not.toHaveBeenCalled();
+  socket.open();
+  expect(sent(socket, 0)).toMatchObject({ type: "chat", content: "early" });
+  const request = sent(socket, 1);
+  expect(request).toMatchObject({ type: "search", query: "rope" });
+  socket.receive({ type: "search.result", requestId: request.requestId, results: [row] });
+  await expect(search).resolves.toEqual([row]);
+});
+
+it("drops a waiting search that times out before the socket opens", async () => {
+  const { controller, socket } = setup();
+  const search = controller.search({ query: "rope" });
+  vi.advanceTimersByTime(5000);
+  await expect(search).rejects.toThrow("timed out");
+  socket.open();
+  expect(socket.send).not.toHaveBeenCalled();
+});
+
+it("rejects invalid searches without sending, and every search once closed", async () => {
+  const { controller, socket } = setup();
   socket.open();
   await expect(controller.search({ query: "x".repeat(121) })).rejects.toThrow("Invalid");
   await expect(controller.search({ query: "rope", limit: 51 })).rejects.toThrow("Invalid");
   expect(socket.send).not.toHaveBeenCalled();
   controller.close();
-  await expect(controller.search({ query: "rope" })).rejects.toThrow("not open");
+  await expect(controller.search({ query: "rope" })).rejects.toThrow("closed");
   expect(vi.getTimerCount()).toBe(0);
 });
 

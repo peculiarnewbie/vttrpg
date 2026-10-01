@@ -36,9 +36,25 @@ export function connectWorld(worldId: string, handlers: RealtimeHandlers): Realt
       timer: ReturnType<typeof setTimeout>;
     }
   >();
+  // Frames sent while (re)connecting go out once the socket opens: a roll clicked
+  // as the page loads isn't lost. Searches wait too, until their timeout.
+  const queued: { payload: string; requestId?: string }[] = [];
+  const QUEUE_LIMIT = 50;
+  const transmit = (payload: string, requestId?: string) => {
+    if (socket?.readyState === WebSocket.OPEN) socket.send(payload);
+    else {
+      queued.push({ payload, requestId });
+      if (queued.length > QUEUE_LIMIT) queued.shift();
+    }
+  };
+  const unqueue = (requestId: string) => {
+    const index = queued.findIndex((item) => item.requestId === requestId);
+    if (index >= 0) queued.splice(index, 1);
+  };
   const rejectPending = () => {
-    for (const request of pending.values()) {
+    for (const [requestId, request] of pending) {
       clearTimeout(request.timer);
+      unqueue(requestId);
       request.reject(new Error("WebSocket closed"));
     }
     pending.clear();
@@ -51,7 +67,10 @@ export function connectWorld(worldId: string, handlers: RealtimeHandlers): Realt
     const currentSocket = new WebSocket(`${protocol}//${location.host}/api/worlds/${worldId}/ws`);
     socket = currentSocket;
 
-    currentSocket.onopen = () => handlers.onStatus("open");
+    currentSocket.onopen = () => {
+      handlers.onStatus("open");
+      for (const item of queued.splice(0)) currentSocket.send(item.payload);
+    };
     currentSocket.onclose = () => {
       rejectPending();
       handlers.onStatus("closed");
@@ -85,21 +104,24 @@ export function connectWorld(worldId: string, handlers: RealtimeHandlers): Realt
   open();
 
   return {
-    send: (frame) => {
-      const decoded = Schema.decodeUnknownResult(ClientFrame)(frame);
+    send: (input) => {
+      const decoded = Schema.decodeUnknownResult(ClientFrame)(input);
       if (decoded._tag === "Failure") return;
-      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(decoded.success));
+      const frame = decoded.success;
+      // Cursor moves and pings are stale by the time a socket opens.
+      if (frame.type === "cursor" || frame.type === "ping") {
+        if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(frame));
+      } else if (!closed) transmit(JSON.stringify(frame));
     },
     close: () => {
       closed = true;
       if (retry) clearTimeout(retry);
       rejectPending();
+      queued.length = 0;
       socket?.close();
     },
     search: (query) => {
-      if (closed || socket?.readyState !== WebSocket.OPEN) {
-        return Promise.reject(new Error("WebSocket is not open"));
-      }
+      if (closed) return Promise.reject(new Error("WebSocket is closed"));
       const requestId = `s${++counter}`;
       const decoded = Schema.decodeUnknownResult(ClientFrame)({
         type: "search",
@@ -107,15 +129,15 @@ export function connectWorld(worldId: string, handlers: RealtimeHandlers): Realt
         requestId,
       });
       if (decoded._tag === "Failure") return Promise.reject(new Error("Invalid search query"));
-      const currentSocket = socket;
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
           pending.delete(requestId);
+          unqueue(requestId);
           reject(new Error("Search timed out"));
         }, 5000);
         pending.set(requestId, { resolve, reject, timer });
         try {
-          currentSocket.send(JSON.stringify(decoded.success));
+          transmit(JSON.stringify(decoded.success), requestId);
         } catch (cause) {
           clearTimeout(timer);
           pending.delete(requestId);
