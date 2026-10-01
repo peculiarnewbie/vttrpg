@@ -196,7 +196,11 @@ export function CompendiumBrowser(props: {
 
   return (
     <section
-      {...sx(c.page, props.insetLeft && c.insetLeft, props.insetRight && c.insetRight)}
+      {...sx(
+        c.page,
+        props.insetLeft ? c.insetLeft : c.clearLeft,
+        props.insetRight ? c.insetRight : c.clearRight,
+      )}
       aria-label="Compendium browser"
     >
       <header {...sx(c.header)}>
@@ -386,9 +390,11 @@ export function CompendiumBrowser(props: {
                             <Show
                               when={targets(entry()).length}
                               fallback={
-                                <Button small disabled>
-                                  Add to character
-                                </Button>
+                                <span title="None of your sheets has a place for this kind of entry">
+                                  <Button small disabled>
+                                    Add to character
+                                  </Button>
+                                </span>
                               }
                             >
                               <Menu label="Add to character" trigger="Add to character">
@@ -601,9 +607,12 @@ const c = stylex.create({
     backgroundColor: colors.canvas,
     zIndex: 1,
   },
-  // The chat and tools panels float over the stage; keep the page clear of them.
+  // The chat and tools panels float over the stage; keep the page clear of them,
+  // and of their collapsed tabs at the top corners.
   insetLeft: { paddingLeft: { default: "372px", "@media (max-width: 1100px)": space.x3 } },
   insetRight: { paddingRight: { default: "372px", "@media (max-width: 1100px)": space.x3 } },
+  clearLeft: { paddingLeft: "116px" },
+  clearRight: { paddingRight: "116px" },
   header: { display: "flex", alignItems: "center", gap: space.x3 },
   title: { fontFamily: fonts.display, fontSize: fontSize.headingLg, margin: 0 },
   search: { flex: 1, maxWidth: "420px" },
@@ -612,7 +621,8 @@ const c = stylex.create({
     flex: 1,
     minHeight: 0,
     display: "grid",
-    gridTemplateColumns: "180px minmax(240px, 1fr) minmax(320px, 1.2fr)",
+    // Fits between both open panels (~670px) without overflowing into them.
+    gridTemplateColumns: "minmax(140px, 180px) minmax(200px, 1fr) minmax(280px, 1.3fr)",
     gap: space.x3,
   },
   facets: {
@@ -651,7 +661,8 @@ const c = stylex.create({
     font: "inherit",
     cursor: "pointer",
   },
-  typeActive: { backgroundColor: colors.surfaceHover, fontWeight: 600 },
+  // Same as the app's other selected nav items, so every theme keeps the contrast.
+  typeActive: { backgroundColor: colors.accentMuted, color: colors.text, fontWeight: 600 },
   option: { display: "flex", alignItems: "center", gap: space.x1, cursor: "pointer" },
   optionLabel: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   range: { display: "flex", alignItems: "center", gap: space.x1 },
@@ -684,9 +695,9 @@ const c = stylex.create({
     cursor: "pointer",
     whiteSpace: "nowrap",
   },
-  nameCell: { flex: 3, minWidth: 0 },
+  nameCell: { flex: 2, minWidth: 0 },
   typeCell: { flex: 1, minWidth: 0 },
-  facetCell: { flex: 1, minWidth: 0 },
+  facetCell: { flex: 1, minWidth: "4.5em" },
   cellText: {
     paddingInline: space.x2,
     overflow: "hidden",
@@ -721,7 +732,8 @@ const c = stylex.create({
   },
   preview: { minHeight: 0, overflowY: "auto" },
   cards: { display: "grid", gap: space.x3 },
-  compare: { gridTemplateColumns: "1fr 1fr" },
+  // Side by side when there is room, stacked when the panels leave the preview narrow.
+  compare: { gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" },
   pane: { display: "flex", flexDirection: "column", gap: space.x2, minWidth: 0 },
   actions: { display: "flex", flexWrap: "wrap", gap: space.x1, alignItems: "center" },
   notice: { margin: 0, color: colors.textMuted, fontSize: fontSize.caption },

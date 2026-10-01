@@ -185,6 +185,14 @@ over the world's WebSocket finds words in entries' text as well.
 - **Compendium tab** in the tools panel: search and filter entries, read them as
   cards (dice in their lists roll), and — for DMs — write, reveal, hide, and
   delete them.
+- **Compendium page** (**Compendium** next to **Table** in the world header, or
+  **Full page** in the tab): every entry in a sortable list, narrowed by type
+  and by the type's filters with counts (spells by level and school), a preview,
+  **Pin to compare** for two entries side by side, and **Add to character**,
+  which copies the entry into a sheet that takes it (the row remembers the
+  entry, like "+ From compendium"). The view lives in the URL, so a link or a
+  reload opens the same entry. The browser keeps the index between visits
+  (per world, account and role), so reloading syncs only what changed.
 - **On sheets**, an `entry` block picks one entry (a character's Knight) and shows
   it live, so compendium edits reach every sheet that links it. Picking can
   _offer_ to copy the entry's lists into the sheet (a Knight's starting
@@ -213,15 +221,17 @@ over the world's WebSocket finds words in entries' text as well.
 ## Libraries
 
 DMs enable published libraries in **World settings → Libraries**. Each world
-pins a library version; **Check for updates** shows added, changed, and removed
-entry IDs before **Apply update**. A per-library **Follow latest** option adopts
+pins a library version; **Check for updates** lists added, changed, and removed
+entries by name — click one to read what changes in its text and fields —
+before **Apply update**. A per-library **Follow latest** option adopts
 new versions when the world reconnects or checks for updates. Copied sheet rows
 still require their owner's choice to update.
 
 Library entries appear alongside world entries in search and on sheets. Their
 text and fields load on demand from immutable R2 snapshots; DM-only entries
 stay hidden from players. DMs can make a **Table override**, reset those changes,
-or **Block in world** and restore an entry from Libraries. Overrides preserve
+or hide an entry in the world (**Block in this world**, or **Hide in this world**
+on the compendium page) and restore it from Libraries. Overrides preserve
 the library's attribution and share-alike licence. Ordinary world entry edits
 never change a published library.
 

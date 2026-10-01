@@ -480,21 +480,24 @@ export default function WorldPage() {
               </header>
 
               <div {...sx(b.stage)}>
-                <MoodBoard
-                  worldId={params.id}
-                  isDm={isDm()}
-                  snapshot={board()}
-                  sceneList={sceneList()}
-                  onSceneList={setSceneList}
-                  focus={boardFocus()}
-                  onFocus={(rect, sceneId) =>
-                    controller?.send({ type: "board.focus", sceneId, rect })
-                  }
-                  onPublished={acceptBoard}
-                  cursors={cursors()}
-                  cursorsEnabled={cursorsEnabled() && status() === "open"}
-                  onCursor={(position) => controller?.send({ type: "cursor", position })}
-                />
+                {/* The board stays out of the way while browsing; its state lives here. */}
+                <Show when={!browsing()}>
+                  <MoodBoard
+                    worldId={params.id}
+                    isDm={isDm()}
+                    snapshot={board()}
+                    sceneList={sceneList()}
+                    onSceneList={setSceneList}
+                    focus={boardFocus()}
+                    onFocus={(rect, sceneId) =>
+                      controller?.send({ type: "board.focus", sceneId, rect })
+                    }
+                    onPublished={acceptBoard}
+                    cursors={cursors()}
+                    cursorsEnabled={cursorsEnabled() && status() === "open"}
+                    onCursor={(position) => controller?.send({ type: "cursor", position })}
+                  />
+                </Show>
                 <Show when={browsing()}>
                   <CompendiumBrowser
                     worldId={params.id}

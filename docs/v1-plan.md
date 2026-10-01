@@ -1,9 +1,16 @@
 # Tabletop 1.0 — implementation plan
 
 > **Status (2026-10-01):** P1 (dice notation, derived values), P2 (world
-> compendium at scale), P3 (entry field kinds, sheet capabilities), and P4
-> (the corpus Worker, versioned libraries and table overrides) are done,
-> merged to `main` and deployed. **Next: P5 — compendium browser page.** P6–P7 follow.
+> compendium at scale), P3 (entry field kinds, sheet capabilities), P4
+> (the corpus Worker, versioned libraries and table overrides) and P5 (the
+> compendium page) are done, merged to `main` and deployed. After P4, a
+> hardening pass moved all server code to Effect (typed errors, typed DO RPC)
+> and put validation rules into the schemas. P5 changed course: clients cache
+> the synced world index in IndexedDB instead of downloading R2 snapshots
+> (the server already applies blocks, overrides and visibility).
+> **Next: P6 — first-party systems.** Its contract adds what P4 lacks for
+> publishing at SRD scale: listing/replacing a library's drafts, and text
+> search over library entries. P7 follows.
 
 ## Context
 
