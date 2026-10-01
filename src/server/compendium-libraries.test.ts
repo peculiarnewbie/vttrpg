@@ -26,7 +26,12 @@ import {
   CorpusUnavailable,
   CorpusError,
 } from "../domain/corpus-errors";
-import type { CorpusApi } from "../domain/corpus-rpc";
+import {
+  BlockedEntries,
+  LibraryEntryDiff,
+  WorldLibraries,
+  type CorpusApi,
+} from "../domain/corpus-rpc";
 import type { CompendiumEntry, EntryType, IndexRow } from "../domain/compendium";
 import { librarySource } from "../domain/entry-id";
 
@@ -407,41 +412,52 @@ const sourceFixture = async (
     fields: {},
   }));
   const files = new Map<string, Uint8Array>();
-  const keys = snapshotKeys("book", 1);
-  const bodyKey = keys.body("item", "public", 0);
-  const publicBytes = await encodeIndex(
-    entries.map(({ body: _body, fields: _fields, ...entry }) => ({
-      ...entry,
-      rev: entry.rev ?? 1,
-    })),
-    "public",
-  );
-  const dmBytes = await encodeIndex([], "dm");
-  const bodyBytes = await encodeBodies(entries);
-  files.set(keys.publicIndex, publicBytes);
-  files.set(keys.dmIndex, dmBytes);
-  files.set(bodyKey, bodyBytes);
-  const manifest: SnapshotManifest = {
-    format: "ttrpg-corpus",
-    formatVersion: 1,
-    sourceId: "book",
-    sourceName: "Book",
-    systemId: "system",
-    version: 1,
-    publishedAt: "2026-10-01",
-    licence,
-    types: [type],
-    entryCount: entries.length,
-    publicIndex: await snapshotFile(keys.publicIndex, publicBytes),
-    dmIndex: await snapshotFile(keys.dmIndex, dmBytes),
-    bodyChunks: [
-      {
-        typeId: "item",
-        visibility: "public",
-        ids: entries.map((entry) => entry.id),
-        file: await snapshotFile(bodyKey, bodyBytes),
-      },
-    ],
+  const snapshot = async (version: number, entries: readonly CompendiumEntry[]) => {
+    const keys = snapshotKeys("book", version);
+    const bodyKey = keys.body("item", "public", 0);
+    const publicBytes = await encodeIndex(
+      entries.map(({ body: _body, fields: _fields, ...entry }) => ({
+        ...entry,
+        rev: entry.rev ?? 1,
+      })),
+      "public",
+    );
+    const dmBytes = await encodeIndex([], "dm");
+    const bodyBytes = await encodeBodies(entries);
+    files.set(keys.publicIndex, publicBytes);
+    files.set(keys.dmIndex, dmBytes);
+    files.set(bodyKey, bodyBytes);
+    return {
+      format: "ttrpg-corpus",
+      formatVersion: 1,
+      sourceId: "book",
+      sourceName: "Book",
+      systemId: "system",
+      version,
+      publishedAt: "2026-10-01",
+      licence,
+      types: [type],
+      entryCount: entries.length,
+      publicIndex: await snapshotFile(keys.publicIndex, publicBytes),
+      dmIndex: await snapshotFile(keys.dmIndex, dmBytes),
+      bodyChunks: [
+        {
+          typeId: "item",
+          visibility: "public",
+          ids: entries.map((entry) => entry.id),
+          file: await snapshotFile(bodyKey, bodyBytes),
+        },
+      ],
+    } satisfies SnapshotManifest;
+  };
+  const manifest = await snapshot(1, entries);
+  const bodyKey = manifest.bodyChunks[0].file.key;
+  let latest = manifest;
+  const versions = new Map([[manifest.version, manifest]]);
+  const offer = async (entries: readonly CompendiumEntry[]) => {
+    latest = await snapshot(latest.version + 1, entries);
+    versions.set(latest.version, latest);
+    return latest;
   };
   const reads = new Map<string, number>();
   // R2 is the external boundary in these unit tests; SQLite and snapshot codecs are real.
@@ -488,8 +504,9 @@ const sourceFixture = async (
           latestVersion: 1,
         },
       }),
-      getLatest: async () => ({ ok: true, value: manifest }),
-      getManifest: async () => ({ ok: true, value: manifest }),
+      listSources: async () => ({ ok: true, value: [] }),
+      getLatest: async () => ({ ok: true, value: latest }),
+      getManifest: async ({ version }) => ({ ok: true, value: versions.get(version) ?? null }),
     }),
   );
   const sources = await Effect.runPromise(
@@ -517,8 +534,120 @@ const sourceFixture = async (
     exportEntries: () => sources.exportEntries().pipe(Effect.mapError(apiError)),
     prepareImport: (entries) => sources.prepareImport(entries).pipe(Effect.mapError(apiError)),
   });
-  return { sources, files, reads, manifest, entries };
+  return { sources, files, reads, manifest, entries, offer };
 };
+
+it("reviews both immutable versions, reuses verified chunks, and keeps the pinned index and overrides", async () => {
+  const fixture = sqlite();
+  try {
+    const { sources, entries, reads, manifest, offer } = await sourceFixture(fixture);
+    await Effect.runPromise(sources.enable("book", {}));
+    const [changed, removed] = entries;
+    const added = { ...changed, id: "book/item/added", name: "Added", body: "New text" };
+    const updated = { ...changed, name: "New name", body: "Changed text", rev: 2 };
+    await Effect.runPromise(
+      sources.handle(
+        "PUT",
+        `compendium/overrides/${encodeURIComponent(changed.id)}`,
+        {
+          baseRev: 1,
+          patch: { name: "Table name", body: "Table text" },
+        },
+        "dm",
+      ),
+    );
+    await Effect.runPromise(
+      sources.handle("PUT", `compendium/blocked/${encodeURIComponent(removed.id)}`, {}, "dm"),
+    );
+    const offered = await offer([updated, ...entries.slice(2), added]);
+    await Effect.runPromise(sources.check());
+    const listed = Schema.decodeUnknownSync(WorldLibraries)(
+      await Effect.runPromise(sources.list()),
+    );
+    expect(listed.enabled[0].update).toEqual({
+      fromVersion: 1,
+      toVersion: 2,
+      added: [added.id],
+      changed: [changed.id],
+      removed: [removed.id],
+      names: { [added.id]: added.name, [changed.id]: updated.name, [removed.id]: removed.name },
+    });
+    const before = fixture.compendium.index(null, "dm");
+    const read = async (id: string) =>
+      Schema.decodeUnknownSync(LibraryEntryDiff)(
+        await Effect.runPromise(
+          sources.handle("GET", `libraries/book/diff/${encodeURIComponent(id)}`, undefined, "dm"),
+        ),
+      );
+    expect(await read(changed.id)).toMatchObject({
+      fromVersion: 1,
+      toVersion: 2,
+      from: { name: changed.name, body: changed.body, sourceRev: 1, sourceVersion: 1 },
+      to: { name: updated.name, body: updated.body, sourceRev: 2, sourceVersion: 2 },
+      overridden: true,
+    });
+    const addition = await read(added.id);
+    expect(addition.from).toBeUndefined();
+    expect(addition.to?.name).toBe("Added");
+    const removal = await read(removed.id);
+    expect(removal.from?.name).toBe(removed.name);
+    expect(removal.to).toBeUndefined();
+    expect(removal.overridden).toBe(false);
+    expect(reads.get(manifest.bodyChunks[0].file.key)).toBe(1);
+    expect(reads.get(offered.bodyChunks[0].file.key)).toBe(1);
+    expect(reads.get(offered.publicIndex.key)).toBe(1);
+    expect(fixture.compendium.index(null, "dm")).toEqual(before);
+    expect(await Effect.runPromise(sources.resolve(changed.id, "dm"))).toMatchObject({
+      name: "Table name",
+      body: "Table text",
+      sourceVersion: 1,
+    });
+    const blocked = () =>
+      Effect.runPromise(sources.handle("GET", "libraries/blocked", undefined, "dm"));
+    expect(Schema.decodeUnknownSync(BlockedEntries)(await blocked())).toEqual({
+      ids: [removed.id],
+      entries: [{ id: removed.id, name: removed.name, typeId: "item" }],
+    });
+    const summary = listed.enabled[0].update;
+    if (!summary) throw new Error("Missing update summary");
+    const { names: _names, ...legacy } = summary;
+    fixture.sql.exec("UPDATE world_sources SET update_json = ?", JSON.stringify(legacy));
+    expect(
+      Schema.decodeUnknownSync(WorldLibraries)(await Effect.runPromise(sources.list())).enabled[0]
+        .update,
+    ).toEqual(legacy);
+    expect((await read(changed.id)).to?.name).toBe(updated.name);
+    await Effect.runPromise(sources.enable("book", { version: 2 }));
+    expect(Schema.decodeUnknownSync(BlockedEntries)(await blocked())).toEqual({
+      ids: [removed.id],
+      entries: [{ id: removed.id }],
+    });
+  } finally {
+    fixture.db.close();
+  }
+});
+
+it("returns typed missing and forbidden diff failures and rejects a corrupt offered body", async () => {
+  const fixture = sqlite();
+  try {
+    const { sources, entries, files, offer } = await sourceFixture(fixture);
+    await Effect.runPromise(sources.enable("book", {}));
+    const path = `libraries/book/diff/${encodeURIComponent(entries[0].id)}`;
+    const response = (path: string, role = "dm") =>
+      worldResponse(sources.handle("GET", path, undefined, role).pipe(Effect.mapError(apiError)));
+    expect((await response(path)).status).toBe(404);
+    const offered = await offer([{ ...entries[0], body: "New text", rev: 2 }]);
+    await Effect.runPromise(sources.check());
+    expect((await response(path, "player")).status).toBe(403);
+    expect((await response("libraries/book/diff/book%2Fitem%2Fmissing")).status).toBe(404);
+    const before = fixture.compendium.index(null, "dm");
+    files.set(offered.bodyChunks[0].file.key, new Uint8Array([0]));
+    expect((await response(path)).status).toBe(503);
+    expect(fixture.compendium.index(null, "dm")).toEqual(before);
+  } finally {
+    fixture.db.close();
+  }
+});
 
 it("validates imported source rights at the pack boundary and rolls back a mixed write", async () => {
   const fixture = sqlite();
