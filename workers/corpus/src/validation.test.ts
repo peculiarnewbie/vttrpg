@@ -1,5 +1,7 @@
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import {
+  CORPUS_API_VERSION,
   CorpusCall,
   SourceCall,
   SaveSystemCall,
@@ -10,6 +12,8 @@ import {
 } from "../../../src/domain/corpus-rpc";
 import type { CompendiumEntry, EntryType, SaveEntryInput } from "../../../src/domain/compendium";
 import { encodeBodies, decodeBodies } from "../../../src/domain/snapshot";
+import type { CorpusError } from "../../../src/domain/corpus-errors";
+import { runReply } from "./effects";
 import {
   decodeCall,
   safeId,
@@ -32,9 +36,11 @@ const entry: SaveEntryInput = {
   fields: { level: 1 },
   visibility: "public",
 };
+const reply = <A>(effect: Effect.Effect<A, CorpusError>) => runReply(effect, Effect.runPromiseExit);
+const invalid = { ok: false, error: { _tag: "CorpusInvalid" } };
 
 describe("corpus RPC validation", () => {
-  it("rejects unsupported versions and missing/blank accounts on every envelope", () => {
+  it("rejects unsupported versions and missing/blank accounts on every envelope", async () => {
     const schemas = [
       CorpusCall,
       SourceCall,
@@ -45,49 +51,52 @@ describe("corpus RPC validation", () => {
       ManifestCall,
     ];
     for (const schema of schemas) {
-      expect(() => decodeCall(schema, { apiVersion: 2, accountId: "owner" })).toThrow();
-      expect(() => decodeCall(schema, { apiVersion: 1, accountId: "" })).toThrow();
-      expect(() => decodeCall(schema, { apiVersion: 1, accountId: "  " })).toThrow();
+      await expect(
+        reply(decodeCall(schema, { apiVersion: CORPUS_API_VERSION + 1, accountId: "owner" })),
+      ).resolves.toMatchObject(invalid);
+      for (const accountId of ["", "  "])
+        await expect(
+          reply(decodeCall(schema, { apiVersion: CORPUS_API_VERSION, accountId })),
+        ).resolves.toMatchObject(invalid);
     }
-    expect(() => decodeCall(CorpusCall, { apiVersion: 1, accountId: "  " })).toThrow(
-      "authenticated",
-    );
-    expect(() =>
-      decodeCall(SaveEntriesCall, {
-        apiVersion: 1,
-        accountId: "owner",
-        sourceId: "book",
-        entries: [{ ...entry, fields: { level: null } }],
-      }),
-    ).toThrow();
+    await expect(
+      reply(
+        decodeCall(SaveEntriesCall, {
+          apiVersion: CORPUS_API_VERSION,
+          accountId: "owner",
+          sourceId: "book",
+          entries: [{ ...entry, fields: { level: null } }],
+        }),
+      ),
+    ).resolves.toMatchObject(invalid);
+    await expect(
+      reply(decodeCall(CorpusCall, { apiVersion: CORPUS_API_VERSION, accountId: "owner" })),
+    ).resolves.toMatchObject({ ok: true });
   });
 
-  it("checks source identity independently of the shared world field validation", () => {
-    expect(() =>
-      validateSourceEntry("book", { ...entry, id: "book/spell/lantern" }, type),
-    ).not.toThrow();
-    expect(() =>
-      validateSourceEntry("book", { ...entry, id: "elsewhere/spell/lantern" }, type),
-    ).toThrow("belong");
-    expect(() => validateSourceEntry("book", { ...entry, id: "book/item/lantern" }, type)).toThrow(
-      "belong",
-    );
-    expect(() => validateSourceEntry("book", { ...entry, fields: { level: "bad" } }, type)).toThrow(
-      "Invalid value",
-    );
-    expect(() => validateSourceEntry("book", { ...entry, body: "x".repeat(12001) }, type)).toThrow(
-      "12000",
-    );
+  it("checks source identity independently of the shared world field validation", async () => {
+    await expect(
+      reply(validateSourceEntry("book", { ...entry, id: "book/spell/lantern" }, type)),
+    ).resolves.toMatchObject({ ok: true });
+    for (const input of [
+      { ...entry, id: "elsewhere/spell/lantern" },
+      { ...entry, id: "book/item/lantern" },
+      { ...entry, fields: { level: "bad" } },
+      { ...entry, body: "x".repeat(12001) },
+    ])
+      await expect(reply(validateSourceEntry("book", input, type))).resolves.toMatchObject(invalid);
   });
 
-  it("bounds identities, batches and type definitions", () => {
+  it("bounds identities, batches and type definitions", async () => {
     for (const id of ["world", "../book", "Book", "", "a".repeat(61)])
-      expect(() => safeId(id)).toThrow();
-    expect(() => safeId("my-library_2")).not.toThrow();
-    expect(() => validateBatch(Array.from({ length: 101 }, () => entry))).toThrow("100");
-    expect(() => validateSystem({ id: "game", name: "Game", entryTypes: [type, type] })).toThrow(
-      "unique",
-    );
+      await expect(reply(safeId(id))).resolves.toMatchObject(invalid);
+    await expect(reply(safeId("my-library_2"))).resolves.toMatchObject({ ok: true });
+    await expect(
+      reply(validateBatch(Array.from({ length: 101 }, () => entry))),
+    ).resolves.toMatchObject(invalid);
+    await expect(
+      reply(validateSystem({ id: "game", name: "Game", entryTypes: [type, type] })),
+    ).resolves.toMatchObject(invalid);
   });
 
   it("rejects combined body/licence bytes and reserves maximum publication metadata", async () => {
@@ -104,8 +113,12 @@ describe("corpus RPC validation", () => {
       updatedAt: "2026-09-30T00:00:00.000Z",
       rev: 1,
     };
-    expect(() => validateSourceEntry("book", saved, type)).not.toThrow();
-    expect(() => validatePublishedEntrySize(saved, licence)).not.toThrow();
+    await expect(reply(validateSourceEntry("book", saved, type))).resolves.toMatchObject({
+      ok: true,
+    });
+    await expect(reply(validatePublishedEntrySize(saved, licence))).resolves.toMatchObject({
+      ok: true,
+    });
     const published = {
       ...saved,
       rev: Number.MAX_SAFE_INTEGER,
@@ -115,7 +128,11 @@ describe("corpus RPC validation", () => {
     };
     expect((await decodeBodies(await encodeBodies([published])))[0]).toEqual(published);
     const oversized = { ...saved, body: "x".repeat(10000) };
-    expect(() => validateSourceEntry("book", oversized, type)).not.toThrow();
-    expect(() => validatePublishedEntrySize(oversized, licence)).toThrow("including licence");
+    await expect(reply(validateSourceEntry("book", oversized, type))).resolves.toMatchObject({
+      ok: true,
+    });
+    await expect(reply(validatePublishedEntrySize(oversized, licence))).resolves.toMatchObject(
+      invalid,
+    );
   });
 });

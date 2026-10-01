@@ -4,6 +4,8 @@ import type { CompendiumEntry, EntryType } from "../../../src/domain/compendium"
 import type { CorpusSource } from "../../../src/domain/corpus-rpc";
 import { decodeBodies, decodeIndex, snapshotKeys } from "../../../src/domain/snapshot";
 import { publishSnapshot } from "./publish";
+import { snapshotBucketLayer } from "./bucket";
+import { runReply } from "./effects";
 
 const source: CorpusSource = {
   id: "synthetic",
@@ -39,14 +41,27 @@ const entry = (n: number, visibility: "public" | "dm"): CompendiumEntry => ({
 const bucketFixture = (failKey?: string) => {
   const objects = new Map<string, Uint8Array>();
   const writes: string[] = [];
-  const bucket = {
-    put: async (key: string, value: string | Uint8Array) => {
+  const bucket: Pick<R2Bucket, "put"> = {
+    put: async (key, value) => {
       writes.push(key);
       if (key === failKey) throw new Error("Injected R2 failure");
-      objects.set(key, typeof value === "string" ? new TextEncoder().encode(value) : value.slice());
-      return {};
+      if (typeof value !== "string" && !(value instanceof Uint8Array))
+        throw new Error("Unexpected fixture body");
+      const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value.slice();
+      objects.set(key, bytes);
+      return {
+        key,
+        version: "fixture",
+        size: bytes.byteLength,
+        etag: "fixture",
+        httpEtag: '"fixture"',
+        checksums: { toJSON: () => ({}) },
+        uploaded: new Date(),
+        storageClass: "Standard",
+        writeHttpMetadata: () => undefined,
+      };
     },
-  } as unknown as R2Bucket;
+  };
   return { bucket, objects, writes };
 };
 
@@ -55,7 +70,12 @@ it("publishes separate bounded chunks and indexes, rights, facets and source rev
   const entries = Array.from({ length: 103 }, (_, n) => entry(n, "public"));
   entries.push(entry(103, "dm"));
   const manifest = await Effect.runPromise(
-    publishSnapshot(fixture.bucket, { source, types: [type], entries, version: 1 }),
+    publishSnapshot({
+      source,
+      types: [type],
+      entries: entries.map((entry) => ({ entry, type })),
+      version: 1,
+    }).pipe(Effect.provide(snapshotBucketLayer(fixture.bucket))),
   );
   const keys = snapshotKeys(source.id, 1);
   expect(fixture.writes.at(-1)).toBe(keys.manifest);
@@ -81,15 +101,16 @@ it("does not write a manifest after a partial object failure", async () => {
   const keys = snapshotKeys(source.id, 4);
   const fixture = bucketFixture(keys.body("spell", "dm", 0));
   await expect(
-    Effect.runPromise(
-      publishSnapshot(fixture.bucket, {
+    runReply(
+      publishSnapshot({
         source,
         types: [type],
-        entries: [entry(0, "public"), entry(1, "dm")],
+        entries: [entry(0, "public"), entry(1, "dm")].map((entry) => ({ entry, type })),
         version: 4,
-      }),
+      }).pipe(Effect.provide(snapshotBucketLayer(fixture.bucket))),
+      Effect.runPromiseExit,
     ),
-  ).rejects.toThrow("Injected R2 failure");
+  ).resolves.toMatchObject({ ok: false, error: { _tag: "CorpusUnavailable" } });
   expect(fixture.objects.has(keys.publicIndex)).toBe(true);
   expect(fixture.objects.has(keys.manifest)).toBe(false);
   expect(fixture.writes).not.toContain(keys.manifest);

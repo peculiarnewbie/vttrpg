@@ -1,36 +1,40 @@
 import { DurableObject } from "cloudflare:workers";
-import { Effect } from "effect";
-import * as Schema from "effect/Schema";
+import { Context, Effect, Layer, ManagedRuntime, References, Schema, Semaphore } from "effect";
 import {
   CompendiumEntry,
-  EntryType,
-  SaveEntryInput,
   compendiumLimits,
+  type EntryType,
+  type SaveEntryInput,
 } from "../../../src/domain/compendium";
-import { CorpusSource } from "../../../src/domain/corpus-rpc";
-import { entryId, parseEntryId, slugify, uniqueSlug } from "../../../src/domain/entry-id";
-import { typeError } from "../../../src/domain/compendium-rules";
-import { Registry } from "./registry";
-import { publishSnapshot } from "./publish";
-import {
-  safeId,
-  validateBatch,
-  validateSource,
-  validateSourceEntry,
-  validatePublishedEntrySize,
-} from "./validation";
+import type { CorpusSource } from "../../../src/domain/corpus-rpc";
+import { CorpusConflict, CorpusInvalid } from "../../../src/domain/corpus-errors";
+import { entryId, slugify, uniqueSlug } from "../../../src/domain/entry-id";
+import { snapshotLimits } from "../../../src/domain/snapshot";
+import { Registry, registryLayer } from "./registry";
+import { snapshotBucketLayer } from "./bucket";
+import { readStored, runReply, storageCall, unavailable } from "./effects";
+import { publishSnapshot, type FrozenSource } from "./publish";
+import { validatePublishedEntrySize } from "./validation";
 import type { CorpusEnv } from "./entrypoint";
 
-const DraftContext = Schema.Struct({ source: CorpusSource, types: Schema.Array(EntryType) });
-type DraftContext = typeof DraftContext.Type;
-const SaveDraftCall = Schema.Struct({
-  ...DraftContext.fields,
-  entries: Schema.Array(SaveEntryInput),
-});
-const DeleteDraftCall = Schema.Struct({ ...DraftContext.fields, ids: Schema.Array(Schema.String) });
+export type DraftContext = { source: CorpusSource; types: readonly EntryType[] };
+export type SaveDraftCall = DraftContext & { entries: readonly SaveEntryInput[] };
+export type DeleteDraftCall = DraftContext & { ids: readonly string[] };
+
+class DraftStorage extends Context.Service<DraftStorage, DurableObjectStorage>()(
+  "ttrpg/corpus/DraftStorage",
+) {}
 
 export class SourceDO extends DurableObject<CorpusEnv> {
-  #publication: Promise<unknown> = Promise.resolve();
+  #publication = Semaphore.makeUnsafe(1);
+  #verifiedDrafts = new Map<string, { data: string; entry: CompendiumEntry }>();
+  #runtime = ManagedRuntime.make(
+    Layer.mergeAll(
+      registryLayer(this.env.CORPUS_DB),
+      snapshotBucketLayer(this.env.CORPUS_BUCKET),
+      Layer.succeed(DraftStorage, this.ctx.storage),
+    ),
+  );
 
   constructor(ctx: DurableObjectState, env: CorpusEnv) {
     super(ctx, env);
@@ -46,161 +50,206 @@ export class SourceDO extends DurableObject<CorpusEnv> {
     `);
   }
 
-  #context(value: DraftContext): DraftContext {
-    const decoded = Schema.decodeUnknownSync(DraftContext)(value);
-    validateSource(decoded.source);
-    const state = this.ctx.storage.sql
-      .exec<{ source_id: string | null; owner_account_id: string | null }>(
-        "SELECT source_id, owner_account_id FROM source_state",
-      )
-      .one();
-    if (state.source_id === null) {
-      this.ctx.storage.sql.exec(
-        "UPDATE source_state SET source_id = ?, owner_account_id = ? WHERE singleton = 1",
-        decoded.source.id,
-        decoded.source.ownerAccountId,
+  // Only the entrypoint calls this DO; its arguments and saved system types are already validated.
+  #context(context: DraftContext) {
+    return Effect.gen(function* () {
+      const storage = yield* DraftStorage;
+      const state = yield* storageCall("Corpus draft storage unavailable", () =>
+        storage.sql
+          .exec<{ source_id: string | null; owner_account_id: string | null }>(
+            "SELECT source_id, owner_account_id FROM source_state",
+          )
+          .one(),
       );
-    } else if (
-      state.source_id !== decoded.source.id ||
-      state.owner_account_id !== decoded.source.ownerAccountId
-    ) {
-      throw new Error("Source identity is immutable");
-    }
-    if (
-      decoded.types.length > compendiumLimits.types ||
-      new Set(decoded.types.map((type) => type.id)).size !== decoded.types.length
-    )
-      throw new Error("Invalid source entry types");
-    for (const type of decoded.types) {
-      const error = typeError(type, decoded.types);
-      if (error) throw new Error(error);
-    }
-    return decoded;
+      // A persisted identity must still match after a Worker upgrade or namespace change.
+      if (
+        state.source_id !== null &&
+        (state.source_id !== context.source.id ||
+          state.owner_account_id !== context.source.ownerAccountId)
+      )
+        return yield* Effect.fail(new CorpusConflict({ message: "Source identity is immutable" }));
+      return storage;
+    });
   }
 
-  async saveEntries(value: typeof SaveDraftCall.Type): Promise<readonly CompendiumEntry[]> {
-    const call = Schema.decodeUnknownSync(SaveDraftCall)(value);
-    const { source, types } = this.#context(call);
-    validateBatch(call.entries);
-    return this.ctx.storage.transactionSync(() => {
-      const count = this.ctx.storage.sql
-        .exec<{ count: number }>("SELECT COUNT(*) AS count FROM drafts")
-        .one().count;
+  #bind(storage: DurableObjectStorage, source: CorpusSource) {
+    storage.sql.exec(
+      "UPDATE source_state SET source_id = ?, owner_account_id = ? WHERE singleton = 1 AND source_id IS NULL",
+      source.id,
+      source.ownerAccountId,
+    );
+  }
+
+  saveEntries(call: SaveDraftCall) {
+    const effect = Effect.gen({ self: this }, function* () {
+      const { source } = call;
+      const storage = yield* this.#context(call);
+      const state = yield* storageCall("Corpus draft storage unavailable", () => ({
+        count: storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM drafts").one()
+          .count,
+        reserved: new Set(
+          storage.sql
+            .exec<{ id: string }>("SELECT id FROM entry_ids")
+            .toArray()
+            .map((row) => row.id),
+        ),
+        revision: storage.sql.exec<{ revision: number }>("SELECT revision FROM source_state").one()
+          .revision,
+      }));
       let created = 0;
-      const reserved = new Set(
-        this.ctx.storage.sql
-          .exec<{ id: string }>("SELECT id FROM entry_ids")
-          .toArray()
-          .map((row) => row.id),
-      );
-      const revision = this.ctx.storage.sql
-        .exec<{ revision: number }>("SELECT revision FROM source_state")
-        .one().revision;
       const entries: CompendiumEntry[] = [];
       const batchIds = new Set<string>();
       for (const input of call.entries) {
-        const type = types.find((candidate) => candidate.id === input.typeId);
-        if (!type) throw new Error(`Unknown entry type: ${input.typeId}`);
-        validateSourceEntry(source.id, input, type);
         const id =
           input.id ??
           entryId(
             source.id,
-            type.id,
+            input.typeId,
             uniqueSlug(slugify(input.name), (slug) =>
-              reserved.has(entryId(source.id, type.id, slug)),
+              state.reserved.has(entryId(source.id, input.typeId, slug)),
             ),
           );
-        if (batchIds.has(id)) throw new Error("Batch entry ids must be unique");
+        if (batchIds.has(id))
+          return yield* Effect.fail(
+            new CorpusInvalid({ message: "Batch entry ids must be unique" }),
+          );
         batchIds.add(id);
-        const previous = this.ctx.storage.sql
-          .exec<{ data: string }>("SELECT data FROM drafts WHERE id = ?", id)
-          .toArray()[0];
-        if (
-          previous &&
-          Schema.decodeUnknownSync(CompendiumEntry)(JSON.parse(previous.data)).typeId !==
-            input.typeId
-        )
-          throw new Error("An entry cannot change type");
+        const previous = yield* storageCall(
+          "Corpus draft storage unavailable",
+          () =>
+            storage.sql.exec<{ id: string }>("SELECT id FROM drafts WHERE id = ?", id).toArray()[0],
+        );
         if (!previous) created++;
         const entry: CompendiumEntry = {
           ...input,
           id,
           name: input.name.trim(),
           updatedAt: new Date().toISOString(),
-          rev: revision + entries.length + 1,
+          rev: state.revision + entries.length + 1,
         };
-        validatePublishedEntrySize(entry, source.licence);
-        reserved.add(id);
+        // The byte budget depends on the generated id, timestamp and publication metadata.
+        yield* validatePublishedEntrySize(entry, source.licence);
+        state.reserved.add(id);
         entries.push(entry);
       }
-      if (count + created > compendiumLimits.entries)
-        throw new Error("A source can have at most 10000 entries");
-      for (const entry of entries) {
-        this.ctx.storage.sql.exec(
-          "INSERT INTO drafts (id, data) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data",
-          entry.id,
-          JSON.stringify(entry),
+      if (state.count + created > compendiumLimits.entries)
+        return yield* Effect.fail(
+          new CorpusInvalid({ message: "A source can have at most 10000 entries" }),
         );
-        this.ctx.storage.sql.exec("INSERT OR IGNORE INTO entry_ids (id) VALUES (?)", entry.id);
-      }
-      this.ctx.storage.sql.exec(
-        "UPDATE source_state SET revision = ? WHERE singleton = 1",
-        revision + entries.length,
+      const rows = entries.map((entry) => ({ entry, data: JSON.stringify(entry) }));
+      // Scheduler yielding is disabled until the synchronous reads and writes finish.
+      yield* storageCall("Corpus draft storage unavailable", () =>
+        storage.transactionSync(() => {
+          this.#bind(storage, source);
+          for (const { entry, data } of rows) {
+            storage.sql.exec(
+              "INSERT INTO drafts (id, data) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data",
+              entry.id,
+              data,
+            );
+            storage.sql.exec("INSERT OR IGNORE INTO entry_ids (id) VALUES (?)", entry.id);
+          }
+          storage.sql.exec(
+            "UPDATE source_state SET revision = ? WHERE singleton = 1",
+            state.revision + entries.length,
+          );
+        }),
       );
+      for (const row of rows) this.#verifiedDrafts.set(row.entry.id, row);
       return entries;
     });
+    return runReply(
+      effect.pipe(Effect.provideService(References.PreventSchedulerYield, true)),
+      this.#runtime.runPromiseExit,
+    );
   }
 
-  async deleteEntries(value: typeof DeleteDraftCall.Type): Promise<void> {
-    const call = Schema.decodeUnknownSync(DeleteDraftCall)(value);
-    const { source } = this.#context(call);
-    validateBatch(call.ids);
-    for (const id of call.ids) {
-      if (parseEntryId(id)?.source !== source.id)
-        throw new Error("Cannot delete an entry from another source");
-    }
-    this.ctx.storage.transactionSync(() => {
-      for (const id of new Set(call.ids))
-        this.ctx.storage.sql.exec("DELETE FROM drafts WHERE id = ?", id);
-      this.ctx.storage.sql.exec(
-        "UPDATE source_state SET revision = revision + ? WHERE singleton = 1",
-        new Set(call.ids).size,
+  deleteEntries(call: DeleteDraftCall) {
+    const effect = Effect.gen({ self: this }, function* () {
+      const storage = yield* this.#context(call);
+      const ids = new Set(call.ids);
+      yield* storageCall("Corpus draft storage unavailable", () =>
+        storage.transactionSync(() => {
+          this.#bind(storage, call.source);
+          for (const id of ids) storage.sql.exec("DELETE FROM drafts WHERE id = ?", id);
+          storage.sql.exec(
+            "UPDATE source_state SET revision = revision + ? WHERE singleton = 1",
+            ids.size,
+          );
+        }),
       );
+      for (const id of ids) this.#verifiedDrafts.delete(id);
     });
+    return runReply(
+      effect.pipe(Effect.provideService(References.PreventSchedulerYield, true)),
+      this.#runtime.runPromiseExit,
+    );
   }
 
-  async publish(value: DraftContext) {
-    // Snapshot metadata and draft rows are frozen before the first async R2 write.
-    const context = this.#context(value);
-    safeId(context.source.id);
-    const work = this.#publication.then(async () => {
-      const frozen = this.ctx.storage.transactionSync(() => {
-        const version = this.ctx.storage.sql
+  #freeze(context: DraftContext) {
+    return Effect.gen({ self: this }, function* () {
+      const storage = yield* this.#context(context);
+      const state = yield* storageCall("Corpus draft storage unavailable", () => ({
+        version: storage.sql
           .exec<{ next_version: number }>("SELECT next_version FROM source_state")
-          .one().next_version;
-        if (!Number.isSafeInteger(version) || version < 1 || version > 2147483647)
-          throw new Error("Invalid next version");
-        const entries = this.ctx.storage.sql
-          .exec<{ data: string }>("SELECT data FROM drafts ORDER BY id")
-          .toArray()
-          .map((row) => Schema.decodeUnknownSync(CompendiumEntry)(JSON.parse(row.data)));
-        for (const entry of entries) {
-          const type = context.types.find((candidate) => candidate.id === entry.typeId);
-          if (!type) throw new Error(`Draft entry type was removed: ${entry.typeId}`);
-          validateSourceEntry(context.source.id, entry, type);
-        }
-        // Durable allocation precedes all object writes, including failed attempts.
-        this.ctx.storage.sql.exec(
-          "UPDATE source_state SET next_version = next_version + 1 WHERE singleton = 1",
+          .one().next_version,
+        rows: storage.sql
+          .exec<{ id: string; data: string }>("SELECT id, data FROM drafts ORDER BY id")
+          .toArray(),
+      }));
+      if (!Number.isSafeInteger(state.version) || state.version < 1)
+        return yield* unavailable(
+          "Invalid stored next version",
+          "Corpus draft storage unavailable",
         );
-        return { ...context, entries, version };
-      });
-      const manifest = await Effect.runPromise(publishSnapshot(this.env.CORPUS_BUCKET, frozen));
-      await Effect.runPromise(new Registry(this.env.CORPUS_DB).commitVersion(manifest));
+      if (state.version > snapshotLimits.version)
+        return yield* Effect.fail(new CorpusConflict({ message: "Source version limit reached" }));
+      const entries: Array<FrozenSource["entries"][number]> = [];
+      const types = new Map(context.types.map((type) => [type.id, type]));
+      for (const row of state.rows) {
+        const cached = this.#verifiedDrafts.get(row.id);
+        // Verify bytes from an older instance once; our own writes enter the cache directly.
+        let entry: CompendiumEntry;
+        if (cached?.data === row.data) {
+          entry = cached.entry;
+        } else {
+          entry = yield* readStored(Schema.fromJsonString(CompendiumEntry), row.data);
+          if (entry.id !== row.id)
+            return yield* unavailable(
+              "Stored draft identity mismatch",
+              "Stored corpus draft did not verify",
+            );
+          this.#verifiedDrafts.set(row.id, { data: row.data, entry });
+        }
+        const type = types.get(entry.typeId);
+        // The system can remove a type after its drafts were saved.
+        if (!type)
+          return yield* Effect.fail(
+            new CorpusConflict({ message: `Draft entry type was removed: ${entry.typeId}` }),
+          );
+        entries.push({ entry, type });
+      }
+      // Durable allocation precedes every R2 write, including failed publication attempts.
+      yield* storageCall("Corpus draft storage unavailable", () =>
+        storage.transactionSync(() => {
+          this.#bind(storage, context.source);
+          storage.sql.exec(
+            "UPDATE source_state SET next_version = next_version + 1 WHERE singleton = 1",
+          );
+        }),
+      );
+      return { ...context, entries, version: state.version };
+    }).pipe(Effect.provideService(References.PreventSchedulerYield, true));
+  }
+
+  publish(context: DraftContext) {
+    const effect = Effect.gen({ self: this }, function* () {
+      const frozen = yield* this.#freeze(context);
+      const manifest = yield* publishSnapshot(frozen);
+      const registry = yield* Registry;
+      yield* registry.commitVersion(manifest);
       return manifest;
     });
-    this.#publication = work.catch(() => undefined);
-    return work;
+    return runReply(this.#publication.withPermit(effect), this.#runtime.runPromiseExit);
   }
 }
