@@ -92,7 +92,8 @@ export function CompendiumBrowser(props: {
   });
   const filtered = createMemo(() => {
     const rows = searched();
-    return type() ? rows.filter((row) => matchesFacets(row, selection())) : rows;
+    const current = type();
+    return current ? rows.filter((row) => matchesFacets(row, selection(), current)) : rows;
   });
   const results = createMemo(() => sortRows(filtered(), sort(), props.compendium.types()));
   const summaries = createMemo(() =>
@@ -166,10 +167,10 @@ export function CompendiumBrowser(props: {
     }
   };
 
-  let scroller: HTMLDivElement | undefined;
+  const [scroller, setScroller] = createSignal<HTMLDivElement>();
   const virtualizer = createVirtualizer({
     count: () => results().length,
-    getScrollElement: () => scroller,
+    getScrollElement: scroller,
     estimateSize: () => ROW_HEIGHT,
     overscan: 12,
   });
@@ -269,7 +270,7 @@ export function CompendiumBrowser(props: {
               )}
             </For>
           </div>
-          <div ref={scroller} {...sx(c.scroll)}>
+          <div ref={setScroller} {...sx(c.scroll)}>
             <Show
               when={results().length}
               fallback={

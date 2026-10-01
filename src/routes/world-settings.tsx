@@ -128,6 +128,7 @@ export default function WorldSettings() {
             <Show when={section() === "libraries" && world().features?.corpus}>
               <Libraries
                 worldId={params.id}
+                compendium={compendium}
                 onChanged={async () => {
                   await compendium.refresh();
                 }}

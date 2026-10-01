@@ -71,3 +71,42 @@ export const applyRowUpdate = (
     ...(entry.rev === undefined ? {} : { _rev: entry.rev }),
   };
 };
+
+export type EntryChange = { readonly label: string; readonly from: string; readonly to: string };
+
+const shown = (value: unknown): string => {
+  if (value === undefined || value === null || value === "") return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value) && value.every((item) => typeof item === "string"))
+    return value.join(", ");
+  return JSON.stringify(value);
+};
+
+/**
+ * What a library update changes in one entry, for the DM to read before
+ * applying it: name, tags, text and each field (by the type's labels, then any
+ * field the type doesn't name). Either side may be absent (added, removed).
+ */
+export const entryChanges = (
+  from: CompendiumEntry | undefined,
+  to: CompendiumEntry | undefined,
+  fieldLabels: ReadonlyMap<string, string> = new Map(),
+): EntryChange[] => {
+  const changes: EntryChange[] = [];
+  const compare = (label: string, a: unknown, b: unknown) => {
+    const before = shown(a);
+    const after = shown(b);
+    if (before !== after) changes.push({ label, from: before, to: after });
+  };
+  compare("Name", from?.name, to?.name);
+  compare("Tags", from?.tags, to?.tags);
+  compare("Text", from?.body, to?.body);
+  const keys = new Set([
+    ...fieldLabels.keys(),
+    ...Object.keys(from?.fields ?? {}),
+    ...Object.keys(to?.fields ?? {}),
+  ]);
+  for (const key of keys) compare(fieldLabels.get(key) ?? key, from?.fields[key], to?.fields[key]);
+  return changes;
+};

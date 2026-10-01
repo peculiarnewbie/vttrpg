@@ -1,7 +1,7 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { CompendiumEntry } from "./compendium";
 import { rowFromEntry } from "./compendium-rows";
-import { applyRowUpdate, rowUpdate } from "./entry-diff";
+import { applyRowUpdate, entryChanges, rowUpdate } from "./entry-diff";
 import type { ListColumn, ListRow } from "./sheet-layout";
 
 const columns: ListColumn[] = [
@@ -103,4 +103,51 @@ it("keeps extra keys and cells the entry cannot fill, ignoring derived columns",
   expect(updated.tags).not.toBe(entry.fields.tags);
   expect(row._rev).toBe(1);
   expect(applyRowUpdate(row, { ...partial, rev: undefined }, columns)._rev).toBe(1);
+});
+
+describe("entryChanges", () => {
+  const base = {
+    id: "srd/spell/fireball",
+    typeId: "spell",
+    name: "Fireball",
+    tags: ["fire"],
+    body: "A bright streak.",
+    fields: { level: 3, school: "Evocation" },
+    visibility: "public" as const,
+    updatedAt: "2026-10-01",
+  };
+  it("lists name, tag, text and field changes by label", () => {
+    expect(
+      entryChanges(
+        base,
+        {
+          ...base,
+          name: "Fire Ball",
+          tags: ["fire", "area"],
+          fields: { level: 4, school: "Evocation" },
+        },
+        new Map([
+          ["level", "Level"],
+          ["school", "School"],
+        ]),
+      ),
+    ).toEqual([
+      { label: "Name", from: "Fireball", to: "Fire Ball" },
+      { label: "Tags", from: "fire", to: "fire, area" },
+      { label: "Level", from: "3", to: "4" },
+    ]);
+  });
+  it("treats an added or removed entry as every value changing from or to nothing", () => {
+    expect(entryChanges(undefined, base).map((change) => change.label)).toEqual([
+      "Name",
+      "Tags",
+      "Text",
+      "level",
+      "school",
+    ]);
+    expect(entryChanges(base, undefined)[0]).toEqual({ label: "Name", from: "Fireball", to: "" });
+  });
+  it("finds nothing when the entries match", () => {
+    expect(entryChanges(base, { ...base, updatedAt: "2026-10-02" })).toEqual([]);
+  });
 });
