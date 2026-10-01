@@ -1,5 +1,11 @@
 import * as Schema from "effect/Schema";
-import { WorldLibraries, WorldSource, type EnableSourceInput } from "../domain/corpus-rpc";
+import {
+  WorldLibraries,
+  WorldSource,
+  LibraryEntryDiff,
+  BlockedEntries,
+  type EnableSourceInput,
+} from "../domain/corpus-rpc";
 import { EntryOverride, type SaveOverrideInput } from "../domain/overrides";
 import {
   Compendium,
@@ -97,8 +103,14 @@ export const api = {
     );
   },
   blockedEntries: async (worldId: string) =>
-    Schema.decodeUnknownSync(Schema.Struct({ ids: Schema.Array(Schema.String) }))(
+    Schema.decodeUnknownSync(BlockedEntries)(
       await request(`/api/worlds/${encodeURIComponent(worldId)}/libraries/blocked`),
+    ),
+  libraryEntryDiff: async (worldId: string, sourceId: string, entryId: string) =>
+    Schema.decodeUnknownSync(LibraryEntryDiff)(
+      await request(
+        `/api/worlds/${encodeURIComponent(worldId)}/libraries/${encodeURIComponent(sourceId)}/diff/${encodeURIComponent(entryId)}`,
+      ),
     ),
   blockEntry: async (worldId: string, entryId: string, blocked: boolean): Promise<void> => {
     await request(

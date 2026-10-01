@@ -117,6 +117,18 @@ test("libraries enable as pinned versions and show an explicit update summary", 
   await page.getByRole("button", { name: "Check for updates" }).click();
   await expect(card.getByText("Update available · version 2")).toBeVisible();
   await expect(card.getByText("0 added · 1 changed · 0 removed")).toBeVisible();
+  // The DM reads what changed, by name, before applying it.
+  await card.getByText("0 added · 1 changed · 0 removed").click();
+  await card.getByRole("button", { name: source.item.name }).click();
+  const diff = page.getByRole("dialog", { name: `Changes to ${source.item.name}` });
+  await expect(diff).toContainText("Version 1 → 2");
+  await expect(diff.locator("del").filter({ hasText: "d6" })).toBeVisible();
+  await expect(diff.locator("ins").filter({ hasText: "d8" })).toBeVisible();
+  await expect(
+    diff.locator("ins").filter({ hasText: "The new version of the invented pike." }),
+  ).toBeVisible();
+  await diff.getByRole("button", { name: "Close" }).click();
+  await expect(diff).toHaveCount(0);
   const bodies = () =>
     table.player.api.post(`/api/worlds/${table.worldId}/compendium/bodies`, {
       data: { ids: [source.item.id] },

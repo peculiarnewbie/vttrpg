@@ -10,7 +10,13 @@ import {
   type SaveEntryInput,
   type EntryType,
 } from "../domain/compendium";
-import { WorldLibraries, WorldSource, CORPUS_API_VERSION } from "../domain/corpus-rpc";
+import {
+  WorldLibraries,
+  WorldSource,
+  LibraryEntryDiff,
+  BlockedEntries,
+  CORPUS_API_VERSION,
+} from "../domain/corpus-rpc";
 import { EntryOverride } from "../domain/overrides";
 import { CorpusError, type CorpusReply } from "../domain/corpus-errors";
 import type { SnapshotManifest } from "../domain/snapshot";
@@ -66,6 +72,7 @@ const bodies = async (ids: string[], auth = playerCookie) =>
   );
 const overridePath = (id: string) => `compendium/overrides/${encodeURIComponent(id)}`;
 const blockPath = (id: string) => `compendium/blocked/${encodeURIComponent(id)}`;
+const diffPath = (id: string) => `libraries/${sourceId}/diff/${encodeURIComponent(id)}`;
 const publish = () => rpc<SnapshotManifest>("publish", { sourceId });
 const save = (entries: readonly SaveEntryInput[]) =>
   rpc<CompendiumEntry[]>("saveEntries", { sourceId, entries });
@@ -182,7 +189,7 @@ it("keeps pinned bodies until acceptance, reports added/changed/removed IDs, and
   expect(
     (await worldCall("compendium/entries", { method: "POST", body: input("Local item") })).status,
   ).toBe(200);
-  await save([{ ...input("Renamed sword"), id: sword.id }, input("Added")]);
+  const [, added] = await save([{ ...input("Renamed sword"), id: sword.id }, input("Added")]);
   await rpc("deleteEntries", { sourceId, ids: [removed.id] });
   await publish();
   const checked = Schema.decodeUnknownSync(WorldLibraries)(
@@ -191,7 +198,13 @@ it("keeps pinned bodies until acceptance, reports added/changed/removed IDs, and
   expect(checked.enabled[0]).toMatchObject({
     version: 1,
     latestVersion: 2,
-    update: { fromVersion: 1, toVersion: 2, changed: [sword.id], removed: [removed.id] },
+    update: {
+      fromVersion: 1,
+      toVersion: 2,
+      changed: [sword.id],
+      removed: [removed.id],
+      names: { [sword.id]: "Renamed sword", [removed.id]: "Removed", [added.id]: "Added" },
+    },
   });
   expect(checked.enabled[0].update?.added).toHaveLength(1);
   expect((await bodies([sword.id])).entries[0].name).toBe("Sword");
@@ -206,6 +219,67 @@ it("keeps pinned bodies until acceptance, reports added/changed/removed IDs, and
   expect((await worldCall("libraries/check", { method: "POST" })).status).toBe(200);
   expect((await bodies([sword.id])).entries[0].name).toBe("Followed sword");
   expect((await index()).upserts.some((row) => row.name === "Local item")).toBe(true);
+});
+
+it("reviews changed, added and removed library text without applying overrides or accepting the update", async () => {
+  const [sword, removed] = await save([input("Sword"), input("Removed", "dm")]);
+  await publish();
+  await enable();
+  expect((await worldCall(diffPath(sword.id))).status).toBe(404);
+  await worldCall(overridePath(sword.id), {
+    method: "PUT",
+    body: { baseRev: sword.rev, patch: { name: "Table sword", body: "Table text" } },
+  });
+  await worldCall(blockPath(removed.id), { method: "PUT" });
+  const [updated, added] = await save([
+    { ...input("Renamed sword"), id: sword.id },
+    input("Added", "dm"),
+  ]);
+  await rpc("deleteEntries", { sourceId, ids: [removed.id] });
+  await publish();
+  await worldCall("libraries/check", { method: "POST" });
+  const before = await index(0, cookie);
+  const readDiff = async (id: string) => {
+    const response = await worldCall(diffPath(id));
+    expect(response.status).toBe(200);
+    return Schema.decodeUnknownSync(LibraryEntryDiff)(await response.json());
+  };
+  const changed = await readDiff(sword.id);
+  expect(changed).toMatchObject({
+    entryId: sword.id,
+    fromVersion: 1,
+    toVersion: 2,
+    from: { name: sword.name, body: sword.body, sourceVersion: 1, licence },
+    to: { name: updated.name, body: updated.body, sourceVersion: 2, licence },
+    overridden: true,
+  });
+  const addition = await readDiff(added.id);
+  expect(addition.from).toBeUndefined();
+  expect(addition.to).toMatchObject({ id: added.id, name: "Added", visibility: "dm" });
+  expect(addition.overridden).toBe(false);
+  const removal = await readDiff(removed.id);
+  expect(removal.from).toMatchObject({ id: removed.id, name: "Removed", visibility: "dm" });
+  expect(removal.to).toBeUndefined();
+  expect(removal.overridden).toBe(false);
+  expect((await worldCall(diffPath(`${sourceId}/item/missing`))).status).toBe(404);
+  expect((await worldCall(diffPath(sword.id), { cookie: playerCookie })).status).toBe(403);
+  expect(await index(0, cookie)).toEqual(before);
+  expect((await bodies([sword.id], cookie)).entries[0]).toMatchObject({
+    name: "Table sword",
+    body: "Table text",
+    sourceVersion: 1,
+  });
+  expect(
+    Schema.decodeUnknownSync(BlockedEntries)(await (await worldCall("libraries/blocked")).json()),
+  ).toEqual({
+    ids: [removed.id],
+    entries: [{ id: removed.id, name: "Removed", typeId: "item" }],
+  });
+  await enable({ version: 2 });
+  expect((await worldCall(diffPath(sword.id))).status).toBe(404);
+  expect(
+    Schema.decodeUnknownSync(BlockedEntries)(await (await worldCall("libraries/blocked")).json()),
+  ).toEqual({ ids: [removed.id], entries: [{ id: removed.id }] });
 });
 
 it("applies overrides to bodies and index facets, retains share-alike, and cannot widen a DM-only base", async () => {
@@ -300,7 +374,10 @@ it("checks visibility after cache hits, hides aliases, tombstones previously pub
   await worldCall(`libraries/${sourceId}`, { method: "DELETE" });
   await enable();
   expect((await bodies([sword.id], cookie)).entries).toEqual([]);
-  expect(await (await worldCall("libraries/blocked")).json()).toEqual({ ids: [sword.id] });
+  expect(await (await worldCall("libraries/blocked")).json()).toEqual({
+    ids: [sword.id],
+    entries: [{ id: sword.id, name: "Sword", typeId: "item" }],
+  });
   await worldCall(blockPath(sword.id), { method: "DELETE" });
   expect((await bodies([sword.id])).entries).toHaveLength(1);
   await worldCall(`libraries/${sourceId}`, { method: "DELETE" });

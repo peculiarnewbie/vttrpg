@@ -10,6 +10,7 @@ import {
 import type { CompendiumStore } from "./compendium-store";
 import { api } from "./api";
 import { normalizeName } from "../domain/entry-links";
+import type { IndexCache } from "./index-cache";
 
 /** Debounce bursts, then serialize fetches with at most one queued refresh. */
 export function createCompendiumRefresh<T>(options: {
@@ -71,12 +72,23 @@ type CompendiumDependencies = {
   bodies: (worldId: string, ids: readonly string[]) => Promise<EntryBodies>;
 };
 
+export type CompendiumOptions = {
+  /**
+   * Include world, account and role in the key: different viewers see different
+   * rows. A promise when the key isn't known yet (the session is loading);
+   * `undefined` skips the cache.
+   */
+  cache?: { store: IndexCache; key: string | Promise<string | undefined> };
+};
+
 export function createCompendium(
   worldId: string,
   deps: CompendiumDependencies = { index: api.getCompendiumIndex, bodies: api.getEntryBodies },
+  options: CompendiumOptions = {},
 ): CompendiumStore {
   const [version, setVersion] = createSignal(0);
   const [loading, setLoading] = createSignal(true);
+  const [ready, setReady] = createSignal(false);
   const [error, setError] = createSignal<string>();
   const bump = () => setVersion((value) => value + 1);
   const rows = new Map<string, IndexRow>();
@@ -101,6 +113,36 @@ export function createCompendium(
   let sorted: readonly IndexRow[] = [];
   let byName = new Map<string, IndexRow>();
   let byType = new Map<string, IndexRow[]>();
+  let writeTimer: ReturnType<typeof setTimeout> | undefined;
+  let writing = false;
+  let dirty = false;
+  let cacheKey: string | undefined;
+  const persist = async () => {
+    writeTimer = undefined;
+    if (!options.cache || !cacheKey || writing || !dirty) return;
+    dirty = false;
+    writing = true;
+    try {
+      await options.cache.store.write(cacheKey, {
+        format: 1,
+        rev,
+        types,
+        rows: [...rows.values()],
+      });
+    } catch {
+      // Persistence is optional; network sync remains usable.
+    } finally {
+      writing = false;
+      if (dirty) writeTimer = setTimeout(() => void persist(), 100);
+    }
+  };
+  const scheduleWrite = () => {
+    if (!options.cache) return;
+    dirty = true;
+    if (writing) return;
+    clearTimeout(writeTimer);
+    writeTimer = setTimeout(() => void persist(), 100);
+  };
   const canonical = (id: string) => aliases.get(id) ?? id;
   const cached = (id: string) => {
     const key = canonical(id);
@@ -155,8 +197,31 @@ export function createCompendium(
       byType.set(row.typeId, list);
     }
     setError(undefined);
+    setReady(true);
     bump();
   };
+  let initialization: Promise<void> | undefined;
+  const initialize = () =>
+    (initialization ??= (async () => {
+      if (!options.cache) return;
+      try {
+        cacheKey = await options.cache.key;
+        if (!cacheKey) return;
+        const stored = await options.cache.store.read(cacheKey);
+        // A cache read may finish after the world page has been disposed.
+        if (stored && !disposed) {
+          applyIndex({
+            full: true,
+            rev: stored.rev,
+            types: stored.types,
+            upserts: stored.rows,
+            deletes: [],
+          });
+        }
+      } catch {
+        // Treat unavailable storage as a cache miss.
+      }
+    })());
   const fetchBatch = async (ids: readonly string[]) => {
     const startedAtGeneration = indexGeneration;
     const before = new Map(ids.map((id) => [id, generations.get(id) ?? 0]));
@@ -231,24 +296,39 @@ export function createCompendium(
     return promise;
   };
   const refreshes = createCompendiumRefresh({
-    fetch: () => deps.index(worldId, rev),
-    onValue: applyIndex,
+    fetch: options.cache
+      ? async () => {
+          await initialize();
+          if (disposed) return { full: false, rev, types, upserts: [], deletes: [] };
+          return deps.index(worldId, rev);
+        }
+      : () => deps.index(worldId, rev),
+    onValue: (delta) => {
+      applyIndex(delta);
+      scheduleWrite();
+    },
     onLoading: (value) => {
       setLoading(value);
       if (value) setError(undefined);
     },
     onError: (cause) => setError(cause instanceof Error ? cause.message : String(cause)),
   });
+  const start = () => {
+    if (options.cache) void initialize();
+    void refreshes.refresh();
+  };
   if (getOwner()) {
     onCleanup(() => {
       disposed = true;
       refreshes.dispose();
+      clearTimeout(writeTimer);
+      void persist();
       for (const request of pending.values()) request.resolve(undefined);
       pending.clear();
       queued.clear();
     });
-    onSettled(() => void refreshes.refresh());
-  } else void refreshes.refresh();
+    onSettled(start);
+  } else start();
   return {
     types: () => {
       version();
@@ -293,6 +373,7 @@ export function createCompendium(
       return rev;
     },
     loading,
+    ready,
     error,
     refresh: refreshes.refresh,
   };

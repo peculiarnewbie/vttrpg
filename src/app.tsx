@@ -16,7 +16,12 @@ const Router = createRouter({
   routes: [
     { path: "/", component: SignIn },
     { path: "/dashboard", component: Dashboard },
-    { path: "/worlds/:id", component: WorldPage },
+    // One route for the table and its compendium page, so switching keeps the connection.
+    {
+      path: "/worlds/:id/:view?",
+      component: WorldPage,
+      matchFilters: { view: ["compendium"] },
+    },
     { path: "/worlds/:id/settings", component: WorldSettings },
     { path: "/lab/sheets", component: SheetLab },
     { path: "/lab/systems", component: SystemsLab },

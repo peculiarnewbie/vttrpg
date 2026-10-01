@@ -7,6 +7,8 @@ type SessionValue = {
   user: Accessor<AuthUser | null>;
   worlds: Accessor<WorldSummary[]>;
   loading: Accessor<boolean>;
+  /** The first load's result (resolved with the values, which signals only show after a flush). */
+  ready: Promise<{ user: AuthUser | null; worlds: WorldSummary[] }>;
   setUser: (user: AuthUser | null) => void;
   refresh: () => Promise<void>;
   signOut: () => Promise<void>;
@@ -19,26 +21,32 @@ export function SessionProvider(props: { children: JSX.Element }) {
   const [worlds, setWorlds] = createSignal<WorldSummary[]>([]);
   const [loading, setLoading] = createSignal(true);
 
-  const refresh = async () => {
+  const load = async (): Promise<{ user: AuthUser | null; worlds: WorldSummary[] }> => {
     setLoading(true);
     try {
       const result = await api.me();
       setUser(result.user);
       setWorlds(result.worlds);
+      return result;
     } catch {
       setUser(null);
       setWorlds([]);
+      return { user: null, worlds: [] };
     } finally {
       setLoading(false);
     }
   };
+  const refresh = async () => {
+    await load();
+  };
 
-  void refresh();
+  const ready = load();
 
   const value: SessionValue = {
     user,
     worlds,
     loading,
+    ready,
     setUser,
     refresh,
     signOut: async () => {

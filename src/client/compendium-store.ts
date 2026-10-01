@@ -6,7 +6,7 @@ import type { CompendiumEntry, EntryType, IndexRow } from "../domain/compendium"
  * `createCompendium` in compendium.ts.
  *
  * - The **index** (every row this member may see, without bodies) is kept in
- *   memory and synced by revision: `compendium.updated {rev}` or a reconnect
+ *   memory (optionally persisted in the browser) and synced by revision: `compendium.updated {rev}` or a reconnect
  *   calls `refresh()`, which asks for `index?since=<rev>` and applies the delta.
  * - **Entries** (bodies and fields) load on demand in batches: reading
  *   `entry(id)` returns what's cached and, if nothing is, queues the id; ids
@@ -33,6 +33,8 @@ export type CompendiumStore = {
   /** The index revision this client has. */
   rev: Accessor<number>;
   loading: Accessor<boolean>;
+  /** An index is available from cache or network, even if it has no rows. */
+  ready: Accessor<boolean>;
   error: Accessor<string | undefined>;
   /** Fetch and apply the index delta since `rev()` (serialized; bursts coalesce). */
   refresh: () => Promise<boolean>;

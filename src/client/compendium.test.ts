@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { performance as clock } from "node:perf_hooks";
 import { createMemo, createRoot, flush } from "solid-js";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
@@ -12,6 +13,8 @@ import type {
 } from "../domain/compendium";
 import { api, ApiError } from "./api";
 import { createCompendium, createCompendiumRefresh } from "./compendium";
+import type { CompendiumOptions } from "./compendium";
+import { createMemoryIndexCache, type CachedIndex, type IndexCache } from "./index-cache";
 
 vi.mock("solid-js", () => vi.importActual("../../node_modules/solid-js/dist/solid.dev.js"));
 
@@ -181,13 +184,14 @@ const harness = (
     entries: ids.map((id) => body(id)),
     missing: [],
   })),
+  options?: CompendiumOptions,
 ) => {
   vi.useFakeTimers();
   const index = vi.fn(async () => initial);
   let dispose!: () => void;
   const store = createRoot((cleanup) => {
     dispose = cleanup;
-    return createCompendium("world", { index, bodies });
+    return createCompendium("world", { index, bodies }, options);
   });
   flush();
   return { store, index, bodies, dispose };
@@ -198,6 +202,176 @@ const sync = async (store: ReturnType<typeof createCompendium>) => {
   expect(await finished).toBe(true);
   flush();
 };
+
+const cachedIndex = (rows: readonly IndexRow[] = [row("cached")], rev = 7): CachedIndex => ({
+  format: 1,
+  rev,
+  types: data.types,
+  rows,
+});
+
+it("renders cached rows before the network replies and requests only changes", async () => {
+  const cache = createMemoryIndexCache(new Map([["world:account:player", cachedIndex()]]));
+  const h = harness(delta(), undefined, { cache: { store: cache, key: "world:account:player" } });
+  const response = deferred<IndexDelta>();
+  h.index.mockReturnValueOnce(response.promise);
+  expect(h.store.ready()).toBe(false);
+  await vi.advanceTimersByTimeAsync(0);
+  flush();
+  expect(h.index).not.toHaveBeenCalled();
+  expect(h.store.rows()).toEqual([row("cached")]);
+  expect(h.store.types()).toEqual(data.types);
+  expect(h.store.rowByName("CACHED")).toEqual(row("cached"));
+  expect(h.store.ready()).toBe(true);
+  expect(h.store.loading()).toBe(true);
+  const finished = h.store.refresh();
+  await vi.advanceTimersByTimeAsync(30);
+  expect(h.index).toHaveBeenCalledExactlyOnceWith("world", 7);
+  response.resolve({ ...delta([row("new", 8)], 8, false), deletes: ["cached"] });
+  expect(await finished).toBe(true);
+  flush();
+  expect(h.store.rows()).toEqual([row("new", 8)]);
+  await vi.advanceTimersByTimeAsync(100);
+  expect(await cache.read("world:account:player")).toEqual(cachedIndex([row("new", 8)], 8));
+  h.dispose();
+});
+
+it("replaces cached rows when the server returns a full index", async () => {
+  const cache = createMemoryIndexCache(new Map([["key", cachedIndex()]]));
+  const h = harness(delta([row("replacement")], 9), undefined, {
+    cache: { store: cache, key: "key" },
+  });
+  await sync(h.store);
+  expect(h.index).toHaveBeenCalledExactlyOnceWith("world", 7);
+  expect(h.store.row("cached")).toBeUndefined();
+  expect(h.store.rowsOfType("item")).toEqual([row("replacement")]);
+  await vi.advanceTimersByTimeAsync(100);
+  expect(await cache.read("key")).toEqual(cachedIndex([row("replacement")], 9));
+  h.dispose();
+});
+
+it("ignores undecodable stored rows and keeps viewer cache keys separate", async () => {
+  const cache = createMemoryIndexCache(
+    new Map<string, unknown>([
+      ["world:account:dm", cachedIndex([row("dm-only")])],
+      [
+        "world:account:player",
+        { ...cachedIndex(), rows: [{ ...row("bad"), visibility: "secret" }] },
+      ],
+    ]),
+  );
+  const h = harness(delta([], 1), undefined, {
+    cache: { store: cache, key: "world:account:player" },
+  });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(h.store.ready()).toBe(false);
+  expect(h.store.rows()).toEqual([]);
+  await sync(h.store);
+  expect(h.index).toHaveBeenCalledExactlyOnceWith("world", 0);
+  expect(h.store.ready()).toBe(true);
+  h.dispose();
+  await vi.advanceTimersByTimeAsync(100);
+  expect(await cache.read("world:account:dm")).toEqual(cachedIndex([row("dm-only")]));
+});
+
+it("keeps cached rows available when synchronization fails", async () => {
+  const cache = createMemoryIndexCache(new Map([["key", cachedIndex()]]));
+  const h = harness(delta(), undefined, { cache: { store: cache, key: "key" } });
+  h.index.mockRejectedValueOnce(new Error("offline"));
+  const finished = h.store.refresh();
+  await vi.advanceTimersByTimeAsync(30);
+  expect(await finished).toBe(false);
+  flush();
+  expect(h.store.ready()).toBe(true);
+  expect(h.store.rows()).toEqual([row("cached")]);
+  expect(h.store.error()).toBe("offline");
+  h.dispose();
+});
+
+it("ignores cache read and write failures without surfacing a page error", async () => {
+  const cache: IndexCache = {
+    read: vi.fn(async () => {
+      throw new Error("blocked");
+    }),
+    write: vi.fn(async () => {
+      throw new Error("quota");
+    }),
+  };
+  const h = harness(delta([row("network")]), undefined, { cache: { store: cache, key: "key" } });
+  await sync(h.store);
+  expect(h.index).toHaveBeenCalledExactlyOnceWith("world", 0);
+  await vi.advanceTimersByTimeAsync(100);
+  expect(cache.write).toHaveBeenCalledOnce();
+  expect(h.store.error()).toBeUndefined();
+  expect(h.store.rows()).toEqual([row("network")]);
+  h.dispose();
+});
+
+it("coalesces writes and persists the latest delta with at most one write in flight", async () => {
+  const firstWrite = deferred<void>();
+  const write = vi
+    .fn<IndexCache["write"]>()
+    .mockReturnValueOnce(firstWrite.promise)
+    .mockResolvedValue(undefined);
+  const h = harness(delta([row("a")]), undefined, {
+    cache: { key: "key", store: { read: async () => undefined, write } },
+  });
+  await sync(h.store);
+  h.index.mockResolvedValueOnce(delta([row("b", 2)], 2, false));
+  await sync(h.store);
+  expect(write).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(100);
+  expect(write).toHaveBeenCalledExactlyOnceWith("key", cachedIndex([row("a"), row("b", 2)], 2));
+  h.index.mockResolvedValueOnce({ ...delta([row("c", 3)], 3, false), deletes: ["a"] });
+  await sync(h.store);
+  h.index.mockResolvedValueOnce(delta([row("d", 4)], 4, false));
+  await sync(h.store);
+  await vi.advanceTimersByTimeAsync(200);
+  expect(write).toHaveBeenCalledOnce();
+  firstWrite.resolve();
+  await vi.advanceTimersByTimeAsync(100);
+  expect(write).toHaveBeenCalledTimes(2);
+  expect(write).toHaveBeenLastCalledWith(
+    "key",
+    cachedIndex([row("b", 2), row("c", 3), row("d", 4)], 4),
+  );
+  h.dispose();
+});
+
+it("waits for a slow cache read before fetching and ignores it after disposal", async () => {
+  const read = deferred<CachedIndex | undefined>();
+  const h = harness(delta(), undefined, {
+    cache: { key: "key", store: { read: () => read.promise, write: async () => {} } },
+  });
+  const finished = h.store.refresh();
+  await vi.advanceTimersByTimeAsync(30);
+  expect(h.index).not.toHaveBeenCalled();
+  h.dispose();
+  read.resolve(cachedIndex());
+  expect(await finished).toBe(false);
+  expect(h.index).not.toHaveBeenCalled();
+  expect(h.store.rows()).toEqual([]);
+});
+
+it("decodes and applies a 10,000-row cached index in under one second", async () => {
+  const rows = Array.from({ length: 10_000 }, (_, i) => ({
+    ...row(`srd/item/entry-${i}`, 1, `Entry ${i}`),
+    facets: { level: i % 10, school: "evocation", tags: ["spell"], ritual: false },
+  }));
+  const cache = createMemoryIndexCache(new Map([["key", cachedIndex(rows)]]));
+  const response = deferred<IndexDelta>();
+  const start = clock.now();
+  const h = harness(delta(), undefined, { cache: { store: cache, key: "key" } });
+  h.index.mockReturnValueOnce(response.promise);
+  await vi.advanceTimersByTimeAsync(0);
+  flush();
+  const elapsed = clock.now() - start;
+  expect(h.store.rows()).toHaveLength(10_000);
+  expect(h.store.row("srd/item/entry-9999")?.facets?.level).toBe(9);
+  expect(elapsed).toBeLessThan(1_000);
+  console.info(`10,000-row cached index decoded and applied in ${elapsed.toFixed(1)} ms`);
+  h.dispose();
+});
 
 it("applies full and delta indexes, sorts rows, replaces types, and normalizes names", async () => {
   const h = harness(delta([row("b"), row("a"), row("c", 2, " Épée   fine ")], 2));
