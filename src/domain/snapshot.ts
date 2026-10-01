@@ -6,149 +6,314 @@ import {
   IndexRow,
   compendiumLimits,
 } from "./compendium";
-import { Licence, licenceError } from "./licence";
+import {
+  MAX_VERSION,
+  NonEmptyTrimmed,
+  Revision,
+  SafeNonNegativeInteger,
+  SafePositiveInteger,
+  Sha256Hex,
+  Slug,
+  SourceSlug,
+  Version,
+  isFiniteJson,
+  jsonBytes,
+  maxJsonBytes,
+} from "./constraints";
+import { Licence } from "./licence";
 import { parseEntryId } from "./entry-id";
 import { typeError } from "./compendium-rules";
 
+/** Limits bound untrusted snapshots and decompression allocations. */
+export const snapshotLimits = {
+  entries: 100_000,
+  chunkEntries: 100,
+  version: MAX_VERSION,
+  indexBytes: 32 * 1024 * 1024,
+  bodyBytes: 64 * 1024 * 1024,
+  manifestBytes: 32 * 1024 * 1024,
+} as const;
+
 export const SnapshotFile = Schema.Struct({
   key: Schema.String,
-  bytes: Schema.Int,
-  sha256: Schema.String,
+  bytes: SafePositiveInteger(snapshotLimits.bodyBytes),
+  sha256: Sha256Hex,
 });
 export type SnapshotFile = typeof SnapshotFile.Type;
 
+const IndexFile = SnapshotFile.check(
+  Schema.makeFilter((file) => file.bytes <= snapshotLimits.indexBytes, {
+    message: "Invalid snapshot file size",
+  }),
+);
+const SnapshotEntryId = Schema.String.check(
+  Schema.makeFilter((id) => parseEntryId(id) !== undefined, {
+    message: "Invalid snapshot entry identity",
+  }),
+);
+const ChunkOrdinal = SafeNonNegativeInteger.check(Schema.isLessThan(snapshotLimits.entries));
+const chunkOrdinal = (key: string): number => {
+  const match = /\.(0|[1-9][0-9]*)\.json\.gz$/.exec(key);
+  return match === null ? -1 : Number(match[1]);
+};
+
 export const BodyChunk = Schema.Struct({
-  typeId: Schema.String,
+  typeId: Slug,
   visibility: EntryVisibility,
-  ids: Schema.Array(Schema.String),
+  ids: Schema.Array(SnapshotEntryId).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(snapshotLimits.chunkEntries),
+    Schema.isUnique(),
+  ),
   file: SnapshotFile,
-});
+}).check(
+  Schema.makeFilter((chunk) => {
+    const ordinal = Schema.decodeUnknownResult(ChunkOrdinal)(chunkOrdinal(chunk.file.key));
+    if (ordinal._tag === "Failure") return "Invalid snapshot chunk number";
+    if (chunk.ids.some((id) => id.split("/")[1] !== chunk.typeId))
+      return "Snapshot chunk entry identity does not match";
+    return undefined;
+  }),
+);
 export type BodyChunk = typeof BodyChunk.Type;
 
+const prefix = (sourceId: string, version: number) => `corpus/${sourceId}/v${version}`;
+const bodyKey = (base: string, typeId: string, visibility: EntryVisibility, chunk: number) =>
+  `${base}/bodies/${typeId}.${visibility}.${chunk}.json.gz`;
+
+/** Callers pass safe source/type slugs; published version numbers start at one. */
+export const snapshotPrefix = (sourceId: string, version: number): string => {
+  const source = Schema.decodeUnknownSync(SourceSlug)(sourceId);
+  const revision = Schema.decodeUnknownSync(Version)(version);
+  return prefix(source, revision);
+};
+
+export const snapshotKeys = (sourceId: string, version: number) => {
+  const base = snapshotPrefix(sourceId, version);
+  return {
+    manifest: `${base}/manifest.json`,
+    publicIndex: `${base}/index.public.json.gz`,
+    dmIndex: `${base}/index.dm.json.gz`,
+    body: (typeId: string, visibility: "public" | "dm", chunk: number) =>
+      bodyKey(
+        base,
+        Schema.decodeUnknownSync(Slug)(typeId),
+        Schema.decodeUnknownSync(EntryVisibility)(visibility),
+        Schema.decodeUnknownSync(SafeNonNegativeInteger)(chunk),
+      ),
+  };
+};
+
 /** Public and DM rows/bodies are physically separate immutable objects. */
-export const SnapshotManifest = Schema.Struct({
+const Manifest = Schema.Struct({
   format: Schema.Literal("ttrpg-corpus"),
   formatVersion: Schema.Literal(1),
-  sourceId: Schema.String,
-  sourceName: Schema.String,
-  systemId: Schema.String,
-  version: Schema.Int,
-  publishedAt: Schema.String,
+  sourceId: SourceSlug,
+  sourceName: NonEmptyTrimmed(200),
+  systemId: Slug,
+  version: Version,
+  publishedAt: NonEmptyTrimmed(120),
   licence: Licence,
-  types: Schema.Array(EntryType),
-  publicIndex: SnapshotFile,
-  dmIndex: SnapshotFile,
-  bodyChunks: Schema.Array(BodyChunk),
-  entryCount: Schema.Int,
-});
+  types: Schema.Array(EntryType.check(Schema.makeFilter((type) => typeError(type)))).check(
+    Schema.isMaxLength(compendiumLimits.types),
+  ),
+  publicIndex: IndexFile,
+  dmIndex: IndexFile,
+  bodyChunks: Schema.Array(BodyChunk).check(Schema.isMaxLength(snapshotLimits.entries)),
+  entryCount: SafeNonNegativeInteger.check(Schema.isLessThanOrEqualTo(snapshotLimits.entries)),
+}).check(
+  Schema.makeFilter((manifest) => {
+    const base = prefix(manifest.sourceId, manifest.version);
+    if (
+      manifest.publicIndex.key !== `${base}/index.public.json.gz` ||
+      manifest.dmIndex.key !== `${base}/index.dm.json.gz`
+    )
+      return "Invalid snapshot file key";
+    const typeIds = new Set(manifest.types.map((type) => type.id));
+    if (typeIds.size !== manifest.types.length) return "Duplicate snapshot type id";
+    const fileKeys = new Set([manifest.publicIndex.key, manifest.dmIndex.key]);
+    const ids = new Set<string>();
+    for (const chunk of manifest.bodyChunks) {
+      if (!typeIds.has(chunk.typeId)) return "Unknown snapshot chunk type";
+      if (
+        chunk.file.key !==
+        bodyKey(base, chunk.typeId, chunk.visibility, chunkOrdinal(chunk.file.key))
+      )
+        return "Invalid snapshot file key";
+      if (fileKeys.has(chunk.file.key)) return "Duplicate snapshot file key";
+      fileKeys.add(chunk.file.key);
+      for (const id of chunk.ids) {
+        if (id.split("/")[0] !== manifest.sourceId)
+          return "Snapshot chunk entry identity does not match";
+        if (ids.has(id)) return "Duplicate snapshot entry id";
+        ids.add(id);
+      }
+    }
+    return ids.size === manifest.entryCount
+      ? undefined
+      : "Snapshot entry count does not match chunks";
+  }),
+);
+// Count the original JSON before decoding strips excess properties.
+export const SnapshotManifest = Schema.Unknown.check(
+  maxJsonBytes(snapshotLimits.manifestBytes, "Snapshot manifest is too large"),
+).pipe(Schema.decodeTo(Manifest));
 export type SnapshotManifest = typeof SnapshotManifest.Type;
+
+const rowTextFields = {
+  id: Schema.String,
+  typeId: Schema.String,
+  name: NonEmptyTrimmed(compendiumLimits.name),
+  tags: Schema.Array(Schema.String.check(Schema.isMaxLength(40))).check(
+    Schema.isMaxLength(compendiumLimits.tags),
+  ),
+  updatedAt: Schema.String.check(Schema.isMaxLength(120)),
+};
+const identityMatches = Schema.makeFilter(
+  (row: { readonly id: string; readonly typeId: string }) => {
+    const id = parseEntryId(row.id);
+    return id !== undefined && id.typeId === row.typeId
+      ? undefined
+      : "Invalid snapshot entry identity";
+  },
+);
+const SnapshotRowText = Schema.Struct({
+  ...rowTextFields,
+  tags: Schema.Array(rowTextFields.tags.value),
+}).check(identityMatches);
+const rowSizeError = (row: IndexRow): string | undefined =>
+  jsonBytes(row).byteLength > compendiumLimits.entryBytes ? "Snapshot row is too large" : undefined;
+
+export const SnapshotIndexRow = Schema.Struct({
+  ...IndexRow.fields,
+  ...rowTextFields,
+  rev: Revision,
+  facets: Schema.optional(IndexRow.fields.facets.schema.check(isFiniteJson)),
+}).check(identityMatches, Schema.makeFilter(rowSizeError));
+export type SnapshotIndexRow = typeof SnapshotIndexRow.Type;
+
+const SnapshotRows = Schema.Struct({
+  visibility: EntryVisibility,
+  rows: Schema.Array(SnapshotIndexRow).check(
+    Schema.isMaxLength(snapshotLimits.entries, { message: "Too many snapshot rows" }),
+  ),
+}).check(
+  Schema.makeFilter(({ rows, visibility }) => {
+    if (rows.some((row) => row.visibility !== visibility))
+      return "Snapshot visibility does not match";
+    return new Set(rows.map((row) => row.id)).size === rows.length
+      ? undefined
+      : "Duplicate snapshot entry id";
+  }),
+);
 
 /** String dictionaries reduce repetition; facets remain typed JSON values. */
 export const PackedIndexRow = Schema.Tuple([
-  Schema.Int, // id
-  Schema.Int, // name
-  Schema.Int, // typeId
-  Schema.Array(Schema.Int), // tags
-  Schema.Int, // updatedAt
-  Schema.Int, // entry revision
+  SafeNonNegativeInteger, // id
+  SafeNonNegativeInteger, // name
+  SafeNonNegativeInteger, // typeId
+  Schema.Array(SafeNonNegativeInteger).check(Schema.isMaxLength(compendiumLimits.tags)),
+  SafeNonNegativeInteger, // updatedAt
+  Revision,
   Schema.NullOr(
     Schema.Record(
       Schema.String,
       Schema.Union([Schema.Number, Schema.String, Schema.Boolean, Schema.Array(Schema.String)]),
-    ),
+    ).check(isFiniteJson),
   ),
 ]);
 export type PackedIndexRow = typeof PackedIndexRow.Type;
+
+type IndexData = {
+  readonly strings: readonly string[];
+  readonly visibility: EntryVisibility;
+  readonly rows: readonly PackedIndexRow[];
+};
+const unpackRow = (
+  packed: IndexData,
+  [id, name, typeId, tags, updatedAt, rev, facets]: PackedIndexRow,
+): IndexRow => ({
+  id: packed.strings[id],
+  name: packed.strings[name],
+  typeId: packed.strings[typeId],
+  tags: tags.map((index) => packed.strings[index]),
+  updatedAt: packed.strings[updatedAt],
+  rev,
+  visibility: packed.visibility,
+  ...(facets === null ? {} : { facets }),
+});
 
 export const PackedIndex = Schema.Struct({
   format: Schema.Literal("ttrpg-corpus-index"),
   formatVersion: Schema.Literal(1),
   visibility: EntryVisibility,
   strings: Schema.Array(Schema.String),
-  rows: Schema.Array(PackedIndexRow),
-});
+  rows: Schema.Array(PackedIndexRow).check(
+    Schema.isMaxLength(snapshotLimits.entries, { message: "Too many snapshot rows" }),
+  ),
+}).check(
+  Schema.makeFilter((packed) => {
+    const ids = new Set<string>();
+    for (const row of packed.rows) {
+      const [id, name, typeId, tags, updatedAt] = row;
+      if ([id, name, typeId, updatedAt, ...tags].some((index) => index >= packed.strings.length))
+        return "Invalid snapshot dictionary index";
+      const unpacked = unpackRow(packed, row);
+      // Dictionary strings acquire their field meaning only when referenced by a row.
+      const text = Schema.decodeUnknownResult(SnapshotRowText)(unpacked);
+      if (text._tag === "Failure") return text.failure.message;
+      const sizeError = rowSizeError(unpacked);
+      if (sizeError) return sizeError;
+      if (ids.has(unpacked.id)) return "Duplicate snapshot entry id";
+      ids.add(unpacked.id);
+    }
+    return undefined;
+  }),
+);
 export type PackedIndex = typeof PackedIndex.Type;
+
+export const SnapshotEntry = Schema.Struct({
+  ...CompendiumEntry.fields,
+  ...rowTextFields,
+  rev: Schema.optional(Revision),
+  sourceRev: Schema.optional(Revision),
+  sourceVersion: Schema.optional(Version),
+  body: Schema.String.check(Schema.isMaxLength(compendiumLimits.body)),
+  fields: CompendiumEntry.fields.fields.check(isFiniteJson),
+}).check(
+  identityMatches,
+  Schema.makeFilter((entry) => {
+    // Legacy entries count the implicit revision one in their snapshot row size.
+    return rowSizeError({ ...entry, rev: entry.rev ?? 1 });
+  }),
+);
+export type SnapshotEntry = typeof SnapshotEntry.Type;
 
 export const SnapshotBodies = Schema.Struct({
   format: Schema.Literal("ttrpg-corpus-bodies"),
   formatVersion: Schema.Literal(1),
-  entries: Schema.Array(CompendiumEntry),
-});
-export type SnapshotBodies = typeof SnapshotBodies.Type;
-
-/** Callers pass safe source/type slugs; published version numbers start at one. */
-export const snapshotPrefix = (sourceId: string, version: number): string => {
-  if (!/^[a-z0-9][a-z0-9_-]{0,59}$/.test(sourceId) || sourceId === "world")
-    throw new Error("Invalid source id");
-  if (!Number.isSafeInteger(version) || version < 1 || version > snapshotLimits.version)
-    throw new Error("Invalid source version");
-  return `corpus/${sourceId}/v${version}`;
-};
-
-export const snapshotKeys = (sourceId: string, version: number) => {
-  const prefix = snapshotPrefix(sourceId, version);
-  return {
-    manifest: `${prefix}/manifest.json`,
-    publicIndex: `${prefix}/index.public.json.gz`,
-    dmIndex: `${prefix}/index.dm.json.gz`,
-    body: (typeId: string, visibility: "public" | "dm", chunk: number) => {
+  entries: Schema.Array(SnapshotEntry).check(
+    Schema.isMaxLength(snapshotLimits.chunkEntries, { message: "Too many body chunk entries" }),
+  ),
+}).check(
+  Schema.makeFilter(({ entries }) => {
+    const first = entries[0];
+    const source = first?.id.split("/")[0];
+    const ids = new Set<string>();
+    for (const entry of entries) {
       if (
-        !/^[a-z0-9][a-z0-9_-]{0,59}$/.test(typeId) ||
-        !["public", "dm"].includes(visibility) ||
-        !Number.isSafeInteger(chunk) ||
-        chunk < 0
+        entry.typeId !== first.typeId ||
+        entry.visibility !== first.visibility ||
+        entry.id.split("/")[0] !== source
       )
-        throw new Error("Invalid body chunk");
-      return `${prefix}/bodies/${typeId}.${visibility}.${chunk}.json.gz`;
-    },
-  };
-};
-
-/** Limits bound untrusted snapshots before schema validation and allocation. */
-export const snapshotLimits = {
-  entries: 100_000,
-  chunkEntries: 100,
-  version: 2_147_483_647,
-  indexBytes: 32 * 1024 * 1024,
-  bodyBytes: 64 * 1024 * 1024,
-  manifestBytes: 32 * 1024 * 1024,
-} as const;
-
-const jsonBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
-const safeRevision = (value: number) => Number.isSafeInteger(value) && value >= 1;
-const validSlug = (value: string) => /^[a-z0-9][a-z0-9_-]{0,59}$/.test(value);
-const finiteValues = (value: unknown): boolean => {
-  if (typeof value === "number") return Number.isFinite(value);
-  if (Array.isArray(value)) return value.every(finiteValues);
-  if (typeof value === "object" && value !== null) return Object.values(value).every(finiteValues);
-  return true;
-};
-
-const rowError = (row: IndexRow): string | undefined => {
-  const id = parseEntryId(row.id);
-  if (!id || id.typeId !== row.typeId) return "Invalid snapshot entry identity";
-  if (!safeRevision(row.rev)) return "Invalid snapshot entry revision";
-  if (!finiteValues(row.facets)) return "Snapshot facet numbers must be finite";
-  if (!row.name.trim() || row.name.length > compendiumLimits.name)
-    return "Invalid snapshot entry name";
-  if (row.tags.length > compendiumLimits.tags || row.tags.some((tag) => tag.length > 40))
-    return "Invalid snapshot entry tags";
-  if (row.updatedAt.length > 120) return "Invalid snapshot entry timestamp";
-  if (jsonBytes(row).byteLength > compendiumLimits.entryBytes) return "Snapshot row is too large";
-  return undefined;
-};
-
-const validateRows = (rows: readonly IndexRow[], visibility: EntryVisibility) => {
-  if (rows.length > snapshotLimits.entries) throw new Error("Too many snapshot rows");
-  const ids = new Set<string>();
-  for (const row of rows) {
-    const error = rowError(row);
-    if (error) throw new Error(error);
-    if (row.visibility !== visibility) throw new Error("Snapshot visibility does not match");
-    if (ids.has(row.id)) throw new Error("Duplicate snapshot entry id");
-    ids.add(row.id);
-  }
-};
+        return "Body chunk entries must share source, type and visibility";
+      if (ids.has(entry.id)) return "Duplicate snapshot entry id";
+      ids.add(entry.id);
+    }
+    return undefined;
+  }),
+);
+export type SnapshotBodies = typeof SnapshotBodies.Type;
 
 const gzip = async (value: unknown, maximum: number): Promise<Uint8Array> => {
   const bytes = jsonBytes(value);
@@ -192,9 +357,7 @@ export const encodeIndex = async (
   rows: readonly IndexRow[],
   visibility: EntryVisibility,
 ): Promise<Uint8Array> => {
-  Schema.decodeUnknownSync(EntryVisibility)(visibility);
-  const validated = Schema.decodeUnknownSync(Schema.Array(IndexRow))(rows);
-  validateRows(validated, visibility);
+  const validated = Schema.decodeUnknownSync(SnapshotRows)({ rows, visibility });
   const strings: string[] = [];
   const dictionary = new Map<string, number>();
   const code = (value: string): number => {
@@ -208,9 +371,9 @@ export const encodeIndex = async (
   const packed: PackedIndex = {
     format: "ttrpg-corpus-index",
     formatVersion: 1,
-    visibility,
+    visibility: validated.visibility,
     strings,
-    rows: validated.map((row) => [
+    rows: validated.rows.map((row) => [
       code(row.id),
       code(row.name),
       code(row.typeId),
@@ -230,70 +393,18 @@ export const decodeIndex = async (
   const packed = Schema.decodeUnknownSync(PackedIndex)(
     await gunzip(bytes, snapshotLimits.indexBytes),
   );
+  // The requested visibility is independent of the stored snapshot.
   if (expectedVisibility !== undefined && packed.visibility !== expectedVisibility)
     throw new Error("Snapshot visibility does not match");
-  if (packed.rows.length > snapshotLimits.entries) throw new Error("Too many snapshot rows");
-  const string = (index: number): string => {
-    if (!Number.isSafeInteger(index) || index < 0 || index >= packed.strings.length)
-      throw new Error("Invalid snapshot dictionary index");
-    return packed.strings[index];
-  };
-  const rows = packed.rows.map(([id, name, typeId, tags, updatedAt, rev, facets]): IndexRow => ({
-    id: string(id),
-    name: string(name),
-    typeId: string(typeId),
-    tags: tags.map(string),
-    updatedAt: string(updatedAt),
-    rev,
-    visibility: packed.visibility,
-    ...(facets === null ? {} : { facets }),
-  }));
-  validateRows(rows, packed.visibility);
-  return rows;
-};
-
-const validateEntries = (entries: readonly CompendiumEntry[]) => {
-  if (entries.length > snapshotLimits.chunkEntries) throw new Error("Too many body chunk entries");
-  const ids = new Set<string>();
-  for (const entry of entries) {
-    const first = entries[0];
-    if (
-      entry.typeId !== first.typeId ||
-      entry.visibility !== first.visibility ||
-      parseEntryId(entry.id)?.source !== parseEntryId(first.id)?.source
-    )
-      throw new Error("Body chunk entries must share source, type and visibility");
-    const error = rowError({ ...entry, rev: entry.rev ?? 1 });
-    if (error) throw new Error(error);
-    if (!finiteValues(entry.fields)) throw new Error("Snapshot field numbers must be finite");
-    if (
-      (entry.sourceRev !== undefined && !safeRevision(entry.sourceRev)) ||
-      (entry.sourceVersion !== undefined &&
-        (!safeRevision(entry.sourceVersion) || entry.sourceVersion > snapshotLimits.version))
-    )
-      throw new Error("Invalid source revision or version");
-    if (entry.licence !== undefined) {
-      const licenceIssue = licenceError(entry.licence);
-      if (licenceIssue) throw new Error(licenceIssue);
-    }
-    if (
-      entry.body.length > compendiumLimits.body ||
-      jsonBytes(entry).byteLength > compendiumLimits.entryBytes
-    )
-      throw new Error("Snapshot entry is too large");
-    if (ids.has(entry.id)) throw new Error("Duplicate snapshot entry id");
-    ids.add(entry.id);
-  }
+  return packed.rows.map((row) => unpackRow(packed, row));
 };
 
 export const encodeBodies = async (entries: readonly CompendiumEntry[]): Promise<Uint8Array> => {
-  const validated = Schema.decodeUnknownSync(Schema.Array(CompendiumEntry))(entries);
-  validateEntries(validated);
-  const bodies: SnapshotBodies = {
+  const bodies = Schema.decodeUnknownSync(SnapshotBodies)({
     format: "ttrpg-corpus-bodies",
     formatVersion: 1,
-    entries: validated,
-  };
+    entries,
+  });
   return gzip(bodies, snapshotLimits.bodyBytes);
 };
 
@@ -301,7 +412,6 @@ export const decodeBodies = async (bytes: Uint8Array): Promise<CompendiumEntry[]
   const bodies = Schema.decodeUnknownSync(SnapshotBodies)(
     await gunzip(bytes, snapshotLimits.bodyBytes),
   );
-  validateEntries(bodies.entries);
   return [...bodies.entries];
 };
 
@@ -314,70 +424,5 @@ export const snapshotFile = async (key: string, bytes: Uint8Array): Promise<Snap
   };
 };
 
-export const validateManifest = (value: unknown): SnapshotManifest => {
-  if (jsonBytes(value).byteLength > snapshotLimits.manifestBytes)
-    throw new Error("Snapshot manifest is too large");
-  const manifest = Schema.decodeUnknownSync(SnapshotManifest)(value);
-  const keys = snapshotKeys(manifest.sourceId, manifest.version);
-  if (
-    !validSlug(manifest.systemId) ||
-    !manifest.sourceName.trim() ||
-    manifest.sourceName.length > 200 ||
-    !manifest.publishedAt.trim() ||
-    manifest.publishedAt.length > 120
-  )
-    throw new Error("Invalid snapshot source metadata");
-  const licenceIssue = licenceError(manifest.licence);
-  if (licenceIssue) throw new Error(licenceIssue);
-  if (
-    !Number.isSafeInteger(manifest.entryCount) ||
-    manifest.entryCount < 0 ||
-    manifest.entryCount > snapshotLimits.entries ||
-    manifest.bodyChunks.length > snapshotLimits.entries ||
-    manifest.types.length > compendiumLimits.types
-  )
-    throw new Error("Invalid snapshot entry count");
-  const typeIds = new Set<string>();
-  for (const type of manifest.types) {
-    const error = typeError(type);
-    if (error) throw new Error(error);
-    if (typeIds.has(type.id)) throw new Error("Duplicate snapshot type id");
-    typeIds.add(type.id);
-  }
-  const fileKeys = new Set<string>();
-  const checkFile = (file: SnapshotFile, expected: string, maximum: number) => {
-    if (file.key !== expected) throw new Error("Invalid snapshot file key");
-    if (!Number.isSafeInteger(file.bytes) || file.bytes < 1 || file.bytes > maximum)
-      throw new Error("Invalid snapshot file size");
-    if (!/^[a-f0-9]{64}$/.test(file.sha256)) throw new Error("Invalid snapshot file digest");
-    if (fileKeys.has(file.key)) throw new Error("Duplicate snapshot file key");
-    fileKeys.add(file.key);
-  };
-  checkFile(manifest.publicIndex, keys.publicIndex, snapshotLimits.indexBytes);
-  checkFile(manifest.dmIndex, keys.dmIndex, snapshotLimits.indexBytes);
-  const ids = new Set<string>();
-  for (const chunk of manifest.bodyChunks) {
-    if (!typeIds.has(chunk.typeId)) throw new Error("Unknown snapshot chunk type");
-    if (chunk.ids.length < 1 || chunk.ids.length > snapshotLimits.chunkEntries)
-      throw new Error("Invalid snapshot chunk count");
-    const ordinal = /\.(0|[1-9][0-9]*)\.json\.gz$/.exec(chunk.file.key);
-    const number = ordinal === null ? -1 : Number(ordinal[1]);
-    if (!Number.isSafeInteger(number) || number < 0 || number >= snapshotLimits.entries)
-      throw new Error("Invalid snapshot chunk number");
-    checkFile(
-      chunk.file,
-      keys.body(chunk.typeId, chunk.visibility, number),
-      snapshotLimits.bodyBytes,
-    );
-    for (const id of chunk.ids) {
-      const parsed = parseEntryId(id);
-      if (!parsed || parsed.source !== manifest.sourceId || parsed.typeId !== chunk.typeId)
-        throw new Error("Snapshot chunk entry identity does not match");
-      if (ids.has(id)) throw new Error("Duplicate snapshot entry id");
-      ids.add(id);
-    }
-  }
-  if (ids.size !== manifest.entryCount)
-    throw new Error("Snapshot entry count does not match chunks");
-  return manifest;
-};
+export const validateManifest = (value: unknown): SnapshotManifest =>
+  Schema.decodeUnknownSync(SnapshotManifest)(value);
