@@ -19,6 +19,8 @@ import {
   EnableSourceInput,
   type WorldSource,
   type SourceUpdateSummary,
+  type LibraryEntryDiff,
+  type BlockedEntries,
 } from "../domain/corpus-rpc";
 import {
   type CompendiumEntry,
@@ -114,7 +116,7 @@ export class WorldSources {
   >();
   private readonly chunkMetadata = new Map<
     string,
-    { manifest: SnapshotManifest; chunk: BodyChunk }
+    { manifest: SnapshotManifest; chunk: BodyChunk; rows: ReadonlyMap<string, IndexRow> }
   >();
   private readonly mutations = Semaphore.makeUnsafe(1);
   private readonly decodedChunks: Cache.Cache<
@@ -215,16 +217,18 @@ export class WorldSources {
   private sources(): SourceRow[] {
     return this.sql.exec<SourceRow>("SELECT * FROM world_sources ORDER BY source_id").toArray();
   }
-  private remember(manifest: SnapshotManifest): void {
+  private remember(manifest: SnapshotManifest, rows?: readonly IndexRow[]): void {
     const key = `${manifest.sourceId}/${manifest.version}`;
+    if (this.manifests.has(key)) return;
     this.manifests.set(key, {
       manifest,
       chunks: new Map(
         manifest.bodyChunks.flatMap((chunk) => chunk.ids.map((id) => [id, chunk] as const)),
       ),
     });
+    const indexed = new Map((rows ?? this.rawRows(manifest.sourceId)).map((row) => [row.id, row]));
     for (const chunk of manifest.bodyChunks)
-      this.chunkMetadata.set(chunk.file.key, { manifest, chunk });
+      this.chunkMetadata.set(chunk.file.key, { manifest, chunk, rows: indexed });
   }
   private forget(sourceId: string): void {
     for (const [key, value] of this.manifests) {
@@ -532,7 +536,7 @@ export class WorldSources {
       return this.compendium.replaceSourceRows(manifest.sourceId, effective, manifest.types);
     });
     this.forget(manifest.sourceId);
-    this.remember(manifest);
+    this.remember(manifest, rows);
     this.compendium.notifySources(rev);
     return {
       sourceId: manifest.sourceId,
@@ -645,18 +649,21 @@ export class WorldSources {
           else {
             const before = new Map(this.rawRows(source.source_id).map((row) => [row.id, row]));
             const after = new Map(rows.map((row) => [row.id, row]));
+            const added = rows.filter((row) => !before.has(row.id));
+            const changed = rows.filter(
+              (row) =>
+                before.has(row.id) && JSON.stringify(before.get(row.id)) !== JSON.stringify(row),
+            );
+            const removed = [...before.values()].filter((row) => !after.has(row.id));
             const update: SourceUpdateSummary = {
               fromVersion: source.version,
               toVersion: latest.version,
-              added: rows.filter((row) => !before.has(row.id)).map((row) => row.id),
-              changed: rows
-                .filter(
-                  (row) =>
-                    before.has(row.id) &&
-                    JSON.stringify(before.get(row.id)) !== JSON.stringify(row),
-                )
-                .map((row) => row.id),
-              removed: [...before.keys()].filter((id) => !after.has(id)),
+              added: added.map((row) => row.id),
+              changed: changed.map((row) => row.id),
+              removed: removed.map((row) => row.id),
+              names: Object.fromEntries(
+                [...added, ...changed, ...removed].map((row) => [row.id, row.name]),
+              ),
             };
             this.sql.exec(
               "UPDATE world_sources SET latest_version = ?, update_json = ? WHERE source_id = ?",
@@ -679,8 +686,8 @@ export class WorldSources {
   ) {
     const metadata = this.chunkMetadata.get(key);
     if (!metadata) return yield* Effect.fail(unavailable("Library chunk is unavailable"));
-    const { manifest, chunk } = metadata;
-    const indexed = new Map(chunk.ids.map((id) => [id, this.raw(id)]));
+    const { manifest, chunk, rows } = metadata;
+    const indexed = new Map(chunk.ids.map((id) => [id, rows.get(id)]));
     const entries = yield* this.bytes(chunk.file).pipe(
       Effect.flatMap((bytes) => corpusIO(() => decodeBodies(bytes))),
     );
@@ -728,6 +735,74 @@ export class WorldSources {
     const entries = yield* Cache.get(this.decodedChunks, chunk.file.key);
     return this.sourceVersion(sourceId) === source.version ? entries.get(id) : undefined;
   }, storageFailure);
+
+  private entryDiff = Effect.fn("WorldSources.entryDiff")(function* (
+    this: WorldSources,
+    sourceId: string,
+    entryId: string,
+  ) {
+    // Hold the source version steady while snapshot reads yield.
+    return yield* this.serial(
+      Effect.gen({ self: this }, function* () {
+        const source = this.source(sourceId);
+        if (!source || source.update_json === null)
+          return yield* Effect.fail(new CorpusNotFound({ message: "No pending library update" }));
+        const update = JSON.parse(source.update_json) as SourceUpdateSummary;
+        const offered = `${sourceId}/${update.toVersion}`;
+        // Verify the offered version once; later diffs of the same update reuse it.
+        if (!this.manifests.has(offered)) {
+          const pinned = this.manifest(source);
+          const value = yield* this.call((api, context) =>
+            api.getManifest({ ...context, sourceId, version: update.toVersion }),
+          );
+          if (!value)
+            return yield* Effect.fail(unavailable("Offered library version is unavailable"));
+          // The corpus reply must identify the requested immutable version.
+          if (value.version !== update.toVersion)
+            return yield* Effect.fail(unavailable("Library snapshot identity check failed"));
+          const { manifest, rows } = yield* this.verifyVersion(value, sourceId, pinned.systemId);
+          this.remember(manifest, rows);
+        }
+        const fromChunk = this.chunk(source, entryId);
+        const toChunk = this.manifests.get(offered)?.chunks.get(entryId);
+        if (!fromChunk && !toChunk)
+          return yield* Effect.fail(new CorpusNotFound({ message: "Library entry not found" }));
+        const from = fromChunk
+          ? (yield* Cache.get(this.decodedChunks, fromChunk.file.key)).get(entryId)
+          : undefined;
+        const to = toChunk
+          ? (yield* Cache.get(this.decodedChunks, toChunk.file.key)).get(entryId)
+          : undefined;
+        return {
+          entryId,
+          fromVersion: source.version,
+          toVersion: update.toVersion,
+          ...(from ? { from } : {}),
+          ...(to ? { to } : {}),
+          overridden: this.override(entryId) !== undefined,
+        } satisfies LibraryEntryDiff;
+      }),
+    );
+  }, storageFailure);
+
+  private blockedEntries(): BlockedEntries {
+    const rows = this.sql
+      .exec<{ entry_id: string; row_json: string | null }>(
+        `SELECT b.entry_id, i.row_json FROM entry_blocked b
+        LEFT JOIN source_index i ON i.id = b.entry_id ORDER BY b.entry_id`,
+      )
+      .toArray();
+    return {
+      ids: rows.map((row) => row.entry_id),
+      entries: rows.map((row) => {
+        const entry = row.row_json === null ? undefined : (JSON.parse(row.row_json) as IndexRow);
+        return {
+          id: row.entry_id,
+          ...(entry ? { name: entry.name, typeId: entry.typeId } : {}),
+        };
+      }),
+    };
+  }
 
   bodies = Effect.fn("WorldSources.bodies")(function* (
     this: WorldSources,
@@ -990,13 +1065,10 @@ export class WorldSources {
       yield* this.check();
       return yield* this.list();
     }
-    if (method === "GET" && path === "libraries/blocked")
-      return {
-        ids: this.sql
-          .exec<{ entry_id: string }>("SELECT entry_id FROM entry_blocked ORDER BY entry_id")
-          .toArray()
-          .map((row) => row.entry_id),
-      };
+    if (method === "GET" && path === "libraries/blocked") return this.blockedEntries();
+    const diff = /^libraries\/([^/]+)\/diff\/(.+)$/.exec(path);
+    if (diff && method === "GET")
+      return yield* this.entryDiff(yield* decodeId(diff[1]), yield* decodeId(diff[2]));
     const library = /^libraries\/([^/]+)$/.exec(path);
     if (library && (method === "PUT" || method === "DELETE")) {
       const id = yield* decodeId(library[1]);

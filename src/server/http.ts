@@ -970,6 +970,7 @@ const CompendiumRoutes = [
   compendiumRoute("DELETE", "/blocked/:entryId"),
   compendiumRoute("GET", "", undefined, "libraries"),
   compendiumRoute("GET", "/blocked", undefined, "libraries"),
+  compendiumRoute("GET", "/:sourceId/diff/:entryId", undefined, "libraries"),
   compendiumRoute("PUT", "/:sourceId", EnableSourceInput, "libraries"),
   compendiumRoute("DELETE", "/:sourceId", undefined, "libraries"),
   compendiumRoute("POST", "/check", undefined, "libraries"),
