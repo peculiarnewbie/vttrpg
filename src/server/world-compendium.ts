@@ -56,6 +56,17 @@ type CompendiumEntryRow = CompendiumIndexRow & {
 const indexColumns = "id, type_id, name, tags, visibility, updated_at, rev, facets";
 const normalize = (text: string) =>
   text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
+export type SourceIndexRow = IndexRow & { textKey?: string };
+export const entrySearchText = (entry: CompendiumEntry, type?: EntryType): string =>
+  normalize(
+    [
+      entry.body,
+      ...(type?.fields ?? [])
+        .filter((field) => field.kind === "text" || field.kind === "longtext")
+        .map((field) => entry.fields[field.key])
+        .filter((value) => typeof value === "string"),
+    ].join(" "),
+  );
 const nameWords = (text: string) =>
   normalize(text)
     .split(/[^\p{L}\p{N}]+/u)
@@ -184,20 +195,20 @@ export class WorldCompendium {
   /** Caller holds the transaction encompassing source metadata and index changes. */
   replaceSourceRows(
     sourceId: string,
-    rows: readonly IndexRow[],
+    rows: readonly SourceIndexRow[],
     types: readonly EntryType[],
   ): number {
     return this.writeSourceRows(sourceId, rows, types);
   }
 
   /** The caller writes the world layer and its effective row in the same transaction. */
-  updateSourceEntry(sourceId: string, id: string, row?: IndexRow, rev?: number): number {
+  updateSourceEntry(sourceId: string, id: string, row?: SourceIndexRow, rev?: number): number {
     return this.writeSourceRows(sourceId, row ? [row] : [], [], id, rev);
   }
 
   private writeSourceRows(
     sourceId: string,
-    rows: readonly IndexRow[],
+    rows: readonly SourceIndexRow[],
     types: readonly EntryType[],
     id?: string,
     revision?: number,
@@ -205,7 +216,7 @@ export class WorldCompendium {
     const rev = revision ?? this.bump();
     const next = new Set(rows.map((row) => row.id));
     const previous = this.sql
-      .exec<CompendiumIndexRow & { source_rev: number }>(
+      .exec<CompendiumIndexRow & { source_rev: number; text_key: string }>(
         `SELECT * FROM compendium_entries WHERE source_id = ? ${id === undefined ? "" : "AND id = ?"}`,
         sourceId,
         ...(id === undefined ? [] : [id]),
@@ -237,6 +248,7 @@ export class WorldCompendium {
         old.tags !== JSON.stringify(row.tags) ||
         old.visibility !== row.visibility ||
         old.updated_at !== row.updatedAt ||
+        old.text_key !== (row.textKey ?? "") ||
         old.facets !== (row.facets ? JSON.stringify(row.facets) : null)
       );
     });
@@ -244,8 +256,8 @@ export class WorldCompendium {
       const batch = changed.slice(start, start + 6);
       this.sql.exec(
         `INSERT INTO compendium_entries (id, type_id, name, tags, body, fields, visibility, updated_at, rev, name_key, name_words, tags_key, text_key, facets, source_rev, source_id)
-        VALUES ${batch.map(() => "(?, ?, ?, ?, '', '{}', ?, ?, ?, ?, ?, ?, '', ?, ?, ?)").join(",")}
-        ON CONFLICT(id) DO UPDATE SET type_id=excluded.type_id, name=excluded.name, tags=excluded.tags, body='', fields='{}', visibility=excluded.visibility, updated_at=excluded.updated_at, rev=excluded.rev, name_key=excluded.name_key, name_words=excluded.name_words, tags_key=excluded.tags_key, text_key='', facets=excluded.facets, source_rev=excluded.source_rev, source_id=excluded.source_id`,
+        VALUES ${batch.map(() => "(?, ?, ?, ?, '', '{}', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(",")}
+        ON CONFLICT(id) DO UPDATE SET type_id=excluded.type_id, name=excluded.name, tags=excluded.tags, body='', fields='{}', visibility=excluded.visibility, updated_at=excluded.updated_at, rev=excluded.rev, name_key=excluded.name_key, name_words=excluded.name_words, tags_key=excluded.tags_key, text_key=excluded.text_key, facets=excluded.facets, source_rev=excluded.source_rev, source_id=excluded.source_id`,
         ...batch.flatMap((row) => [
           row.id,
           row.typeId,
@@ -257,6 +269,7 @@ export class WorldCompendium {
           normalize(row.name),
           nameWords(row.name),
           normalize(row.tags.join(" ")),
+          row.textKey ?? "",
           row.facets ? JSON.stringify(row.facets) : null,
           row.rev,
           sourceId,
@@ -904,11 +917,6 @@ export class WorldCompendium {
         entry.id,
       )
       .toArray()[0];
-    const text = (type?.fields ?? [])
-      .filter((field) => field.kind === "text" || field.kind === "longtext")
-      .map((field) => entry.fields[field.key])
-      .filter((value) => typeof value === "string")
-      .join(" ");
     const facets = type ? entryFacets(entry, type) : undefined;
     this.sql.exec(
       `INSERT INTO compendium_entries (id, type_id, name, tags, body, fields, visibility, updated_at, rev, name_key, name_words, tags_key, text_key, facets, licence, source_id)
@@ -928,7 +936,7 @@ export class WorldCompendium {
       normalize(entry.name),
       nameWords(entry.name),
       normalize(entry.tags.join(" ")),
-      normalize(`${entry.body} ${text}`),
+      entrySearchText(entry, type),
       facets === undefined ? null : JSON.stringify(facets),
       entry.licence ? JSON.stringify(entry.licence) : null,
       librarySource(entry.id) ?? null,

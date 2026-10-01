@@ -49,7 +49,12 @@ import {
   type SnapshotFile,
   type BodyChunk,
 } from "../domain/snapshot";
-import { compatibleType, type WorldCompendium } from "./world-compendium";
+import {
+  compatibleType,
+  entrySearchText,
+  type SourceIndexRow,
+  type WorldCompendium,
+} from "./world-compendium";
 import { nowIso } from "./crypto";
 
 // Kept as an alias for callers migrating to the shared world storage layer.
@@ -94,6 +99,7 @@ const storageFailure = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     ),
   );
 type VerifiedVersion = { manifest: SnapshotManifest; rows: readonly IndexRow[] };
+type VerifiedBody = { entry: CompendiumEntry; type: EntryType; row: IndexRow };
 type SourceRow = {
   source_id: string;
   version: number;
@@ -101,6 +107,7 @@ type SourceRow = {
   manifest: string;
   latest_version: number | null;
   update_json: string | null;
+  text_indexed: number;
 };
 type RawRow = { id: string; source_id: string; row_json: string };
 const decodeId = (id: string) =>
@@ -108,7 +115,7 @@ const decodeId = (id: string) =>
     try: () => decodeURIComponent(id),
     catch: () => new CorpusInvalid({ message: "Invalid encoded entry id" }),
   });
-/** World enablement never leaves this DO. Only manifests and compact indexes are stored here. */
+/** World enablement and search indexes stay in this DO; full bodies stay in R2. */
 export class WorldSources {
   private readonly manifests = new Map<
     string,
@@ -121,7 +128,7 @@ export class WorldSources {
   private readonly mutations = Semaphore.makeUnsafe(1);
   private readonly decodedChunks: Cache.Cache<
     string,
-    ReadonlyMap<string, CompendiumEntry>,
+    ReadonlyMap<string, VerifiedBody>,
     CorpusError
   >;
 
@@ -134,7 +141,7 @@ export class WorldSources {
     private readonly corpus: typeof CorpusClient.Service,
     private readonly bucket: typeof CorpusBucket.Service,
     private readonly accountId: typeof CorpusAccountId.Service,
-    decodedChunks: Cache.Cache<string, ReadonlyMap<string, CompendiumEntry>, CorpusError>,
+    decodedChunks: Cache.Cache<string, ReadonlyMap<string, VerifiedBody>, CorpusError>,
     private readonly verifiedVersions: Cache.Cache<string, VerifiedVersion, CorpusUnavailable>,
   ) {
     this.decodedChunks = decodedChunks;
@@ -151,14 +158,13 @@ export class WorldSources {
       const bucket = yield* CorpusBucket;
       const accountId = yield* CorpusAccountId;
       let sources: WorldSources;
-      const chunks = yield* Cache.makeWith<
-        string,
-        ReadonlyMap<string, CompendiumEntry>,
-        CorpusError
-      >((key) => sources.loadChunk(key), {
-        capacity: 32,
-        timeToLive: (exit) => (Exit.isSuccess(exit) ? Infinity : 0),
-      });
+      const chunks = yield* Cache.makeWith<string, ReadonlyMap<string, VerifiedBody>, CorpusError>(
+        (key) => sources.loadChunk(key),
+        {
+          capacity: 4,
+          timeToLive: (exit) => (Exit.isSuccess(exit) ? Infinity : 0),
+        },
+      );
       const versions = yield* Cache.makeWith<string, VerifiedVersion, CorpusUnavailable>(
         () => Effect.fail(unavailable("Library version has not been verified")),
         { capacity: 2 },
@@ -183,8 +189,17 @@ export class WorldSources {
     storageIO(() => {
       this.sql.exec(`CREATE TABLE IF NOT EXISTS world_sources (
       source_id TEXT PRIMARY KEY, version INTEGER NOT NULL, mode TEXT NOT NULL,
-      manifest TEXT NOT NULL, latest_version INTEGER, update_json TEXT
+      manifest TEXT NOT NULL, latest_version INTEGER, update_json TEXT, text_indexed INTEGER NOT NULL DEFAULT 0
     )`);
+      if (
+        !this.sql
+          .exec<{ name: string }>("PRAGMA table_info(world_sources)")
+          .toArray()
+          .some((column) => column.name === "text_indexed")
+      )
+        this.sql.exec(
+          "ALTER TABLE world_sources ADD COLUMN text_indexed INTEGER NOT NULL DEFAULT 0",
+        );
       this.sql.exec(
         "CREATE TABLE IF NOT EXISTS source_index (id TEXT PRIMARY KEY, source_id TEXT NOT NULL, row_json TEXT NOT NULL)",
       );
@@ -270,15 +285,15 @@ export class WorldSources {
   ownsType(id: string): boolean {
     return this.sources().some((row) => this.manifest(row).types.some((type) => type.id === id));
   }
-  private rawRows(sourceId: string): IndexRow[] {
+  private rawRows(sourceId: string): SourceIndexRow[] {
     return this.sql
       .exec<RawRow>("SELECT * FROM source_index WHERE source_id = ?", sourceId)
       .toArray()
-      .map((row) => JSON.parse(row.row_json) as IndexRow);
+      .map((row) => JSON.parse(row.row_json) as SourceIndexRow);
   }
-  private raw(id: string): IndexRow | undefined {
+  private raw(id: string): SourceIndexRow | undefined {
     const row = this.sql.exec<RawRow>("SELECT * FROM source_index WHERE id = ?", id).toArray()[0];
-    return row ? (JSON.parse(row.row_json) as IndexRow) : undefined;
+    return row ? (JSON.parse(row.row_json) as SourceIndexRow) : undefined;
   }
   private override(id: string): EntryOverride | undefined {
     const row = this.sql
@@ -467,7 +482,12 @@ export class WorldSources {
         new CorpusConflict({ message: "A world can have at most 50 entry types" }),
       );
   }, storageFailure);
-  private effective(row: IndexRow, type: EntryType, override?: EntryOverride): IndexRow {
+  private effective(
+    row: SourceIndexRow,
+    type: EntryType,
+    override?: EntryOverride,
+    textKey = row.textKey,
+  ): SourceIndexRow {
     if (!override) return row;
     const patch = override.patch;
     let facets: Record<string, number | string | boolean | readonly string[]> | undefined =
@@ -489,6 +509,7 @@ export class WorldSources {
     }
     return {
       ...row,
+      textKey,
       name: patch.name ?? row.name,
       tags: patch.tags ?? row.tags,
       visibility: row.visibility === "dm" ? "dm" : (patch.visibility ?? row.visibility),
@@ -496,15 +517,31 @@ export class WorldSources {
       facets,
     };
   }
-  private effectiveRows(rows: readonly IndexRow[], types: readonly EntryType[]): IndexRow[] {
-    const byType = new Map(types.map((type) => [type.id, type]));
-    return rows.flatMap((row) => {
-      const type = byType.get(row.typeId);
-      return type && !this.blocked(row.id)
-        ? [this.effective(row, type, this.override(row.id))]
-        : [];
-    });
-  }
+  private effectiveRow = Effect.fn("WorldSources.effectiveRow")(function* (
+    this: WorldSources,
+    row: SourceIndexRow,
+    type: EntryType,
+    override?: EntryOverride,
+  ) {
+    const patch = override?.patch;
+    const textFields = type.fields.filter(
+      (field) => field.kind === "text" || field.kind === "longtext",
+    );
+    if (
+      patch &&
+      (patch.body !== undefined ||
+        textFields.some(
+          (field) =>
+            Object.hasOwn(patch.fields ?? {}, field.key) || patch.removeFields?.includes(field.key),
+        ))
+    ) {
+      const base = yield* this.base(row.id);
+      if (!base) return yield* Effect.fail(unavailable("Library entry is unavailable"));
+      const applied = yield* verified(() => applyOverride(base, override));
+      return this.effective(row, type, override, entrySearchText(applied, type));
+    }
+    return this.effective(row, type, override);
+  });
   private ingest = Effect.fn("WorldSources.ingest")(function* (
     this: WorldSources,
     manifest: SnapshotManifest,
@@ -513,11 +550,25 @@ export class WorldSources {
     latestVersion: number,
   ) {
     yield* this.validateTypes(manifest);
-    const effective = this.effectiveRows(rows, manifest.types);
+    this.remember(manifest, rows);
+    const searchable: SourceIndexRow[] = [];
+    const effective: SourceIndexRow[] = [];
+    // Keep only derived text between chunks; full bodies stay in R2.
+    for (const chunk of manifest.bodyChunks) {
+      const entries = yield* Cache.get(this.decodedChunks, chunk.file.key);
+      for (const { entry, type, row: indexedRow } of entries.values()) {
+        const row = { ...indexedRow, textKey: entrySearchText(entry, type) };
+        searchable.push(row);
+        if (this.blocked(entry.id)) continue;
+        const override = this.override(entry.id);
+        const applied = override ? yield* verified(() => applyOverride(entry, override)) : entry;
+        effective.push(this.effective(row, type, override, entrySearchText(applied, type)));
+      }
+    }
     const rev = yield* this.transactionSync(() => {
       this.sql.exec(
-        `INSERT INTO world_sources (source_id, version, mode, manifest, latest_version, update_json) VALUES (?, ?, ?, ?, ?, NULL)
-        ON CONFLICT(source_id) DO UPDATE SET version=excluded.version, mode=excluded.mode, manifest=excluded.manifest, latest_version=excluded.latest_version, update_json=NULL`,
+        `INSERT INTO world_sources (source_id, version, mode, manifest, latest_version, update_json, text_indexed) VALUES (?, ?, ?, ?, ?, NULL, 1)
+        ON CONFLICT(source_id) DO UPDATE SET version=excluded.version, mode=excluded.mode, manifest=excluded.manifest, latest_version=excluded.latest_version, update_json=NULL, text_indexed=1`,
         manifest.sourceId,
         manifest.version,
         mode,
@@ -526,8 +577,8 @@ export class WorldSources {
       );
       this.sql.exec("DELETE FROM source_index WHERE source_id = ?", manifest.sourceId);
       // Batch below SQLite's parameter limit, including large 10k indexes in one atomic transaction.
-      for (let start = 0; start < rows.length; start += 20) {
-        const batch = rows.slice(start, start + 20);
+      for (let start = 0; start < searchable.length; start += 20) {
+        const batch = searchable.slice(start, start + 20);
         this.sql.exec(
           `INSERT INTO source_index (id, source_id, row_json) VALUES ${batch.map(() => "(?, ?, ?)").join(",")}`,
           ...batch.flatMap((row) => [row.id, manifest.sourceId, JSON.stringify(row)]),
@@ -536,7 +587,7 @@ export class WorldSources {
       return this.compendium.replaceSourceRows(manifest.sourceId, effective, manifest.types);
     });
     this.forget(manifest.sourceId);
-    this.remember(manifest, rows);
+    this.remember(manifest, searchable);
     this.compendium.notifySources(rev);
     return {
       sourceId: manifest.sourceId,
@@ -579,7 +630,7 @@ export class WorldSources {
         if (input.version !== undefined && value.version !== input.version)
           return yield* Effect.fail(unavailable("Library snapshot identity check failed"));
         const previous = this.source(sourceId);
-        if (previous?.version === value.version) {
+        if (previous?.version === value.version && previous.text_indexed === 1) {
           yield* storageIO(() =>
             this.sql.exec(
               "UPDATE world_sources SET mode = ? WHERE source_id = ?",
@@ -619,7 +670,7 @@ export class WorldSources {
     return yield* this.serial(
       Effect.gen({ self: this }, function* () {
         yield* this.requireAvailable();
-        for (const source of this.sources()) {
+        for (let source of this.sources()) {
           const latestValue = yield* this.call((api, context) =>
             api.getLatest({ ...context, sourceId: source.source_id }),
           );
@@ -632,6 +683,16 @@ export class WorldSources {
             this.forget(source.source_id);
             this.compendium.notifySources(rev);
             continue;
+          }
+          // Older enabled libraries have index rows but no derived body text.
+          if (source.text_indexed !== 1) {
+            yield* this.ingest(
+              this.manifest(source),
+              this.rawRows(source.source_id),
+              source.mode,
+              source.latest_version ?? latestValue.version,
+            );
+            source = { ...source, text_indexed: 1, update_json: null };
           }
           if (
             latestValue.version <= source.version ||
@@ -647,7 +708,9 @@ export class WorldSources {
           );
           if (source.mode === "follow") yield* this.ingest(latest, rows, "follow", latest.version);
           else {
-            const before = new Map(this.rawRows(source.source_id).map((row) => [row.id, row]));
+            const before = new Map(
+              this.rawRows(source.source_id).map(({ textKey: _textKey, ...row }) => [row.id, row]),
+            );
             const after = new Map(rows.map((row) => [row.id, row]));
             const added = rows.filter((row) => !before.has(row.id));
             const changed = rows.filter(
@@ -686,14 +749,21 @@ export class WorldSources {
   ) {
     const metadata = this.chunkMetadata.get(key);
     if (!metadata) return yield* Effect.fail(unavailable("Library chunk is unavailable"));
-    const { manifest, chunk, rows } = metadata;
+    return yield* this.readChunk(metadata.manifest, metadata.chunk, metadata.rows);
+  }, storageFailure);
+  private readChunk = Effect.fn("WorldSources.readChunk")(function* (
+    this: WorldSources,
+    manifest: SnapshotManifest,
+    chunk: BodyChunk,
+    rows: ReadonlyMap<string, IndexRow>,
+  ) {
     const indexed = new Map(chunk.ids.map((id) => [id, rows.get(id)]));
     const entries = yield* this.bytes(chunk.file).pipe(
       Effect.flatMap((bytes) => corpusIO(() => decodeBodies(bytes))),
     );
     if (entries.length !== chunk.ids.length)
       return yield* Effect.fail(unavailable("Invalid library body chunk"));
-    const byId = new Map<string, CompendiumEntry>();
+    const byId = new Map<string, VerifiedBody>();
     const types = new Map(manifest.types.map((type) => [type.id, type]));
     for (const entry of entries) {
       const row = indexed.get(entry.id);
@@ -712,13 +782,17 @@ export class WorldSources {
       )
         return yield* Effect.fail(unavailable("Invalid library body entry"));
       byId.set(entry.id, {
-        ...entry,
-        licence: inheritLicence(manifest.licence, entry.licence),
-        sourceRev: row.rev,
-        sourceVersion: manifest.version,
+        entry: {
+          ...entry,
+          licence: inheritLicence(manifest.licence, entry.licence),
+          sourceRev: row.rev,
+          sourceVersion: manifest.version,
+        },
+        type,
+        row,
       });
     }
-    return byId as ReadonlyMap<string, CompendiumEntry>;
+    return byId;
   }, storageFailure);
 
   private chunk(source: SourceRow, id: string): BodyChunk | undefined {
@@ -733,7 +807,7 @@ export class WorldSources {
     const chunk = this.chunk(source, id);
     if (!chunk) return undefined;
     const entries = yield* Cache.get(this.decodedChunks, chunk.file.key);
-    return this.sourceVersion(sourceId) === source.version ? entries.get(id) : undefined;
+    return this.sourceVersion(sourceId) === source.version ? entries.get(id)?.entry : undefined;
   }, storageFailure);
 
   private entryDiff = Effect.fn("WorldSources.entryDiff")(function* (
@@ -768,10 +842,10 @@ export class WorldSources {
         if (!fromChunk && !toChunk)
           return yield* Effect.fail(new CorpusNotFound({ message: "Library entry not found" }));
         const from = fromChunk
-          ? (yield* Cache.get(this.decodedChunks, fromChunk.file.key)).get(entryId)
+          ? (yield* Cache.get(this.decodedChunks, fromChunk.file.key)).get(entryId)?.entry
           : undefined;
         const to = toChunk
-          ? (yield* Cache.get(this.decodedChunks, toChunk.file.key)).get(entryId)
+          ? (yield* Cache.get(this.decodedChunks, toChunk.file.key)).get(entryId)?.entry
           : undefined;
         return {
           entryId,
@@ -795,7 +869,8 @@ export class WorldSources {
     return {
       ids: rows.map((row) => row.entry_id),
       entries: rows.map((row) => {
-        const entry = row.row_json === null ? undefined : (JSON.parse(row.row_json) as IndexRow);
+        const entry =
+          row.row_json === null ? undefined : (JSON.parse(row.row_json) as SourceIndexRow);
         return {
           id: row.entry_id,
           ...(entry ? { name: entry.name, typeId: entry.typeId } : {}),
@@ -838,7 +913,7 @@ export class WorldSources {
     for (const [key, group] of groups) {
       const entries = yield* Cache.get(this.decodedChunks, key);
       for (const item of group) {
-        const entry = entries.get(item.id);
+        const entry = entries.get(item.id)?.entry;
         if (entry) loaded.set(item.id, entry);
       }
     }
@@ -895,7 +970,7 @@ export class WorldSources {
     const prepared: {
       sourceId: string;
       override: EntryOverride;
-      row?: IndexRow;
+      row?: SourceIndexRow;
     }[] = [];
     for (const item of entries) {
       const sourceId = librarySource(item.id);
@@ -977,7 +1052,9 @@ export class WorldSources {
       prepared.push({
         sourceId,
         override,
-        row: this.blocked(item.id) ? undefined : this.effective(row, type, override),
+        row: this.blocked(item.id)
+          ? undefined
+          : this.effective(row, type, override, entrySearchText(applied, type)),
       });
     }
     return {
@@ -1036,7 +1113,10 @@ export class WorldSources {
     const error = entryError({ ...applied, id: undefined }, type);
     if (error) return yield* Effect.fail(new CorpusInvalid({ message: error }));
     const raw = this.raw(id);
-    const effective = raw && !this.blocked(id) ? this.effective(raw, type, override) : undefined;
+    const effective =
+      raw && !this.blocked(id)
+        ? this.effective(raw, type, override, entrySearchText(applied, type))
+        : undefined;
     const rev = yield* this.transactionSync(() => {
       this.sql.exec(
         "INSERT INTO entry_overrides (entry_id, override_json) VALUES (?, ?) ON CONFLICT(entry_id) DO UPDATE SET override_json=excluded.override_json",
@@ -1097,7 +1177,7 @@ export class WorldSources {
             const override = entry[1] === "overrides" ? undefined : this.override(id);
             const blocked = entry[1] === "blocked" ? method === "PUT" : this.blocked(id);
             const effective =
-              raw && type && !blocked ? this.effective(raw, type, override) : undefined;
+              raw && type && !blocked ? yield* this.effectiveRow(raw, type, override) : undefined;
             const rev = yield* this.transactionSync(() => {
               if (entry[1] === "overrides")
                 this.sql.exec("DELETE FROM entry_overrides WHERE entry_id = ?", id);
