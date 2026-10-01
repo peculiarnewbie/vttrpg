@@ -578,7 +578,7 @@ function FacetControl(props: {
                     }
                   />
                   <span {...sx(c.optionLabel)}>{option ? "Yes" : "No"}</span>
-                  <span {...sx(c.facetCount)}>{option ? flag().yes : flag().no}</span>
+                  <span {...sx(c.facetCount)}>{option ? flag().true : flag().false}</span>
                 </label>
               )}
             </For>

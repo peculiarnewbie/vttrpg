@@ -10,6 +10,9 @@ import type { SheetRoll } from "../components/sheet-blocks";
 import { CompendiumPanel, EntryCard } from "../components/compendium";
 import { CompendiumBrowser } from "../components/compendium-browser";
 import { createCompendium } from "../client/compendium";
+import { createIndexedDbIndexCache } from "../client/index-cache";
+
+const indexCache = createIndexedDbIndexCache();
 import { formatRefLink } from "../domain/entry-links";
 import type { CompendiumEntry } from "../domain/compendium";
 import { Chat } from "../components/chat";
@@ -112,7 +115,16 @@ export default function WorldPage() {
   const [presence, setPresence] = createSignal<PresenceMember[]>([]);
   const [activeRolls, setActiveRolls] = createSignal<ChatMessage[]>([]);
   const [tab, setTab] = createSignal<Tab>("sheets");
-  const compendium = createCompendium(params.id);
+  // The index persists per world, account and role, so a reload syncs only what changed.
+  const compendium = createCompendium(params.id, undefined, {
+    cache: {
+      store: indexCache,
+      key: session.ready.then(({ user, worlds }) => {
+        const role = worlds.find((world) => world.id === params.id)?.role;
+        return user && role ? `${params.id}:${user.id}:${role}` : undefined;
+      }),
+    },
+  });
   // An entry opened from a sheet shows over the table; the Compendium tab keeps its own place.
   const [openEntry, setOpenEntry] = createSignal<string | null>(null);
   const [error, setError] = createSignal("");

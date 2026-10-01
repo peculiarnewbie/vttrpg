@@ -73,8 +73,12 @@ type CompendiumDependencies = {
 };
 
 export type CompendiumOptions = {
-  /** Include world, account and role in the key: different viewers see different rows. */
-  cache?: { store: IndexCache; key: string };
+  /**
+   * Include world, account and role in the key: different viewers see different
+   * rows. A promise when the key isn't known yet (the session is loading);
+   * `undefined` skips the cache.
+   */
+  cache?: { store: IndexCache; key: string | Promise<string | undefined> };
 };
 
 export function createCompendium(
@@ -112,13 +116,14 @@ export function createCompendium(
   let writeTimer: ReturnType<typeof setTimeout> | undefined;
   let writing = false;
   let dirty = false;
+  let cacheKey: string | undefined;
   const persist = async () => {
     writeTimer = undefined;
-    if (!options.cache || writing || !dirty) return;
+    if (!options.cache || !cacheKey || writing || !dirty) return;
     dirty = false;
     writing = true;
     try {
-      await options.cache.store.write(options.cache.key, {
+      await options.cache.store.write(cacheKey, {
         format: 1,
         rev,
         types,
@@ -200,7 +205,9 @@ export function createCompendium(
     (initialization ??= (async () => {
       if (!options.cache) return;
       try {
-        const stored = await options.cache.store.read(options.cache.key);
+        cacheKey = await options.cache.key;
+        if (!cacheKey) return;
+        const stored = await options.cache.store.read(cacheKey);
         // A cache read may finish after the world page has been disposed.
         if (stored && !disposed) {
           applyIndex({
