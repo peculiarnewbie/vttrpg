@@ -12,7 +12,7 @@ import {
   CorpusBinding,
   Features,
 } from "./server/services";
-import { corpusEnabled, type CorpusBindings } from "./server/corpus-env";
+import { corpusAdminEnabled, corpusEnabled, type CorpusBindings } from "./server/corpus-env";
 import { WorldDO } from "./server/world-do";
 
 export { WorldDO };
@@ -72,7 +72,7 @@ export default {
         Context.add(Bucket, env.BUCKET),
         Context.add(WorldNamespace, env.WORLDS),
         Context.add(CurrentUser, user),
-        Context.add(CorpusBinding, corpusEnabled(env) ? env.CORPUS! : null),
+        Context.add(CorpusBinding, corpusAdminEnabled(env) ? env.CORPUS! : null),
         Context.add(Features, { corpus: corpusEnabled(env) }),
       );
       return handler(request, context);

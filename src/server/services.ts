@@ -16,6 +16,7 @@ export class CurrentUser extends Context.Service<CurrentUser, AuthUser | null>()
   "ttrpg/CurrentUser",
 ) {}
 
+/** The corpus for management routes; null unless `corpus-admin` is on. */
 export class CorpusBinding extends Context.Service<CorpusBinding, CorpusApi | null>()(
   "ttrpg/Corpus",
 ) {}

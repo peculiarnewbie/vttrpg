@@ -97,7 +97,7 @@ export async function startTabletop(options: TabletopOptions = {}) {
             ? {
                 serviceBindings: { CORPUS: { name: "corpus", entrypoint: "CorpusEntrypoint" } },
                 r2Buckets: { BUCKET: "BUCKET", CORPUS_BUCKET: "corpus-snapshots" },
-                bindings: { FLAGS: "corpus" },
+                bindings: { FLAGS: "corpus,corpus-admin" },
               }
             : {}),
           ...options.workerOptions,

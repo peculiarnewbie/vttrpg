@@ -8,7 +8,7 @@
     "deploy:production": "wrangler deploy --env=\"\"",
     "deploy:preview": "wrangler deploy --env preview",
     "dev": "pnpm db:migrate:local && pnpm build && wrangler dev --env=\"\" --var FLAGS:",
-    "dev:all": "pnpm db:migrate:local && pnpm db:corpus:migrate:local && pnpm build && wrangler dev -c wrangler.jsonc -c workers/corpus/wrangler.jsonc --persist-to .wrangler/state",
+    "dev:all": "pnpm db:migrate:local && pnpm db:corpus:migrate:local && pnpm build && wrangler dev -c wrangler.jsonc -c workers/corpus/wrangler.jsonc --persist-to .wrangler/state --var FLAGS:corpus,corpus-admin",
     "deploy:corpus": "wrangler deploy -c workers/corpus/wrangler.jsonc --env=\"\"",
     "deploy:corpus:preview": "wrangler deploy -c workers/corpus/wrangler.jsonc --env preview",
     "db:corpus:migrate:local": "wrangler d1 migrations apply CORPUS_DB -c workers/corpus/wrangler.jsonc --local --env=\"\" --persist-to .wrangler/state",

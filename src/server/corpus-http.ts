@@ -21,7 +21,7 @@ type Action = (
   sourceId: string,
 ) => Promise<unknown>;
 
-/** Same-origin authenticated management; the corpus has no public HTTP route. */
+/** Management for local dev and tests only (`corpus-admin`); the corpus has no public HTTP route. */
 const corpusRoute = (
   method: "GET" | "PUT" | "POST" | "DELETE",
   path: string,
@@ -32,15 +32,11 @@ const corpusRoute = (
     method,
     `/api/corpus${path}`,
     Effect.gen(function* () {
+      const corpus = yield* CorpusBinding;
+      if (!corpus) return HttpServerResponse.jsonUnsafe({ error: "Not found" }, { status: 404 });
       const user = yield* CurrentUser;
       if (!user)
         return HttpServerResponse.jsonUnsafe({ error: "Sign in required" }, { status: 401 });
-      const corpus = yield* CorpusBinding;
-      if (!corpus)
-        return HttpServerResponse.jsonUnsafe(
-          { error: "Libraries are unavailable" },
-          { status: 503 },
-        );
       const params = yield* HttpRouter.params;
       let body: unknown;
       if (schema) {

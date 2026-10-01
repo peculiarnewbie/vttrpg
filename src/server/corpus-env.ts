@@ -10,3 +10,7 @@ export type CorpusBindings = {
 
 export const corpusEnabled = (env: CorpusBindings): boolean =>
   featureFlags(env.FLAGS).corpus && !!env.CORPUS && !!env.CORPUS_BUCKET;
+
+/** The `/api/corpus` management routes; see `corpus-admin` in domain/flags. */
+export const corpusAdminEnabled = (env: CorpusBindings): boolean =>
+  corpusEnabled(env) && featureFlags(env.FLAGS).corpusAdmin;
