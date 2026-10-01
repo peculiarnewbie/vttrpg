@@ -1,3 +1,7 @@
+import { fromReply } from "./reply";
+import type { WorldDO } from "./world-do";
+import type { Caller } from "./world-rpc";
+import { SaveWorldCharacterInput, SaveWorldTemplateInput, inputMessage } from "./world-do";
 import { canEditCharacter } from "./world-do";
 import { CorpusRoutes } from "./corpus-http";
 import { EnableSourceInput } from "../domain/corpus-rpc";
@@ -5,7 +9,6 @@ import { SaveOverrideInput } from "../domain/overrides";
 import { canSeeNote } from "../domain/note-permissions";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { layoutLimitsError } from "../domain/template-io";
 import {
   CompendiumPack,
   EntryBodiesInput,
@@ -20,26 +23,19 @@ import {
   CreateWorldInput,
   DevGoogleInput,
   LoginInput,
-  SaveCharacterInput,
   SaveNoteInput,
-  SaveTemplateInput,
   UpdateMemberInput,
   type ChatMessage,
-  type Character,
   type MemberRole,
-  type Note,
-  type NoteSummary,
   type WorldMember,
   type WorldSummary,
 } from "../domain/schemas";
 import {
   BoardAssetId,
-  BoardSnapshot,
   MAX_BOARD_IMAGE_BYTES,
   PublishBoardInput,
   CreateSceneInput,
   UpdateSceneInput,
-  type SceneMetadata,
 } from "../domain/board";
 import { hashPassword, randomToken, verifyPassword } from "./crypto";
 import * as repo from "./db";
@@ -51,6 +47,7 @@ import {
   D1,
   Forbidden,
   NotFound,
+  Unavailable,
   Unauthorized,
   WorldNamespace,
   requireUser,
@@ -61,7 +58,20 @@ const json = (body: unknown, status = 200) => HttpServerResponse.jsonUnsafe(body
 
 const SESSION_COOKIE = "ttrpg_session";
 
-type Stub = ReturnType<DurableObjectNamespace["getByName"]>;
+const caller = (member: WorldMember): Caller => ({
+  memberId: member.id,
+  displayName: member.displayName,
+  role: member.role,
+});
+
+const bindingIO = <A>(operation: () => Promise<A>) =>
+  Effect.tryPromise({ try: operation, catch: (cause) => cause }).pipe(
+    Effect.catch((cause) =>
+      Effect.logError(cause).pipe(
+        Effect.andThen(Effect.fail(new Unavailable({ message: "World service unavailable" }))),
+      ),
+    ),
+  );
 
 const readBody = <S extends Schema.ConstraintDecoder<unknown>>(schema: S) =>
   Effect.gen(function* () {
@@ -77,34 +87,11 @@ const readBody = <S extends Schema.ConstraintDecoder<unknown>>(schema: S) =>
     }
     const decoded = Schema.decodeUnknownResult(schema)(parsed);
     if (decoded._tag === "Failure") {
-      return yield* Effect.fail(new BadRequest({ message: "Invalid request body" }));
+      return yield* Effect.fail(
+        new BadRequest({ message: inputMessage(decoded.failure, "Invalid request body") }),
+      );
     }
     return decoded.success;
-  });
-
-const doJson = <T>(stub: Stub, path: string, init: RequestInit, member: WorldMember) =>
-  Effect.gen(function* () {
-    const headers = new Headers(init.headers);
-    headers.set("x-ttrpg-member-id", member.id);
-    headers.set("x-ttrpg-member-name", member.displayName);
-    headers.set("x-ttrpg-role", member.role);
-    const response = yield* Effect.promise(() =>
-      stub.fetch(new Request(`https://do/internal/${path}`, { ...init, headers })),
-    );
-    if (!response.ok) {
-      const errorBody = yield* Effect.promise(() =>
-        response
-          .clone()
-          .json()
-          .then((body) => body as { error?: string })
-          .catch(() => ({}) as { error?: string }),
-      );
-      const message = errorBody.error ?? `World service error (${response.status})`;
-      if (response.status === 403) return yield* Effect.fail(new Forbidden({ message }));
-      if (response.status === 400) return yield* Effect.fail(new BadRequest({ message }));
-      return yield* Effect.fail(new NotFound({ message }));
-    }
-    return (yield* Effect.promise(() => response.json())) as T;
   });
 
 const loadWorld = (roles?: MemberRole[]) =>
@@ -125,7 +112,7 @@ const loadWorld = (roles?: MemberRole[]) =>
       return yield* Effect.fail(new Forbidden({ message: "You do not have permission" }));
     }
     const namespace = yield* WorldNamespace;
-    const stub = namespace.getByName(world.do_name);
+    const stub = (namespace as DurableObjectNamespace<WorldDO>).getByName(world.do_name);
     return { db, user, world, member, stub };
   });
 
@@ -137,12 +124,14 @@ const route = <R>(
     Effect.catchTag("Forbidden", (error) => Effect.succeed(json({ error: error.message }, 403))),
     Effect.catchTag("NotFound", (error) => Effect.succeed(json({ error: error.message }, 404))),
     Effect.catchTag("BadRequest", (error) => Effect.succeed(json({ error: error.message }, 400))),
+    Effect.catchTag("Conflict", (error) => Effect.succeed(json({ error: error.message }, 409))),
+    Effect.catchTag("Unavailable", (error) => Effect.succeed(json({ error: error.message }, 503))),
     Effect.catchTag("HttpServerError", (error) =>
       Effect.succeed(
         json({ error: (error as { message?: string }).message ?? "Server error" }, 500),
       ),
     ),
-  ) as Effect.Effect<HttpServerResponse.HttpServerResponse, never, R>;
+  );
 
 const canSeeMessage = (message: ChatMessage, member: WorldMember) => {
   if (message.authorMemberId === member.id) return true;
@@ -228,7 +217,7 @@ const Login = HttpRouter.route(
       if (!user || !user.password_hash || !user.password_salt) {
         return yield* Effect.fail(new Unauthorized({ message: "Invalid credentials" }));
       }
-      const valid = yield* Effect.promise(() =>
+      const valid = yield* bindingIO(() =>
         verifyPassword(input.password, user.password_hash!, user.password_salt!),
       );
       if (!valid) return yield* Effect.fail(new Unauthorized({ message: "Invalid credentials" }));
@@ -297,16 +286,7 @@ const WorldBootstrap = HttpRouter.route(
   route(
     Effect.gen(function* () {
       const { db, user, world, member, stub } = yield* loadWorld();
-      const state = yield* doJson<{
-        board: BoardSnapshot;
-        scenes?: SceneMetadata[];
-        activeSceneId?: string;
-        templates: unknown[];
-        characters: unknown[];
-        messages: ChatMessage[];
-        hasMoreMessages: boolean;
-        notes: NoteSummary[];
-      }>(stub, "state", { method: "GET" }, member);
+      const state = yield* fromReply(() => stub.state(caller(member)));
       const members = yield* repo.listMembers(db, world.id);
       const owner = yield* repo.findUserById(db, world.owner_user_id);
       return json({
@@ -334,7 +314,7 @@ const GetBoard = HttpRouter.route(
   route(
     Effect.gen(function* () {
       const { member, stub } = yield* loadWorld();
-      return json(yield* doJson<BoardSnapshot>(stub, "board", { method: "GET" }, member));
+      return json(yield* fromReply(() => stub.board(caller(member))));
     }),
   ),
 );
@@ -346,18 +326,7 @@ const PublishBoard = HttpRouter.route(
     Effect.gen(function* () {
       const { member, stub } = yield* loadWorld(["dm"]);
       const input = yield* readBody(PublishBoardInput);
-      return json(
-        yield* doJson<BoardSnapshot>(
-          stub,
-          "board",
-          {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(input),
-          },
-          member,
-        ),
-      );
+      return json(yield* fromReply(() => stub.publishBoard(caller(member), input)));
     }),
   ),
 );
@@ -368,7 +337,7 @@ const ListScenes = HttpRouter.route(
   route(
     Effect.gen(function* () {
       const { member, stub } = yield* loadWorld(["dm"]);
-      return json(yield* doJson<unknown>(stub, "scenes", { method: "GET" }, member));
+      return json(yield* fromReply(() => stub.scenes(caller(member))));
     }),
   ),
 );
@@ -380,15 +349,7 @@ const CreateScene = HttpRouter.route(
     Effect.gen(function* () {
       const { member, stub } = yield* loadWorld(["dm"]);
       const input = yield* readBody(CreateSceneInput);
-      return json(
-        yield* doJson<unknown>(
-          stub,
-          "scenes",
-          { method: "POST", body: JSON.stringify(input) },
-          member,
-        ),
-        201,
-      );
+      return json(yield* fromReply(() => stub.createScene(caller(member), input)), 201);
     }),
   ),
 );
@@ -402,9 +363,7 @@ const GetScene = HttpRouter.route(
       const params = yield* HttpRouter.params;
       const decoded = Schema.decodeUnknownResult(BoardAssetId)(params.sceneId);
       if (decoded._tag === "Failure") return yield* new BadRequest({ message: "Invalid scene id" });
-      return json(
-        yield* doJson<unknown>(stub, `scenes/${decoded.success}`, { method: "GET" }, member),
-      );
+      return json(yield* fromReply(() => stub.scene(caller(member), decoded.success)));
     }),
   ),
 );
@@ -420,12 +379,7 @@ const PublishScene = HttpRouter.route(
       if (decoded._tag === "Failure") return yield* new BadRequest({ message: "Invalid scene id" });
       const input = yield* readBody(PublishBoardInput);
       return json(
-        yield* doJson<unknown>(
-          stub,
-          `scenes/${decoded.success}`,
-          { method: "PUT", body: JSON.stringify(input) },
-          member,
-        ),
+        yield* fromReply(() => stub.publishScene(caller(member), decoded.success, input)),
       );
     }),
   ),
@@ -441,14 +395,7 @@ const UpdateScene = HttpRouter.route(
       const decoded = Schema.decodeUnknownResult(BoardAssetId)(params.sceneId);
       if (decoded._tag === "Failure") return yield* new BadRequest({ message: "Invalid scene id" });
       const input = yield* readBody(UpdateSceneInput);
-      return json(
-        yield* doJson<unknown>(
-          stub,
-          `scenes/${decoded.success}`,
-          { method: "PATCH", body: JSON.stringify(input) },
-          member,
-        ),
-      );
+      return json(yield* fromReply(() => stub.updateScene(caller(member), decoded.success, input)));
     }),
   ),
 );
@@ -462,9 +409,7 @@ const DeleteScene = HttpRouter.route(
       const params = yield* HttpRouter.params;
       const decoded = Schema.decodeUnknownResult(BoardAssetId)(params.sceneId);
       if (decoded._tag === "Failure") return yield* new BadRequest({ message: "Invalid scene id" });
-      return json(
-        yield* doJson<unknown>(stub, `scenes/${decoded.success}`, { method: "DELETE" }, member),
-      );
+      return json(yield* fromReply(() => stub.deleteScene(caller(member), decoded.success)));
     }),
   ),
 );
@@ -478,14 +423,7 @@ const ActivateScene = HttpRouter.route(
       const params = yield* HttpRouter.params;
       const decoded = Schema.decodeUnknownResult(BoardAssetId)(params.sceneId);
       if (decoded._tag === "Failure") return yield* new BadRequest({ message: "Invalid scene id" });
-      return json(
-        yield* doJson<unknown>(
-          stub,
-          `scenes/${decoded.success}/active`,
-          { method: "POST" },
-          member,
-        ),
-      );
+      return json(yield* fromReply(() => stub.activateScene(caller(member), decoded.success)));
     }),
   ),
 );
@@ -508,41 +446,34 @@ const UploadBoardImage = HttpRouter.route(
       if (!webRequest.body)
         return yield* Effect.fail(new BadRequest({ message: "Image is empty" }));
       const reader = webRequest.body.getReader();
-      const bytes = yield* Effect.tryPromise({
-        try: async () => {
-          const chunks: Uint8Array[] = [];
-          let size = 0;
-          try {
-            while (true) {
-              const chunk = await reader.read();
-              if (chunk.done) break;
-              size += chunk.value.byteLength;
-              if (size > MAX_BOARD_IMAGE_BYTES) {
-                await reader.cancel();
-                throw new Error("Image must be 10MB or smaller");
-              }
-              chunks.push(chunk.value);
-            }
-          } finally {
-            reader.releaseLock();
+      const bytes = yield* Effect.gen(function* () {
+        const chunks: Uint8Array[] = [];
+        let size = 0;
+        while (true) {
+          const chunk = yield* Effect.tryPromise({
+            try: () => reader.read(),
+            catch: () => new BadRequest({ message: "Could not read image" }),
+          });
+          if (chunk.done) break;
+          size += chunk.value.byteLength;
+          if (size > MAX_BOARD_IMAGE_BYTES) {
+            yield* bindingIO(() => reader.cancel());
+            return yield* new BadRequest({ message: "Image must be 10MB or smaller" });
           }
-          if (!size) throw new Error("Image is empty");
-          const result = new Uint8Array(size);
-          let offset = 0;
-          for (const chunk of chunks) {
-            result.set(chunk, offset);
-            offset += chunk.byteLength;
-          }
-          return result;
-        },
-        catch: (error) =>
-          new BadRequest({
-            message: error instanceof Error ? error.message : "Could not read image",
-          }),
-      });
+          chunks.push(chunk.value);
+        }
+        if (!size) return yield* new BadRequest({ message: "Image is empty" });
+        const bytes = new Uint8Array(size);
+        let offset = 0;
+        for (const chunk of chunks) {
+          bytes.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        return bytes;
+      }).pipe(Effect.ensuring(Effect.sync(() => reader.releaseLock())));
       const assetId = crypto.randomUUID();
       const bucket = yield* Bucket;
-      yield* Effect.promise(() =>
+      yield* bindingIO(() =>
         bucket.put(`${world.r2_prefix}/board/${assetId}`, bytes, { httpMetadata: { contentType } }),
       );
       return json({ assetId }, 201);
@@ -561,7 +492,7 @@ const GetBoardImage = HttpRouter.route(
       if (decoded._tag === "Failure")
         return yield* Effect.fail(new BadRequest({ message: "Invalid image ID" }));
       const bucket = yield* Bucket;
-      const object = yield* Effect.promise(() =>
+      const object = yield* bindingIO(() =>
         bucket.get(`${world.r2_prefix}/board/${decoded.success}`),
       );
       if (!object) return yield* Effect.fail(new NotFound({ message: "Image not found" }));
@@ -602,7 +533,7 @@ const CreateMember = HttpRouter.route(
             new BadRequest({ message: "A username and password are required" }),
           );
         }
-        const { hash, salt } = yield* Effect.promise(() => hashPassword(input.password!));
+        const { hash, salt } = yield* bindingIO(() => hashPassword(input.password!));
         userId = yield* repo.createLocalUser(db, {
           displayName: input.displayName,
           username: input.username,
@@ -642,7 +573,7 @@ const UpdateMember = HttpRouter.route(
             new BadRequest({ message: "This member has no password account" }),
           );
         }
-        const { hash, salt } = yield* Effect.promise(() => hashPassword(input.password!));
+        const { hash, salt } = yield* bindingIO(() => hashPassword(input.password!));
         yield* repo.setUserPassword(db, target.user_id, hash, salt);
       }
       const row = yield* repo.updateMember(db, {
@@ -688,8 +619,8 @@ const ListTemplates = HttpRouter.route(
     Effect.gen(function* () {
       const { member, stub } = yield* loadWorld();
       return json(
-        yield* doJson(stub, "state", { method: "GET" }, member).pipe(
-          Effect.map((s: any) => s.templates),
+        yield* fromReply(() => stub.state(caller(member))).pipe(
+          Effect.map((state) => state.templates),
         ),
       );
     }),
@@ -702,19 +633,8 @@ const SaveTemplate = HttpRouter.route(
   route(
     Effect.gen(function* () {
       const { member, stub } = yield* loadWorld(["dm"]);
-      const input = yield* readBody(SaveTemplateInput);
-      const error = layoutLimitsError(input.layout);
-      if (error) return yield* Effect.fail(new BadRequest({ message: error }));
-      const template = yield* doJson(
-        stub,
-        "template",
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(input),
-        },
-        member,
-      );
+      const input = yield* readBody(SaveWorldTemplateInput);
+      const template = yield* fromReply(() => stub.saveTemplate(caller(member), input));
       return json(template);
     }),
   ),
@@ -730,12 +650,7 @@ const ListCharacters = HttpRouter.route(
   route(
     Effect.gen(function* () {
       const { member, stub } = yield* loadWorld();
-      const state = yield* doJson<{ characters: Character[] }>(
-        stub,
-        "state",
-        { method: "GET" },
-        member,
-      );
+      const state = yield* fromReply(() => stub.state(caller(member)));
       return json(state.characters);
     }),
   ),
@@ -747,17 +662,8 @@ const SaveCharacter = HttpRouter.route(
   route(
     Effect.gen(function* () {
       const { member, stub } = yield* loadWorld();
-      const input = yield* readBody(SaveCharacterInput);
-      const character = yield* doJson<Character>(
-        stub,
-        "character",
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(input),
-        },
-        member,
-      );
+      const input = yield* readBody(SaveWorldCharacterInput);
+      const character = yield* fromReply(() => stub.saveCharacter(caller(member), input));
       return json(character);
     }),
   ),
@@ -772,7 +678,7 @@ const DeleteCharacter = HttpRouter.route(
       const params = yield* HttpRouter.params;
       const characterId = params.characterId;
       if (!characterId) return yield* Effect.fail(new NotFound({ message: "Character not found" }));
-      yield* doJson(stub, `character/${characterId}`, { method: "DELETE" }, member);
+      yield* fromReply(() => stub.deleteCharacter(caller(member), characterId));
       return json({ ok: true });
     }),
   ),
@@ -797,12 +703,7 @@ const UploadAvatar = HttpRouter.route(
       const characterId = params.characterId;
       if (!characterId) return yield* Effect.fail(new NotFound({ message: "Character not found" }));
       const request = yield* HttpServerRequest.HttpServerRequest;
-      const character = yield* doJson<Character>(
-        stub,
-        `character/${characterId}`,
-        { method: "GET" },
-        member,
-      );
+      const character = yield* fromReply(() => stub.character(caller(member), characterId));
       if (!canEditCharacter(character, member.id, member.role)) {
         return yield* Effect.fail(new Forbidden({ message: "You cannot edit this character" }));
       }
@@ -819,16 +720,10 @@ const UploadAvatar = HttpRouter.route(
       }
       const key = `${world.r2_prefix}/avatars/${characterId}-${Date.now()}.${extension}`;
       const bucket = yield* Bucket;
-      yield* Effect.promise(() => bucket.put(key, bytes, { httpMetadata: { contentType } }));
-      const updated = yield* doJson(
-        stub,
-        "character/avatar",
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ characterId, avatarKey: key }),
-        },
-        member,
+      yield* bindingIO(() => bucket.put(key, bytes, { httpMetadata: { contentType } }));
+      // A DM can lock the sheet during the upload; the DO checks permission again.
+      const updated = yield* fromReply(() =>
+        stub.setAvatar(caller(member), { characterId, avatarKey: key }),
       );
       return json(updated);
     }),
@@ -844,26 +739,15 @@ const DeleteAvatar = HttpRouter.route(
       const params = yield* HttpRouter.params;
       if (!params.characterId)
         return yield* Effect.fail(new NotFound({ message: "Character not found" }));
-      const character = yield* doJson<Character>(
-        stub,
-        `character/${params.characterId}`,
-        { method: "GET" },
-        member,
-      );
-      const updated = yield* doJson<Character>(
-        stub,
-        "character/avatar",
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ characterId: params.characterId, avatarKey: null }),
-        },
-        member,
+      const characterId = params.characterId;
+      const character = yield* fromReply(() => stub.character(caller(member), characterId));
+      const updated = yield* fromReply(() =>
+        stub.setAvatar(caller(member), { characterId, avatarKey: null }),
       );
       const avatarKey = character.avatarKey;
       if (avatarKey) {
         const bucket = yield* Bucket;
-        yield* Effect.promise(() => bucket.delete(avatarKey));
+        yield* bindingIO(() => bucket.delete(avatarKey));
       }
       return json(updated);
     }),
@@ -879,20 +763,16 @@ const GetAvatar = HttpRouter.route(
       const params = yield* HttpRouter.params;
       const characterId = params.characterId;
       if (!characterId) return yield* Effect.fail(new NotFound({ message: "Character not found" }));
-      const character = yield* doJson<{ avatarKey?: string }>(
-        stub,
-        `character/${characterId}`,
-        { method: "GET" },
-        member,
-      );
+      const character = yield* fromReply(() => stub.character(caller(member), characterId));
       if (!character.avatarKey) {
         return yield* Effect.fail(new NotFound({ message: "This character has no picture" }));
       }
       const bucket = yield* Bucket;
-      const object = yield* Effect.promise(() => bucket.get(character.avatarKey!));
+      const avatarKey = character.avatarKey;
+      const object = yield* bindingIO(() => bucket.get(avatarKey));
       if (!object) return yield* Effect.fail(new NotFound({ message: "Picture not found" }));
       const contentType = object.httpMetadata?.contentType ?? "image/png";
-      const bytes = yield* Effect.promise(() => object.bytes());
+      const bytes = yield* bindingIO(() => object.bytes());
       return HttpServerResponse.uint8Array(bytes, {
         contentType,
         headers: { "cache-control": "private, max-age=31536000, immutable" },
@@ -913,18 +793,16 @@ const ListMessages = HttpRouter.route(
       const { member, stub } = yield* loadWorld();
       const request = yield* HttpServerRequest.HttpServerRequest;
       const url = new URL(request.url, "http://localhost");
-      const query = new URLSearchParams();
       const before = url.searchParams.get("before");
       const beforeId = url.searchParams.get("beforeId");
-      const limit = url.searchParams.get("limit");
-      if (before) query.set("before", before);
-      if (beforeId) query.set("beforeId", beforeId);
-      if (limit) query.set("limit", limit);
-      const page = yield* doJson<{ messages: ChatMessage[]; hasMore: boolean }>(
-        stub,
-        `messages${query.size ? `?${query.toString()}` : ""}`,
-        { method: "GET" },
-        member,
+      const rawLimit = Number(url.searchParams.get("limit") ?? 50);
+      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(1, rawLimit), 100) : 50;
+      const page = yield* fromReply(() =>
+        stub.messages(caller(member), {
+          limit,
+          beforeCreatedAt: before ?? undefined,
+          beforeId: beforeId ?? undefined,
+        }),
       );
       return json({
         messages: page.messages.filter((message) => canSeeMessage(message, member)),
@@ -944,7 +822,7 @@ const ListNotes = HttpRouter.route(
   route(
     Effect.gen(function* () {
       const { member, stub } = yield* loadWorld();
-      const notes = yield* doJson<NoteSummary[]>(stub, "notes", { method: "GET" }, member);
+      const notes = yield* fromReply(() => stub.notes(caller(member)));
       return json(notes.filter((note) => canSeeNote(note, member)));
     }),
   ),
@@ -959,7 +837,7 @@ const GetNote = HttpRouter.route(
       const params = yield* HttpRouter.params;
       const noteId = params.noteId;
       if (!noteId) return yield* Effect.fail(new NotFound({ message: "Note not found" }));
-      const note = yield* doJson<Note>(stub, `notes/${noteId}`, { method: "GET" }, member);
+      const note = yield* fromReply(() => stub.note(caller(member), noteId));
       if (!canSeeNote(note, member)) {
         return yield* Effect.fail(new Forbidden({ message: "You cannot view this note" }));
       }
@@ -978,16 +856,7 @@ const SaveNote = HttpRouter.route(
       const noteId = params.noteId;
       if (!noteId) return yield* Effect.fail(new NotFound({ message: "Note not found" }));
       const input = yield* readBody(SaveNoteInput);
-      const note = yield* doJson<Note>(
-        stub,
-        "note",
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ ...input, id: noteId, ownerMemberId: member.id }),
-        },
-        member,
-      );
+      const note = yield* fromReply(() => stub.saveNote(caller(member), { ...input, id: noteId }));
       return json(note);
     }),
   ),
@@ -1002,7 +871,7 @@ const DeleteNote = HttpRouter.route(
       const params = yield* HttpRouter.params;
       const noteId = params.noteId;
       if (!noteId) return yield* Effect.fail(new NotFound({ message: "Note not found" }));
-      yield* doJson(stub, `notes/${noteId}`, { method: "DELETE" }, member);
+      yield* fromReply(() => stub.deleteNote(caller(member), noteId));
       return json({ ok: true });
     }),
   ),
@@ -1037,7 +906,7 @@ const compendiumRoute = (
           .replace(":sourceId", encodeURIComponent(params.sourceId ?? ""))}`;
         const request = yield* HttpServerRequest.HttpServerRequest;
         const query = suffix === "/index" ? new URL(request.url, "http://localhost").search : "";
-        let body: string | undefined;
+        let body: unknown;
         if (schema) {
           const text = yield* request.text;
           if (
@@ -1059,27 +928,27 @@ const compendiumRoute = (
           )(parsed);
           if (decoded._tag === "Failure")
             return yield* Effect.fail(new BadRequest({ message: "Invalid compendium data" }));
-          body = JSON.stringify(decoded.success);
+          body = decoded.success;
         }
-        const response = yield* Effect.promise(() =>
-          stub.fetch(
-            new Request(`https://do/internal/${path}${query}`, {
-              method,
-              headers: {
-                "content-type": "application/json",
-                "x-ttrpg-member-id": member.id,
-                "x-ttrpg-member-name": member.displayName,
-                "x-ttrpg-role": member.role,
-                "x-ttrpg-world-name": encodeURIComponent(world.name),
-                "x-ttrpg-corpus-account-id": world.owner_user_id,
-              },
-              ...(body === undefined ? {} : { body }),
-            }),
-          ),
+        const rpcRequest = {
+          method,
+          path,
+          body,
+          query: { since: new URLSearchParams(query).get("since") ?? undefined },
+          worldName: world.name,
+          accountId: world.owner_user_id,
+        };
+        const sources =
+          category === "libraries" ||
+          suffix.startsWith("/overrides") ||
+          suffix.startsWith("/blocked");
+        const result = yield* fromReply(() =>
+          sources
+            ? stub.libraries(caller(member), rpcRequest)
+            : stub.compendium(caller(member), rpcRequest),
         );
-        if (response.status === 204) return HttpServerResponse.empty({ status: 204 });
-        const result: unknown = yield* Effect.promise(() => response.json());
-        return json(result, response.status);
+        if (result === undefined) return HttpServerResponse.empty({ status: 204 });
+        return json(result);
       }),
     ),
   );

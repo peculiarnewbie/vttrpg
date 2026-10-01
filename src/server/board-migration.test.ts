@@ -1,4 +1,5 @@
 // @vitest-environment node
+import type { WorldDO } from "./world-do";
 import * as Schema from "effect/Schema";
 import { startTabletop, type Tabletop } from "../test/miniflare";
 import { readFile } from "node:fs/promises";
@@ -41,12 +42,14 @@ beforeAll(async () => {
             return {
               loader: "ts",
               contents: source.replace(
-                "      this.ensureSchema();",
+                "      yield* worldSync(() => this.ensureSchema());",
                 `
-            this.ctx.storage.sql.exec("CREATE TABLE board (id INTEGER PRIMARY KEY CHECK (id = 1), snapshot TEXT NOT NULL)");
-            this.ctx.storage.sql.exec("INSERT INTO board (id, snapshot) VALUES (1, ?)", ${JSON.stringify(JSON.stringify(legacy))});
+            yield* worldSync(() => {
+            this.storage.sql.exec("CREATE TABLE board (id INTEGER PRIMARY KEY CHECK (id = 1), snapshot TEXT NOT NULL)");
+            this.storage.sql.exec("INSERT INTO board (id, snapshot) VALUES (1, ?)", ${JSON.stringify(JSON.stringify(legacy))});
             this.ensureSchema();
             this.ensureSchema();
+            });
           `,
               ),
             };
@@ -63,12 +66,24 @@ afterAll(async () => {
 
 it("migrates an existing board losslessly into one active scene and preserves its revision", async () => {
   const namespace = await mf.getDurableObjectNamespace("WORLDS");
-  const stub = namespace.get(namespace.idFromName("world:legacy"));
-  const request = (path: string, init?: { method?: string; body?: string }) =>
-    stub.fetch(`https://world/internal/${path}`, {
-      ...init,
-      headers: { "x-ttrpg-role": "dm", "content-type": "application/json" },
-    });
+  const rawStub = namespace.get(namespace.idFromName("world:legacy"));
+  const stub = rawStub as typeof rawStub & Pick<WorldDO, "scenes" | "board" | "publishScene">;
+  const caller = { memberId: "dm", displayName: "DM", role: "dm" } as const;
+  const request = async (path: string, init?: { method?: string; body?: string }) => {
+    const reply =
+      path === "scenes"
+        ? await stub.scenes(caller)
+        : path === "board"
+          ? await stub.board(caller)
+          : await stub.publishScene(
+              caller,
+              path.slice("scenes/".length),
+              Schema.decodeUnknownSync(BoardSnapshot)(JSON.parse(init?.body ?? "{}")),
+            );
+    return reply.ok
+      ? Response.json(reply.value)
+      : Response.json({ error: reply.error.message }, { status: 400 });
+  };
   const list = Schema.decodeUnknownSync(SceneList)(await (await request("scenes")).json());
   expect(list.scenes).toHaveLength(1);
   expect(list.scenes[0]).toMatchObject({
