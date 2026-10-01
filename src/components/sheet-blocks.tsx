@@ -1643,7 +1643,7 @@ function List(props: { block: Extract<LeafBlock, { type: "list" }>; variant: str
                   </span>
                   <For each={rest}>
                     {(column) => (
-                      <Show when={rows()[index]?.[column.key] !== ""}>
+                      <Show when={(rows()[index]?.[column.key] ?? "") !== ""}>
                         <span {...sx(s.cardMeta)}>
                           <span {...sx(s.label)}>{column.label}</span>
                           {cell(index, column)}
