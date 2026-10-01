@@ -1,3 +1,4 @@
+import { BadRequest, Forbidden, NotFound, Conflict, Unavailable, type ApiError } from "./services";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Cause from "effect/Cause";
@@ -114,3 +115,20 @@ export const corpusEdge = <A, E, R>(
       );
     }),
   );
+
+/** The world RPC envelope uses the table error tags. */
+export const corpusApiError = (error: CorpusError): ApiError => {
+  const input = { message: error.message };
+  switch (error._tag) {
+    case "CorpusNotFound":
+      return new NotFound(input);
+    case "CorpusForbidden":
+      return new Forbidden(input);
+    case "CorpusInvalid":
+      return new BadRequest(input);
+    case "CorpusConflict":
+      return new Conflict(input);
+    case "CorpusUnavailable":
+      return new Unavailable(input);
+  }
+};

@@ -14,6 +14,9 @@ import {
 import * as Schema from "effect/Schema";
 import { expect, it } from "vitest";
 import { WorldCompendium } from "./world-compendium";
+import { WorldStorage, WorldBucket, Broadcast, WorldId } from "./world-rpc";
+import { BadRequest, Conflict, Forbidden, NotFound, Unavailable, type ApiError } from "./services";
+import { toReply } from "./reply";
 import { corpusClient, corpusEdge, corpusStatus } from "./corpus-env";
 import {
   CorpusNotFound,
@@ -26,6 +29,40 @@ import {
 import type { CorpusApi } from "../domain/corpus-rpc";
 import type { CompendiumEntry, EntryType, IndexRow } from "../domain/compendium";
 import { librarySource } from "../domain/entry-id";
+
+// Bridge WorldSources until its world ApiError conversion is merged.
+const apiError = (error: CorpusError | ApiError): ApiError => {
+  switch (error._tag) {
+    case "CorpusNotFound":
+      return new NotFound({ message: error.message });
+    case "CorpusForbidden":
+      return new Forbidden({ message: error.message });
+    case "CorpusInvalid":
+      return new BadRequest({ message: error.message });
+    case "CorpusConflict":
+      return new Conflict({ message: error.message });
+    case "CorpusUnavailable":
+      return new Unavailable({ message: error.message });
+    default:
+      return error;
+  }
+};
+const worldResponse = async <A>(effect: Effect.Effect<A, ApiError>): Promise<Response> => {
+  const reply = await toReply(effect, Effect.runPromiseExit);
+  if (reply.ok)
+    return reply.value === undefined
+      ? new Response(null, { status: 204 })
+      : Response.json(reply.value);
+  const statuses = {
+    Unauthorized: 401,
+    Forbidden: 403,
+    NotFound: 404,
+    BadRequest: 400,
+    Conflict: 409,
+    Unavailable: 503,
+  };
+  return Response.json({ error: reply.error.message }, { status: statuses[reply.error._tag] });
+};
 
 const rpcBinding = (methods: Partial<CorpusApi>): CorpusApi => {
   const unused = async () => ({
@@ -58,7 +95,23 @@ const row = (id: string, name = id): IndexRow => ({
   updatedAt: "2026-10-01",
 });
 
-const sqlite = () => {
+const unavailableBucket = (message: string): R2Bucket => {
+  const fail = async () => {
+    throw new Error(message);
+  };
+  return {
+    head: fail,
+    get: fail,
+    put: fail,
+    createMultipartUpload: fail,
+    resumeMultipartUpload: () => {
+      throw new Error(message);
+    },
+    delete: fail,
+    list: fail,
+  };
+};
+const sqlite = (bucket: R2Bucket = unavailableBucket("Unused R2 method")) => {
   const db = new DatabaseSync(":memory:");
   // Exercise real SQLite; this adapter exposes the DO cursor operations used by the compendium.
   const sql = {
@@ -86,13 +139,22 @@ const sqlite = () => {
     }
   };
   sql.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)");
-  const compendium = new WorldCompendium({
-    sql,
-    transactionSync,
-    broadcast: () => {},
-    bucket: {} as R2Bucket,
-    worldId: "fixture",
-  });
+  const compendium = Effect.runSync(
+    WorldCompendium.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(WorldStorage, {
+            sql,
+            transactionSync,
+            storage: { sql, transactionSync } as DurableObjectStorage,
+          }),
+          Layer.succeed(WorldBucket, bucket),
+          Layer.succeed(Broadcast, () => {}),
+          Layer.succeed(WorldId, "fixture"),
+        ),
+      ),
+    ),
+  );
   return { db, sql, compendium, transactionSync };
 };
 
@@ -110,7 +172,7 @@ it("backfills entry and tombstone sources once, preserving world and legacy rows
       );
       fixture.sql.exec("INSERT INTO compendium_tombstones VALUES (?, 1)", id);
     }
-    fixture.compendium.migrate();
+    Effect.runSync(fixture.compendium.migrate());
     const expected = [
       { id: "book/item/sword", source_id: "book" },
       { id: "legacy", source_id: null },
@@ -123,7 +185,7 @@ it("backfills entry and tombstone sources once, preserving world and legacy rows
     fixture.sql.exec(
       "CREATE TRIGGER forbid_source_backfill BEFORE UPDATE OF source_id ON compendium_entries BEGIN SELECT RAISE(ABORT, 'already migrated'); END",
     );
-    fixture.compendium.migrate();
+    Effect.runSync(fixture.compendium.migrate());
     expect(
       fixture.compendium
         .index(null, "dm")
@@ -141,7 +203,7 @@ it("backfills entry and tombstone sources once, preserving world and legacy rows
 it("updates one source entry, including body-only revisions and public tombstones", () => {
   const fixture = sqlite();
   try {
-    fixture.compendium.migrate();
+    Effect.runSync(fixture.compendium.migrate());
     const sword = row("book/item/sword");
     const shield = row("book/item/shield");
     fixture.transactionSync(() =>
@@ -150,10 +212,10 @@ it("updates one source entry, including body-only revisions and public tombstone
     fixture.compendium.setSources({
       available: true,
       ownsType: () => true,
-      resolve: async () => undefined,
-      bodies: async () => new Map(),
-      exportEntries: async () => [],
-      prepareImport: async () => ({ apply: () => {} }),
+      resolve: () => Effect.succeed(undefined),
+      bodies: () => Effect.succeed(new Map()),
+      exportEntries: () => Effect.succeed([]),
+      prepareImport: () => Effect.succeed({ apply: () => {} }),
     });
     const original = fixture.compendium.index(null, "player");
     // No indexed value changes for a body-only override, even with the same timestamp.
@@ -321,9 +383,11 @@ it("exposes corrupt snapshot bytes as a typed Unavailable without ingesting rows
   try {
     const { sources, files, manifest } = await sourceFixture(fixture);
     files.set(manifest.publicIndex.key, new Uint8Array([0]));
-    const result = await Effect.runPromise(Effect.result(sources.enable("book", {})));
+    const result = await Effect.runPromise(
+      sources.enable("book", {}).pipe(Effect.mapError(apiError), Effect.result),
+    );
     expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") expect(result.failure._tag).toBe("CorpusUnavailable");
+    if (result._tag === "Failure") expect(result.failure._tag).toBe("Unavailable");
     expect(fixture.sql.exec("SELECT * FROM world_sources").toArray()).toEqual([]);
     expect(fixture.sql.exec("SELECT * FROM compendium_entries").toArray()).toEqual([]);
   } finally {
@@ -335,7 +399,7 @@ const sourceFixture = async (
   fixture: ReturnType<typeof sqlite>,
   waitForBody?: () => Promise<void>,
 ) => {
-  fixture.compendium.migrate();
+  Effect.runSync(fixture.compendium.migrate());
   const licence = { id: "CC0", name: "CC0", attribution: "Fixture authors", shareAlike: false };
   const entries: CompendiumEntry[] = Array.from({ length: 100 }, (_, n) => ({
     ...row(`book/item/gear-${n}`),
@@ -435,6 +499,7 @@ const sourceFixture = async (
           Layer.succeed(SourceStorage, {
             sql: fixture.sql,
             transactionSync: fixture.transactionSync,
+            storage: { sql: fixture.sql } as DurableObjectStorage,
           }),
           Layer.succeed(CorpusClient, client),
           Layer.succeed(CorpusBucket, bucket),
@@ -447,10 +512,10 @@ const sourceFixture = async (
   fixture.compendium.setSources({
     available: true,
     ownsType: (id) => sources.ownsType(id),
-    resolve: (id, role) => Effect.runPromise(sources.resolve(id, role)),
-    bodies: (ids, role) => Effect.runPromise(sources.bodies(ids, role)),
-    exportEntries: () => Effect.runPromise(sources.exportEntries()),
-    prepareImport: (entries) => Effect.runPromise(sources.prepareImport(entries)),
+    resolve: (id, role) => sources.resolve(id, role).pipe(Effect.mapError(apiError)),
+    bodies: (ids, role) => sources.bodies(ids, role).pipe(Effect.mapError(apiError)),
+    exportEntries: () => sources.exportEntries().pipe(Effect.mapError(apiError)),
+    prepareImport: (entries) => sources.prepareImport(entries).pipe(Effect.mapError(apiError)),
   });
   return { sources, files, reads, manifest, entries };
 };
@@ -478,47 +543,41 @@ it("validates imported source rights at the pack boundary and rolls back a mixed
       entries: [local, { ...base, name: "Table gear" }],
     };
     const before = fixture.compendium.index(null, "dm");
-    const invalid = await fixture.compendium.handle(
-      "POST",
-      "compendium/import",
-      {
-        ...pack,
-        entries: [
-          local,
-          {
-            ...base,
-            licence: {
-              ...base.licence,
-              attribution: `${base.licence.attribution}${"x".repeat(8000)}`,
+    const invalid = await worldResponse(
+      fixture.compendium.handle(
+        "POST",
+        "compendium/import",
+        {
+          ...pack,
+          entries: [
+            local,
+            {
+              ...base,
+              licence: {
+                ...base.licence,
+                attribution: `${base.licence.attribution}${"x".repeat(8000)}`,
+              },
             },
-          },
-        ],
-      },
-      "dm",
-      "Fixture",
+          ],
+        },
+        "dm",
+        "Fixture",
+      ),
     );
     expect(invalid.status).toBe(400);
     expect(fixture.compendium.index(null, "dm")).toEqual(before);
     fixture.sql.exec(
       "CREATE TRIGGER reject_local BEFORE INSERT ON compendium_entries WHEN new.id = 'world/item/local' BEGIN SELECT RAISE(ABORT, 'fixture'); END",
     );
-    const failed = await fixture.compendium.handle(
-      "POST",
-      "compendium/import",
-      pack,
-      "dm",
-      "Fixture",
+    const failed = await worldResponse(
+      fixture.compendium.handle("POST", "compendium/import", pack, "dm", "Fixture"),
     );
     expect(failed.status).toBe(503);
     expect(fixture.compendium.index(null, "dm")).toEqual(before);
     expect(fixture.sql.exec("SELECT * FROM entry_overrides").toArray()).toEqual([]);
     fixture.sql.exec("DROP TRIGGER reject_local");
-    const imported = await fixture.compendium.handle(
-      "POST",
-      "compendium/import",
-      pack,
-      "dm",
-      "Fixture",
+    const imported = await worldResponse(
+      fixture.compendium.handle("POST", "compendium/import", pack, "dm", "Fixture"),
     );
     expect(imported.status).toBe(200);
     expect(fixture.compendium.index(null, "dm").rev).toBe(before.rev + 1);
@@ -528,6 +587,122 @@ it("validates imported source rights at the pack boundary and rolls back a mixed
         .upserts.map((entry) => entry.id)
         .sort(),
     ).toEqual([base.id, local.id].sort());
+  } finally {
+    fixture.db.close();
+  }
+});
+
+it("fails a stale mixed import with Conflict before applying either layer", async () => {
+  const fixture = sqlite();
+  try {
+    Effect.runSync(fixture.compendium.migrate());
+    const library = row("book/item/sword");
+    fixture.transactionSync(() => fixture.compendium.replaceSourceRows("book", [library], [type]));
+    let applied = false;
+    fixture.compendium.setSources({
+      available: true,
+      ownsType: () => true,
+      resolve: () => Effect.succeed(undefined),
+      bodies: () => Effect.succeed(new Map()),
+      exportEntries: () => Effect.succeed([]),
+      prepareImport: () =>
+        Effect.sync(() => {
+          fixture.transactionSync(() =>
+            fixture.compendium.updateSourceEntry("book", library.id, library),
+          );
+          return {
+            apply: () => {
+              applied = true;
+            },
+          };
+        }),
+    });
+    const entry = {
+      typeId: "item",
+      name: "Sword",
+      tags: [],
+      body: "",
+      fields: {},
+      visibility: "public",
+    };
+    const imported = fixture.compendium.handle(
+      "POST",
+      "compendium/import",
+      {
+        format: "ttrpg-pack",
+        version: 2,
+        name: "Fixture",
+        types: [type],
+        entries: [
+          { ...entry, id: "world/item/local" },
+          {
+            ...entry,
+            id: library.id,
+            sourceVersion: 1,
+            sourceRev: 1,
+            licence: { id: "CC0", name: "CC0", attribution: "Authors", shareAlike: false },
+          },
+        ],
+      },
+      "dm",
+      "Fixture",
+    );
+    const reply = await toReply(imported, Effect.runPromiseExit);
+    expect(reply).toEqual({
+      ok: false,
+      error: { _tag: "Conflict", message: "Compendium changed while importing; retry the import" },
+    });
+    expect(applied).toBe(false);
+    expect(fixture.compendium.list().entries).toEqual([]);
+    const response = await worldResponse(imported);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: "Compendium changed while importing; retry the import",
+    });
+  } finally {
+    fixture.db.close();
+  }
+});
+
+it("returns typed failures for invalid input and DM-only requests", async () => {
+  const fixture = sqlite();
+  try {
+    Effect.runSync(fixture.compendium.migrate());
+    const invalid = await Effect.runPromise(
+      fixture.compendium
+        .handle(
+          "POST",
+          "compendium/bodies",
+          { ids: Array.from({ length: 101 }, () => "world/item/sword") },
+          "player",
+          "Fixture",
+        )
+        .pipe(Effect.result),
+    );
+    expect(invalid._tag).toBe("Failure");
+    if (invalid._tag === "Failure") expect(invalid.failure).toBeInstanceOf(BadRequest);
+  } finally {
+    fixture.db.close();
+  }
+});
+
+it("leaves legacy entries intact when the migration backup fails", async () => {
+  const fixture = sqlite(unavailableBucket("R2 unavailable"));
+  try {
+    Effect.runSync(fixture.compendium.migrate());
+    fixture.sql.exec("CREATE TABLE characters (id TEXT PRIMARY KEY, template_id TEXT, data TEXT)");
+    fixture.sql.exec(
+      "INSERT INTO compendium_entries (id, type_id, name, tags, body, fields, visibility, updated_at) VALUES ('ent_old', 'item', 'Old', '[]', '', '{}', 'public', '2026-10-01')",
+    );
+    const before = fixture.compendium.list();
+    const result = await Effect.runPromise(fixture.compendium.ensureMigrated().pipe(Effect.result));
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") expect(result.failure).toBeInstanceOf(Unavailable);
+    expect(fixture.compendium.list()).toEqual(before);
+    expect(fixture.sql.exec("SELECT * FROM compendium_aliases").toArray()).toEqual([]);
+    expect(
+      fixture.sql.exec("SELECT value FROM settings WHERE key = 'compendium_ids'").toArray(),
+    ).toEqual([]);
   } finally {
     fixture.db.close();
   }

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import type { WorldDO } from "./world-do";
 import * as Schema from "effect/Schema";
 import { startTabletop, type Tabletop, type CallOptions } from "../test/miniflare";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -182,16 +183,16 @@ describe("templates through real Worker, D1 and SQLite DO", () => {
     expect((await bootstrap()).templates).toEqual([starter]);
   });
 
-  it("validates layout limits and authorization at the DO boundary too", async () => {
+  it("decodes layouts at the HTTP edge and authorizes template RPC", async () => {
     const namespace = await mf.getDurableObjectNamespace("WORLDS");
-    const stub = namespace.get(namespace.idFromName(`world:${worldId}`));
-    const request = (body: unknown, role = "dm") =>
-      stub.fetch("https://world/internal/template", {
-        method: "POST",
-        headers: { "x-ttrpg-role": role, "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-    expect((await request(input(), "player")).status).toBe(403);
+    const rawStub = namespace.get(namespace.idFromName(`world:${worldId}`));
+    const stub = rawStub as typeof rawStub & Pick<WorldDO, "saveTemplate">;
+    const denied = await stub.saveTemplate(
+      { memberId: "player", displayName: "Player", role: "player" },
+      input(),
+    );
+    expect(denied).toMatchObject({ ok: false, error: { _tag: "Forbidden" } });
+    const request = (body: unknown) => save(body);
     expect((await request({ ...input(), layout: {} })).status).toBe(400);
     const response = await request({
       ...input(),

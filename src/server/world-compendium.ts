@@ -8,13 +8,11 @@ import {
   IndexRow,
   SaveEntryInput,
   compendiumLimits,
-  type EntryBodies,
   type IndexDelta,
   type PackEntry,
 } from "../domain/compendium";
 import { entryFacets } from "../domain/entry-facets";
 import { entryError, packError, typeError } from "../domain/compendium-rules";
-import { licenceError } from "../domain/licence";
 import {
   entryId,
   isEntryId,
@@ -24,9 +22,9 @@ import {
   uniqueSlug,
   WORLD_SOURCE,
 } from "../domain/entry-id";
-import type { ClientFrame, ServerFrame } from "../domain/schemas";
-import { CorpusConflict } from "../domain/corpus-errors";
-import { corpusEdge, corpusStatus } from "./corpus-env";
+import type { ClientFrame } from "../domain/schemas";
+import { BadRequest, Conflict, Forbidden, NotFound, Unavailable, type ApiError } from "./services";
+import { WorldStorage, WorldBucket, Broadcast, WorldId } from "./world-rpc";
 import { nowIso } from "./crypto";
 
 type CompendiumTypeRow = {
@@ -63,11 +61,35 @@ const nameWords = (text: string) =>
     .split(/[^\p{L}\p{N}]+/u)
     .filter(Boolean)
     .join(" ");
-const json = (data: unknown, status = 200) =>
-  new Response(JSON.stringify(data), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
+const storageFailure = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.catchDefect((cause) =>
+      Effect.logError(cause).pipe(
+        Effect.andThen(
+          Effect.fail(new Unavailable({ message: "Library operation is temporarily unavailable" })),
+        ),
+      ),
+    ),
+  );
+const storageIO = <A>(operation: () => A) =>
+  Effect.try({ try: operation, catch: (cause) => cause }).pipe(
+    Effect.catch((cause) =>
+      Effect.logError(cause).pipe(
+        Effect.andThen(
+          Effect.fail(new Unavailable({ message: "Library operation is temporarily unavailable" })),
+        ),
+      ),
+    ),
+  );
+const BodiesInput = Schema.Struct({
+  ids: EntryBodiesInput.fields.ids.check(Schema.isMaxLength(compendiumLimits.bodiesPerRequest)),
+});
+const decode = <S extends Schema.Top & { readonly DecodingServices: never }>(
+  schema: S,
+  body: unknown,
+  message: string,
+) =>
+  Schema.decodeUnknownEffect(schema)(body).pipe(Effect.mapError(() => new BadRequest({ message })));
 const parse = <T>(value: string | null, fallback: T): T => {
   if (!value) return fallback;
   try {
@@ -87,22 +109,23 @@ export const compatibleType = (left: EntryType | undefined, right: EntryType): b
       JSON.stringify([right.fields, right.filters ?? []], canonical)
   );
 };
+const indexValue = (row: CompendiumIndexRow) => ({
+  id: row.id,
+  typeId: row.type_id,
+  name: row.name,
+  tags: parse<unknown>(row.tags, undefined),
+  visibility: row.visibility,
+  rev: row.rev,
+  updatedAt: row.updated_at,
+  facets: parse<unknown>(row.facets, undefined),
+});
 const toIndex = (row: CompendiumIndexRow): IndexRow[] => {
-  const decoded = Schema.decodeUnknownResult(IndexRow)({
-    id: row.id,
-    typeId: row.type_id,
-    name: row.name,
-    tags: parse<unknown>(row.tags, undefined),
-    visibility: row.visibility,
-    rev: row.rev,
-    updatedAt: row.updated_at,
-    facets: parse<unknown>(row.facets, undefined),
-  });
+  const decoded = Schema.decodeUnknownResult(IndexRow)(indexValue(row));
   return decoded._tag === "Success" ? [decoded.success] : [];
 };
 const toEntry = (row: CompendiumEntryRow): CompendiumEntry[] => {
   const decoded = Schema.decodeUnknownResult(CompendiumEntry)({
-    ...toIndex(row)[0],
+    ...indexValue(row),
     body: row.body,
     fields: parse<unknown>(row.fields, undefined),
     licence: parse<unknown>(row.licence ?? null, undefined),
@@ -133,21 +156,16 @@ const rewriteRows = (value: unknown, aliases: ReadonlyMap<string, string>): unkn
   );
 };
 
-type WorldCompendiumOptions = {
-  sql: SqlStorage;
-  broadcast: (frame: ServerFrame) => void;
-  transactionSync: DurableObjectStorage["transactionSync"];
-  bucket: R2Bucket;
-  worldId: string;
-};
-
 export interface CompendiumSources {
   readonly available: boolean;
-  resolve(id: string, role: string): Promise<CompendiumEntry | undefined>;
-  bodies(ids: readonly string[], role: string): Promise<ReadonlyMap<string, CompendiumEntry>>;
+  resolve(id: string, role: string): Effect.Effect<CompendiumEntry | undefined, ApiError>;
+  bodies(
+    ids: readonly string[],
+    role: string,
+  ): Effect.Effect<ReadonlyMap<string, CompendiumEntry>, ApiError>;
   ownsType(id: string): boolean;
-  exportEntries(): Promise<CompendiumEntry[]>;
-  prepareImport(entries: readonly PackEntry[]): Promise<PreparedSourceImport>;
+  exportEntries(): Effect.Effect<CompendiumEntry[], ApiError>;
+  prepareImport(entries: readonly PackEntry[]): Effect.Effect<PreparedSourceImport, ApiError>;
 }
 
 export type PreparedSourceImport = { apply: (rev: number) => void };
@@ -264,150 +282,165 @@ export class WorldCompendium {
   notifySources(rev: number) {
     this.updated(rev);
   }
-  private readonly sql: SqlStorage;
-  private readonly broadcast: WorldCompendiumOptions["broadcast"];
-  private readonly transactionSync: WorldCompendiumOptions["transactionSync"];
-  private readonly bucket: R2Bucket;
-  private readonly worldId: string;
   private fts = false;
   private rebuildFts = false;
 
-  constructor({ sql, broadcast, transactionSync, bucket, worldId }: WorldCompendiumOptions) {
-    this.sql = sql;
-    this.broadcast = broadcast;
-    this.transactionSync = transactionSync;
-    this.bucket = bucket;
-    this.worldId = worldId;
+  private constructor(
+    private readonly storage: typeof WorldStorage.Service,
+    private readonly bucket: typeof WorldBucket.Service,
+    private readonly broadcast: typeof Broadcast.Service,
+    private readonly worldId: typeof WorldId.Service,
+  ) {}
+
+  static make = Effect.gen(function* () {
+    const storage = yield* WorldStorage;
+    const bucket = yield* WorldBucket;
+    const broadcast = yield* Broadcast;
+    const worldId = yield* WorldId;
+    return new WorldCompendium(storage, bucket, broadcast, worldId);
+  });
+
+  private get sql() {
+    return this.storage.sql;
+  }
+  private transactionSync<T>(operation: () => T): T {
+    return this.storage.transactionSync(operation);
   }
 
-  migrate() {
-    const sql = this.sql;
-    sql.exec("INSERT OR IGNORE INTO settings (key, value) VALUES ('compendium_rev', '0')");
-    sql.exec(`CREATE TABLE IF NOT EXISTS compendium_types (
+  migrate = () =>
+    storageIO(() => {
+      const sql = this.sql;
+      sql.exec("INSERT OR IGNORE INTO settings (key, value) VALUES ('compendium_rev', '0')");
+      sql.exec(`CREATE TABLE IF NOT EXISTS compendium_types (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, plural TEXT,
       fields TEXT NOT NULL, position INTEGER NOT NULL
     )`);
-    sql.exec(`CREATE TABLE IF NOT EXISTS compendium_entries (
+      sql.exec(`CREATE TABLE IF NOT EXISTS compendium_entries (
       id TEXT PRIMARY KEY, type_id TEXT NOT NULL, name TEXT NOT NULL,
       tags TEXT NOT NULL, body TEXT NOT NULL, fields TEXT NOT NULL,
       visibility TEXT NOT NULL, updated_at TEXT NOT NULL
     )`);
-    if (
-      !sql
-        .exec<{ name: string }>("PRAGMA table_info(compendium_types)")
-        .toArray()
-        .some((row) => row.name === "filters")
-    )
-      sql.exec("ALTER TABLE compendium_types ADD COLUMN filters TEXT");
-    const columns = new Set(
-      sql
-        .exec<{ name: string }>("PRAGMA table_info(compendium_entries)")
-        .toArray()
-        .map((row) => row.name),
-    );
-    for (const [name, ddl] of [
-      ["rev", "INTEGER NOT NULL DEFAULT 0"],
-      ["facets", "TEXT"],
-      ["licence", "TEXT"],
-      ["source_rev", "INTEGER"],
-      ["source_id", "TEXT"],
-      ["name_key", "TEXT NOT NULL DEFAULT ''"],
-      ["name_words", "TEXT NOT NULL DEFAULT ''"],
-      ["tags_key", "TEXT NOT NULL DEFAULT ''"],
-      ["text_key", "TEXT NOT NULL DEFAULT ''"],
-    ])
-      if (!columns.has(name)) sql.exec(`ALTER TABLE compendium_entries ADD COLUMN ${name} ${ddl}`);
-    sql.exec("CREATE INDEX IF NOT EXISTS compendium_entries_type ON compendium_entries(type_id)");
-    sql.exec("CREATE INDEX IF NOT EXISTS compendium_entries_name ON compendium_entries(name_key)");
-    sql.exec("CREATE INDEX IF NOT EXISTS compendium_entries_rev ON compendium_entries(rev)");
-    sql.exec(
-      "CREATE INDEX IF NOT EXISTS compendium_entries_source ON compendium_entries(source_id)",
-    );
-    sql.exec(
-      "CREATE TABLE IF NOT EXISTS compendium_tombstones (id TEXT PRIMARY KEY, rev INTEGER NOT NULL)",
-    );
-    sql.exec("CREATE INDEX IF NOT EXISTS compendium_tombstones_rev ON compendium_tombstones(rev)");
-    if (
-      !sql
-        .exec<{ name: string }>("PRAGMA table_info(compendium_tombstones)")
-        .toArray()
-        .some((row) => row.name === "public")
-    )
-      sql.exec("ALTER TABLE compendium_tombstones ADD COLUMN public INTEGER NOT NULL DEFAULT 1");
-    if (
-      !sql
-        .exec<{ name: string }>("PRAGMA table_info(compendium_tombstones)")
-        .toArray()
-        .some((row) => row.name === "source_id")
-    )
-      sql.exec("ALTER TABLE compendium_tombstones ADD COLUMN source_id TEXT");
-    if (this.setting("compendium_source_ids") !== "1") {
-      this.transactionSync(() => {
-        for (const table of ["compendium_entries", "compendium_tombstones"]) {
-          for (const row of sql.exec<{ id: string }>(`SELECT id FROM ${table}`).toArray())
-            sql.exec(
-              `UPDATE ${table} SET source_id = ? WHERE id = ?`,
-              librarySource(row.id) ?? null,
-              row.id,
-            );
-        }
-        this.setting("compendium_source_ids", "1");
-      });
-    }
-    sql.exec(
-      "CREATE TABLE IF NOT EXISTS compendium_aliases (old_id TEXT PRIMARY KEY, new_id TEXT NOT NULL)",
-    );
-    // Include the tie breakers so LIMIT can stop an ordered index walk without a sort.
-    sql.exec(
-      "CREATE INDEX IF NOT EXISTS compendium_entries_search_name ON compendium_entries(name_key, name, id)",
-    );
-    // One- and two-character tag substrings cannot use trigram MATCH. Keep their
-    // fallback scans off body pages and skip entries with no tags altogether.
-    sql.exec(
-      "CREATE INDEX IF NOT EXISTS compendium_entries_search_tags ON compendium_entries(tags_key) WHERE tags_key <> ''",
-    );
-    const hadFts =
-      sql
-        .exec(
-          "SELECT name FROM sqlite_master WHERE name IN ('compendium_fts', 'compendium_tags_fts')",
-        )
-        .toArray().length === 2;
-    const upgradeFts = this.setting("compendium_fts_version") !== "3" || !hadFts;
-    try {
-      this.transactionSync(() => {
-        if (upgradeFts) {
-          for (const trigger of ["insert", "delete", "update"])
-            sql.exec(`DROP TRIGGER IF EXISTS compendium_fts_${trigger}`);
-          sql.exec("DROP TABLE IF EXISTS compendium_fts");
-          sql.exec("DROP TABLE IF EXISTS compendium_tags_fts");
-        }
-        sql.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS compendium_fts USING
+      if (
+        !sql
+          .exec<{ name: string }>("PRAGMA table_info(compendium_types)")
+          .toArray()
+          .some((row) => row.name === "filters")
+      )
+        sql.exec("ALTER TABLE compendium_types ADD COLUMN filters TEXT");
+      const columns = new Set(
+        sql
+          .exec<{ name: string }>("PRAGMA table_info(compendium_entries)")
+          .toArray()
+          .map((row) => row.name),
+      );
+      for (const [name, ddl] of [
+        ["rev", "INTEGER NOT NULL DEFAULT 0"],
+        ["facets", "TEXT"],
+        ["licence", "TEXT"],
+        ["source_rev", "INTEGER"],
+        ["source_id", "TEXT"],
+        ["name_key", "TEXT NOT NULL DEFAULT ''"],
+        ["name_words", "TEXT NOT NULL DEFAULT ''"],
+        ["tags_key", "TEXT NOT NULL DEFAULT ''"],
+        ["text_key", "TEXT NOT NULL DEFAULT ''"],
+      ])
+        if (!columns.has(name))
+          sql.exec(`ALTER TABLE compendium_entries ADD COLUMN ${name} ${ddl}`);
+      sql.exec("CREATE INDEX IF NOT EXISTS compendium_entries_type ON compendium_entries(type_id)");
+      sql.exec(
+        "CREATE INDEX IF NOT EXISTS compendium_entries_name ON compendium_entries(name_key)",
+      );
+      sql.exec("CREATE INDEX IF NOT EXISTS compendium_entries_rev ON compendium_entries(rev)");
+      sql.exec(
+        "CREATE INDEX IF NOT EXISTS compendium_entries_source ON compendium_entries(source_id)",
+      );
+      sql.exec(
+        "CREATE TABLE IF NOT EXISTS compendium_tombstones (id TEXT PRIMARY KEY, rev INTEGER NOT NULL)",
+      );
+      sql.exec(
+        "CREATE INDEX IF NOT EXISTS compendium_tombstones_rev ON compendium_tombstones(rev)",
+      );
+      if (
+        !sql
+          .exec<{ name: string }>("PRAGMA table_info(compendium_tombstones)")
+          .toArray()
+          .some((row) => row.name === "public")
+      )
+        sql.exec("ALTER TABLE compendium_tombstones ADD COLUMN public INTEGER NOT NULL DEFAULT 1");
+      if (
+        !sql
+          .exec<{ name: string }>("PRAGMA table_info(compendium_tombstones)")
+          .toArray()
+          .some((row) => row.name === "source_id")
+      )
+        sql.exec("ALTER TABLE compendium_tombstones ADD COLUMN source_id TEXT");
+      if (this.setting("compendium_source_ids") !== "1") {
+        this.transactionSync(() => {
+          for (const table of ["compendium_entries", "compendium_tombstones"]) {
+            for (const row of sql.exec<{ id: string }>(`SELECT id FROM ${table}`).toArray())
+              sql.exec(
+                `UPDATE ${table} SET source_id = ? WHERE id = ?`,
+                librarySource(row.id) ?? null,
+                row.id,
+              );
+          }
+          this.setting("compendium_source_ids", "1");
+        });
+      }
+      sql.exec(
+        "CREATE TABLE IF NOT EXISTS compendium_aliases (old_id TEXT PRIMARY KEY, new_id TEXT NOT NULL)",
+      );
+      // Include the tie breakers so LIMIT can stop an ordered index walk without a sort.
+      sql.exec(
+        "CREATE INDEX IF NOT EXISTS compendium_entries_search_name ON compendium_entries(name_key, name, id)",
+      );
+      // One- and two-character tag substrings cannot use trigram MATCH. Keep their
+      // fallback scans off body pages and skip entries with no tags altogether.
+      sql.exec(
+        "CREATE INDEX IF NOT EXISTS compendium_entries_search_tags ON compendium_entries(tags_key) WHERE tags_key <> ''",
+      );
+      const hadFts =
+        sql
+          .exec(
+            "SELECT name FROM sqlite_master WHERE name IN ('compendium_fts', 'compendium_tags_fts')",
+          )
+          .toArray().length === 2;
+      const upgradeFts = this.setting("compendium_fts_version") !== "3" || !hadFts;
+      try {
+        this.transactionSync(() => {
+          if (upgradeFts) {
+            for (const trigger of ["insert", "delete", "update"])
+              sql.exec(`DROP TRIGGER IF EXISTS compendium_fts_${trigger}`);
+            sql.exec("DROP TABLE IF EXISTS compendium_fts");
+            sql.exec("DROP TABLE IF EXISTS compendium_tags_fts");
+          }
+          sql.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS compendium_fts USING
           fts5(id UNINDEXED, name_words, tags_key, text_key, prefix = '2 3')`);
-        // Names and tags keep substring matching, including inside a word ("sword" → Longsword).
-        sql.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS compendium_tags_fts USING
+          // Names and tags keep substring matching, including inside a word ("sword" → Longsword).
+          sql.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS compendium_tags_fts USING
           fts5(name_key, tags_key, tokenize = 'trigram')`);
-        sql.exec(`CREATE TRIGGER IF NOT EXISTS compendium_fts_insert AFTER INSERT ON compendium_entries BEGIN
+          sql.exec(`CREATE TRIGGER IF NOT EXISTS compendium_fts_insert AFTER INSERT ON compendium_entries BEGIN
           INSERT INTO compendium_fts (rowid, id, name_words, tags_key, text_key)
             VALUES (new.rowid, new.id, new.name_words, new.tags_key, new.text_key);
           INSERT INTO compendium_tags_fts (rowid, name_key, tags_key) VALUES (new.rowid, new.name_key, new.tags_key); END`);
-        sql.exec(`CREATE TRIGGER IF NOT EXISTS compendium_fts_delete AFTER DELETE ON compendium_entries BEGIN
+          sql.exec(`CREATE TRIGGER IF NOT EXISTS compendium_fts_delete AFTER DELETE ON compendium_entries BEGIN
           DELETE FROM compendium_fts WHERE rowid = old.rowid;
           DELETE FROM compendium_tags_fts WHERE rowid = old.rowid; END`);
-        sql.exec(`CREATE TRIGGER IF NOT EXISTS compendium_fts_update AFTER UPDATE OF id, name_key, name_words, tags_key, text_key ON compendium_entries BEGIN
+          sql.exec(`CREATE TRIGGER IF NOT EXISTS compendium_fts_update AFTER UPDATE OF id, name_key, name_words, tags_key, text_key ON compendium_entries BEGIN
           DELETE FROM compendium_fts WHERE rowid = old.rowid;
           INSERT INTO compendium_fts (rowid, id, name_words, tags_key, text_key)
             VALUES (new.rowid, new.id, new.name_words, new.tags_key, new.text_key);
           DELETE FROM compendium_tags_fts WHERE rowid = old.rowid;
           INSERT INTO compendium_tags_fts (rowid, name_key, tags_key) VALUES (new.rowid, new.name_key, new.tags_key); END`);
-      });
-      this.fts = true;
-      this.rebuildFts = upgradeFts;
-    } catch {
-      this.fts = false;
-      this.rebuildFts = false;
-    }
-    this.setting("compendium_search_engine", this.fts ? "fts5" : "like");
-  }
+        });
+        this.fts = true;
+        this.rebuildFts = upgradeFts;
+      } catch {
+        this.fts = false;
+        this.rebuildFts = false;
+      }
+      this.setting("compendium_search_engine", this.fts ? "fts5" : "like");
+    });
 
   private setting(key: string, value?: string): string | undefined {
     if (value !== undefined)
@@ -433,7 +466,7 @@ export class WorldCompendium {
   }
 
   /** Initialization holds the DO input gate: no character can be read or written between backup and rewrite. */
-  async ensureMigrated(): Promise<void> {
+  ensureMigrated = Effect.fn("WorldCompendium.ensureMigrated")(function* (this: WorldCompendium) {
     const sql = this.sql;
     if (this.setting("compendium_ids") !== "2") {
       const compendium = this.list();
@@ -443,18 +476,33 @@ export class WorldCompendium {
           .exec<{ id: string; template_id: string; data: string }>(
             "SELECT id, template_id, data FROM characters",
           )
-          .toArray();
+          .toArray()
+          .map((row) => ({ ...row, values: parse<unknown>(row.data, {}) }));
         // A failed backup aborts initialization, leaving the old world intact for the next start.
-        await this.bucket.put(
-          `world/${this.worldId}/backups/compendium-${nowIso()}.json`,
-          JSON.stringify({
-            ...compendium,
-            characters: characters.map((row) => ({
-              id: row.id,
-              values: parse<unknown>(row.data, {}),
-            })),
-          }),
-          { httpMetadata: { contentType: "application/json" } },
+        yield* Effect.tryPromise({
+          try: () =>
+            this.bucket.put(
+              `world/${this.worldId}/backups/compendium-${nowIso()}.json`,
+              JSON.stringify({
+                ...compendium,
+                characters: characters.map((row) => ({
+                  id: row.id,
+                  values: row.values,
+                })),
+              }),
+              { httpMetadata: { contentType: "application/json" } },
+            ),
+          catch: (cause) => cause,
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logError(cause).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new Unavailable({ message: "Compendium backup is temporarily unavailable" }),
+                ),
+              ),
+            ),
+          ),
         );
         const taken = this.takenIds();
         const aliases = new Map(
@@ -488,7 +536,7 @@ export class WorldCompendium {
             );
           }
           for (const character of characters) {
-            const values = rewriteRows(parse<unknown>(character.data, {}), aliases);
+            const values = rewriteRows(character.values, aliases);
             if (isRecord(values))
               for (const key of templates.get(character.template_id) ?? []) {
                 const value = values[key];
@@ -541,28 +589,8 @@ export class WorldCompendium {
       });
       this.rebuildFts = false;
     }
-  }
+  }, storageFailure);
 
-  checkRequest(request: Request, url: URL): Response | Promise<Response | undefined> | undefined {
-    const read =
-      (request.method === "GET" &&
-        ["/internal/compendium", "/internal/compendium/index"].includes(url.pathname)) ||
-      (request.method === "POST" && url.pathname === "/internal/compendium/bodies");
-    if (
-      url.pathname.startsWith("/internal/compendium") &&
-      !read &&
-      request.headers.get("x-ttrpg-role") !== "dm"
-    )
-      return json({ error: "Only the DM can manage the compendium" }, 403);
-    if (url.pathname === "/internal/compendium/import" && request.method === "POST")
-      return this.checkPackSize(request);
-  }
-  private async checkPackSize(request: Request): Promise<Response | undefined> {
-    if (
-      new TextEncoder().encode(await request.clone().text()).byteLength > compendiumLimits.packBytes
-    )
-      return json({ error: "Pack JSON must be at most 4 MB" }, 400);
-  }
   private types(): EntryType[] {
     return this.sql
       .exec<CompendiumTypeRow>("SELECT * FROM compendium_types ORDER BY position, id")
@@ -631,29 +659,36 @@ export class WorldCompendium {
     );
   }
   /** Resolve legacy ids and enforce entry visibility before handing content to rolls. */
-  async lookup(
+  lookup = Effect.fn("WorldCompendium.lookup")(function* (
+    this: WorldCompendium,
     id: string,
     role: string,
-  ): Promise<{ entry: CompendiumEntry; type: EntryType } | undefined> {
+  ) {
     const row = this.sql
       .exec<CompendiumEntryRow>("SELECT * FROM compendium_entries WHERE id = ?", this.resolveId(id))
       .toArray()[0];
     if (!row || (role !== "dm" && row.visibility !== "public")) return undefined;
     if (row.source_id !== null && !this.sources?.available) return undefined;
     const entry =
-      row.source_id !== null ? await this.sources?.resolve(row.id, role) : toEntry(row)[0];
+      row.source_id !== null && this.sources
+        ? yield* this.sources.resolve(row.id, role)
+        : toEntry(row)[0];
     const type = entry && this.types().find((type) => type.id === entry.typeId);
     return entry && type ? { entry, type } : undefined;
-  }
+  }, storageFailure);
 
-  async bodies(input: EntryBodiesInput, role: string): Promise<EntryBodies> {
+  bodies = Effect.fn("WorldCompendium.bodies")(function* (
+    this: WorldCompendium,
+    input: EntryBodiesInput,
+    role: string,
+  ) {
     const aliases: Record<string, string> = {};
     const missing: string[] = [];
     const ids = new Set<string>();
     const entries: CompendiumEntry[] = [];
     const resolvedIds = input.ids.map((id) => this.resolveId(id));
     const libraries = this.sources?.available
-      ? await this.sources.bodies(
+      ? yield* this.sources.bodies(
           resolvedIds.filter((id) => librarySource(id) !== undefined),
           role,
         )
@@ -662,7 +697,7 @@ export class WorldCompendium {
       const oldId = input.ids[i];
       const id = resolvedIds[i];
       const entry =
-        librarySource(id) !== undefined ? libraries.get(id) : (await this.lookup(id, role))?.entry;
+        librarySource(id) !== undefined ? libraries.get(id) : (yield* this.lookup(id, role))?.entry;
       if (!entry) {
         missing.push(oldId);
         continue;
@@ -674,7 +709,7 @@ export class WorldCompendium {
       }
     }
     return { entries, missing, aliases };
-  }
+  }, storageFailure);
 
   /**
    * Accent/case insensitive. All query words must match within the name, tags or text.
@@ -814,14 +849,6 @@ export class WorldCompendium {
     return rows;
   }
 
-  private libraryFailure(error: unknown): Promise<Response> {
-    return Effect.runPromise(
-      corpusEdge(Effect.fail(error), (error) =>
-        json({ error: error.message }, corpusStatus(error)),
-      ),
-    );
-  }
-
   private takenIds(): Set<string> {
     return new Set(
       this.sql
@@ -942,52 +969,41 @@ export class WorldCompendium {
     );
   }
 
-  async handle(
+  handle = Effect.fn("WorldCompendium.handle")(function* (
+    this: WorldCompendium,
     method: string,
     path: string,
     body: unknown,
     role: string,
     worldName: string,
     since: string | null = null,
-  ): Promise<Response> {
-    if (method === "GET" && path === "compendium/index") return json(this.index(since, role));
+  ) {
+    if (method === "GET" && path === "compendium/index") return this.index(since, role);
     if (method === "POST" && path === "compendium/bodies") {
-      const decoded = Schema.decodeUnknownResult(EntryBodiesInput)(body);
-      if (
-        decoded._tag === "Failure" ||
-        decoded.success.ids.length > compendiumLimits.bodiesPerRequest
-      )
-        return json(
-          { error: `Request at most ${compendiumLimits.bodiesPerRequest} entry ids` },
-          400,
-        );
-      try {
-        return json(await this.bodies(decoded.success, role));
-      } catch (error) {
-        return this.libraryFailure(error);
-      }
+      const input = yield* decode(
+        BodiesInput,
+        body,
+        `Request at most ${compendiumLimits.bodiesPerRequest} entry ids`,
+      );
+      return yield* this.bodies(input, role);
     }
     if (method === "GET" && path === "compendium") {
       const compendium = this.list();
-      return json({
+      return {
         types: compendium.types,
         entries: compendium.entries.filter(
           (entry) => role === "dm" || entry.visibility === "public",
         ),
-      });
+      };
     }
-    if (role !== "dm") return json({ error: "Only the DM can manage the compendium" }, 403);
+    if (role !== "dm")
+      return yield* Effect.fail(
+        new Forbidden({ message: "Only the DM can manage the compendium" }),
+      );
     const sql = this.sql;
     const types = this.types();
     if (method === "GET" && path === "compendium/export") {
-      let overrides: CompendiumEntry[] = [];
-      if (this.sources?.available) {
-        try {
-          overrides = await this.sources.exportEntries();
-        } catch (error) {
-          return this.libraryFailure(error);
-        }
-      }
+      const overrides = this.sources?.available ? yield* this.sources.exportEntries() : [];
       const pack: CompendiumPack = {
         format: "ttrpg-pack",
         version: 2,
@@ -997,7 +1013,7 @@ export class WorldCompendium {
           ({ updatedAt: _updatedAt, rev: _rev, ...entry }) => entry,
         ),
       };
-      return json(pack);
+      return pack;
     }
     const typeMatch = /^compendium\/types\/([^/]+)$/.exec(path);
     if (
@@ -1005,16 +1021,15 @@ export class WorldCompendium {
       (method === "PUT" || method === "DELETE") &&
       this.sources?.ownsType(typeMatch[1])
     )
-      return json({ error: "Enabled library entry types cannot be edited in the world" }, 409);
+      return yield* Effect.fail(
+        new Conflict({ message: "Enabled library entry types cannot be edited in the world" }),
+      );
     if (typeMatch && method === "PUT") {
-      const decoded = Schema.decodeUnknownResult(EntryType)(body);
-      if (decoded._tag === "Failure") return json({ error: "Invalid entry type" }, 400);
-      const type = decoded.success;
-      if (type.id !== typeMatch[1]) return json({ error: "Type id must match the URL" }, 400);
+      const type = yield* decode(EntryType, body, "Invalid entry type");
+      if (type.id !== typeMatch[1])
+        return yield* Effect.fail(new BadRequest({ message: "Type id must match the URL" }));
       const error = typeError(type, types);
-      if (error) return json({ error }, 400);
-      if (!types.some((row) => row.id === type.id) && types.length >= compendiumLimits.types)
-        return json({ error: "A world can have at most 50 entry types" }, 400);
+      if (error) return yield* Effect.fail(new BadRequest({ message: error }));
       const rev = this.transactionSync(() => {
         const previous = types.find((candidate) => candidate.id === type.id);
         this.writeCompendiumType(type);
@@ -1027,7 +1042,7 @@ export class WorldCompendium {
         return revision;
       });
       this.updated(rev);
-      return json(type);
+      return type;
     }
     if (typeMatch && method === "DELETE") {
       if (
@@ -1035,32 +1050,40 @@ export class WorldCompendium {
           .exec("SELECT id FROM compendium_entries WHERE type_id = ? LIMIT 1", typeMatch[1])
           .toArray().length
       )
-        return json({ error: "Delete this type's entries before deleting the type" }, 409);
+        return yield* Effect.fail(
+          new Conflict({ message: "Delete this type's entries before deleting the type" }),
+        );
       const rev = this.transactionSync(() => {
         sql.exec("DELETE FROM compendium_types WHERE id = ?", typeMatch[1]);
         return this.bump();
       });
       this.updated(rev);
-      return new Response(null, { status: 204 });
+      return undefined;
     }
     if (method === "POST" && path === "compendium/entries") {
-      const decoded = Schema.decodeUnknownResult(SaveEntryInput)(body);
-      if (decoded._tag === "Failure") return json({ error: "Invalid entry data" }, 400);
-      const input = decoded.success;
+      const input = yield* decode(SaveEntryInput, body, "Invalid entry data");
       const type = types.find((candidate) => candidate.id === input.typeId);
-      if (!type) return json({ error: `Unknown entry type: ${input.typeId}` }, 400);
+      if (!type)
+        return yield* Effect.fail(
+          new BadRequest({ message: `Unknown entry type: ${input.typeId}` }),
+        );
       const id =
         input.id === undefined
           ? this.newEntryId(input.typeId, input.name, this.takenIds())
           : this.resolveId(input.id);
-      if (librarySource(id) !== undefined)
-        return json({ error: "Use the library override editor for this entry" }, 409);
       const existing = sql
-        .exec<{ type_id: string }>("SELECT type_id FROM compendium_entries WHERE id = ?", id)
+        .exec<CompendiumEntryRow>("SELECT * FROM compendium_entries WHERE id = ?", id)
         .toArray()[0];
-      if (input.id !== undefined && !existing) return json({ error: "Entry not found" }, 404);
+      if (existing?.source_id != null || librarySource(id) !== undefined)
+        return yield* Effect.fail(
+          new Conflict({ message: "Use the library override editor for this entry" }),
+        );
+      if (input.id !== undefined && !existing)
+        return yield* Effect.fail(new NotFound({ message: "Entry not found" }));
       if (existing && existing.type_id !== input.typeId)
-        return json({ error: "An entry cannot move between types" }, 400);
+        return yield* Effect.fail(
+          new BadRequest({ message: "An entry cannot move between types" }),
+        );
       if (
         input.id === undefined &&
         sql
@@ -1069,39 +1092,42 @@ export class WorldCompendium {
           )
           .one().n >= compendiumLimits.entries
       )
-        return json({ error: "A world can have at most 10000 entries" }, 400);
+        return yield* Effect.fail(
+          new BadRequest({ message: "A world can have at most 10000 entries" }),
+        );
       const entry: CompendiumEntry = {
         ...input,
         id,
         updatedAt: nowIso(),
         rev: this.revision() + 1,
-        licence: parse<CompendiumEntry["licence"]>(
-          sql
-            .exec<{ licence: string | null }>(
-              "SELECT licence FROM compendium_entries WHERE id = ?",
-              id,
-            )
-            .toArray()[0]?.licence ?? null,
-          undefined,
-        ),
+        licence: existing ? toEntry(existing)[0]?.licence : undefined,
       };
       const error = entryError(entry, type);
-      if (error) return json({ error }, 400);
+      if (error) return yield* Effect.fail(new BadRequest({ message: error }));
       this.transactionSync(() => {
         this.bump();
         this.writeCompendiumEntry(entry, type);
       });
       this.updated(entry.rev ?? 0);
-      return json(entry);
+      return entry;
     }
     const entryMatch = /^compendium\/entries\/(.+)$/.exec(path);
     if (entryMatch && method === "DELETE") {
-      const id = this.resolveId(decodeURIComponent(entryMatch[1]));
-      if (librarySource(id) !== undefined)
-        return json({ error: "Use the library blocklist for this entry" }, 409);
+      const decodedId = yield* Effect.try({
+        try: () => decodeURIComponent(entryMatch[1]),
+        catch: () => new BadRequest({ message: "Invalid encoded entry id" }),
+      });
+      const id = this.resolveId(decodedId);
       const previous = sql
-        .exec<{ visibility: string }>("SELECT visibility FROM compendium_entries WHERE id = ?", id)
+        .exec<Pick<CompendiumEntryRow, "visibility" | "source_id">>(
+          "SELECT visibility, source_id FROM compendium_entries WHERE id = ?",
+          id,
+        )
         .toArray()[0];
+      if (previous?.source_id != null || librarySource(id) !== undefined)
+        return yield* Effect.fail(
+          new Conflict({ message: "Use the library blocklist for this entry" }),
+        );
       const rev = this.transactionSync(() => {
         const revision = this.bump();
         sql.exec("DELETE FROM compendium_entries WHERE id = ?", id);
@@ -1109,75 +1135,64 @@ export class WorldCompendium {
         return revision;
       });
       this.updated(rev);
-      return new Response(null, { status: 204 });
+      return undefined;
     }
     if (method === "POST" && path === "compendium/import") {
-      const decoded = Schema.decodeUnknownResult(CompendiumPack)(body);
-      if (decoded._tag === "Failure") return json({ error: "Invalid compendium pack" }, 400);
-      const pack = decoded.success;
+      const pack = yield* decode(CompendiumPack, body, "Invalid compendium pack");
       const expectedRevision = this.revision();
-      if (new TextEncoder().encode(JSON.stringify(pack)).byteLength > compendiumLimits.packBytes)
-        return json({ error: "Pack JSON must be at most 4 MB" }, 400);
-      if (pack.entries.length > compendiumLimits.entries)
-        return json({ error: "A pack can have at most 10000 entries" }, 400);
-      if (new Set(pack.entries.map((item) => item.id)).size !== pack.entries.length)
-        return json({ error: "Pack contains duplicate entry ids" }, 400);
-      const sourceEntries = pack.entries.filter((item) => librarySource(item.id) !== undefined);
-      const localEntries = pack.entries.filter((item) => librarySource(item.id) === undefined);
+      const sourceEntries: PackEntry[] = [];
+      const localEntries: PackEntry[] = [];
+      for (const item of pack.entries)
+        (librarySource(item.id) === undefined ? localEntries : sourceEntries).push(item);
+      // packError checks local entries; mixed packs also include library content in their limits.
+      if (sourceEntries.length) {
+        if (new TextEncoder().encode(JSON.stringify(pack)).byteLength > compendiumLimits.packBytes)
+          return yield* Effect.fail(new BadRequest({ message: "Pack JSON must be at most 4 MB" }));
+        if (pack.entries.length > compendiumLimits.entries)
+          return yield* Effect.fail(
+            new BadRequest({ message: "A pack can have at most 10000 entries" }),
+          );
+        if (new Set(pack.entries.map((item) => item.id)).size !== pack.entries.length)
+          return yield* Effect.fail(
+            new BadRequest({ message: "Pack contains duplicate entry ids" }),
+          );
+      }
       for (const item of sourceEntries) {
-        if (item.licence) {
-          const issue = licenceError(item.licence);
-          if (issue) return json({ error: issue }, 400);
-        }
         if (
           parseEntryId(item.id)?.typeId !== item.typeId ||
-          !Number.isSafeInteger(item.sourceVersion) ||
-          !Number.isSafeInteger(item.sourceRev) ||
           (item.sourceVersion ?? 0) < 1 ||
           (item.sourceRev ?? 0) < 1 ||
           !item.licence
         )
-          return json(
-            { error: "Library pack entries require valid identity, provenance and licence" },
-            400,
+          return yield* Effect.fail(
+            new BadRequest({
+              message: "Library pack entries require valid identity, provenance and licence",
+            }),
           );
       }
       if (sourceEntries.length && (pack.version !== 2 || !this.sources?.available))
-        return json(
-          { error: "Enable the pack's libraries before importing version 2 library entries" },
-          409,
+        return yield* Effect.fail(
+          new Conflict({
+            message: "Enable the pack's libraries before importing version 2 library entries",
+          }),
         );
-      for (const item of pack.entries) {
-        const previous = sql
-          .exec<{ licence: string | null }>(
-            "SELECT licence FROM compendium_entries WHERE id = ?",
-            item.id,
-          )
-          .toArray()[0];
-        const rights = parse<CompendiumEntry["licence"]>(previous?.licence ?? null, undefined);
-        if (rights && JSON.stringify(rights) !== JSON.stringify(item.licence))
-          return json(
-            { error: "Import must preserve the existing entry licence and attribution" },
-            400,
-          );
-      }
       for (const type of pack.types) {
         const existingType = types.find((candidate) => candidate.id === type.id);
         if (this.sources?.ownsType(type.id) && !compatibleType(existingType, type))
-          return json({ error: "Import cannot replace enabled library entry types" }, 409);
+          return yield* Effect.fail(
+            new Conflict({ message: "Import cannot replace enabled library entry types" }),
+          );
       }
       const error = packError({ ...pack, entries: localEntries }, types);
-      if (error) return json({ error }, 400);
+      if (error) return yield* Effect.fail(new BadRequest({ message: error }));
       const typeMap = new Map([...types, ...pack.types].map((type) => [type.id, type]));
-      if (typeMap.size > compendiumLimits.types)
-        return json({ error: "A world can have at most 50 entry types" }, 400);
       const existing = new Map(
         sql
-          .exec<{ id: string; type_id: string }>(
-            "SELECT id, type_id FROM compendium_entries WHERE source_id IS NULL",
+          .exec<Pick<CompendiumEntryRow, "id" | "type_id" | "licence">>(
+            "SELECT id, type_id, licence FROM compendium_entries WHERE source_id IS NULL",
           )
           .toArray()
-          .map((row) => [row.id, row.type_id]),
+          .map((row) => [row.id, row]),
       );
       const taken = this.takenIds();
       const aliases: [string, string][] = [];
@@ -1193,75 +1208,76 @@ export class WorldCompendium {
             aliases.push([item.id, id]);
           }
         }
-        const parts = parseEntryId(id);
-        if (!parts || parts.source !== WORLD_SOURCE || parts.typeId !== item.typeId)
-          return json({ error: "Entry id must be world/<type>/<slug> and match its type" }, 400);
-        const rights = parse<CompendiumEntry["licence"]>(
-          sql
-            .exec<{ licence: string | null }>(
-              "SELECT licence FROM compendium_entries WHERE id = ?",
-              id,
-            )
-            .toArray()[0]?.licence ?? null,
-          undefined,
-        );
-        if (rights && JSON.stringify(rights) !== JSON.stringify(item.licence))
-          return json(
-            { error: "Import must preserve the existing entry licence and attribution" },
-            400,
-          );
-        if (item.licence) {
-          const issue = licenceError(item.licence);
-          if (issue) return json({ error: issue }, 400);
+        // Legacy aliases are stored by older versions and may resolve to a different type.
+        if (pack.version === 1) {
+          const parts = parseEntryId(id);
+          if (!parts || parts.source !== WORLD_SOURCE || parts.typeId !== item.typeId)
+            return yield* Effect.fail(
+              new BadRequest({
+                message: "Entry id must be world/<type>/<slug> and match its type",
+              }),
+            );
         }
-        if (existing.has(id) && existing.get(id) !== item.typeId)
-          return json({ error: "An entry cannot move between types" }, 400);
-        if (importedIds.has(id)) return json({ error: "Pack contains duplicate entry ids" }, 400);
+        const storedLicence = existing.get(id)?.licence;
+        const decodedLicence = Schema.decodeUnknownResult(CompendiumEntry.fields.licence)(
+          parse<unknown>(storedLicence ?? null, undefined),
+        );
+        const rights = decodedLicence._tag === "Success" ? decodedLicence.success : undefined;
+        if (rights && JSON.stringify(rights) !== JSON.stringify(item.licence))
+          return yield* Effect.fail(
+            new BadRequest({
+              message: "Import must preserve the existing entry licence and attribution",
+            }),
+          );
+        if (existing.has(id) && existing.get(id)?.type_id !== item.typeId)
+          return yield* Effect.fail(
+            new BadRequest({ message: "An entry cannot move between types" }),
+          );
+        if (pack.version === 1 && importedIds.has(id))
+          return yield* Effect.fail(
+            new BadRequest({ message: "Pack contains duplicate entry ids" }),
+          );
         importedIds.add(id);
         taken.add(id);
         if (!existing.has(id)) created++;
         const entry = { ...item, id, updatedAt: nowIso(), rev: this.revision() + 1 };
-        const type = typeMap.get(entry.typeId);
-        if (!type) return json({ error: `Unknown entry type: ${entry.typeId}` }, 400);
-        const validation = entryError(entry, type);
-        if (validation) return json({ error: validation }, 400);
         entries.push(entry);
       }
       if (existing.size + created > compendiumLimits.entries)
-        return json({ error: "A world can have at most 10000 entries" }, 400);
-      let prepared: PreparedSourceImport | undefined;
-      try {
-        if (sourceEntries.length) prepared = await this.sources!.prepareImport(sourceEntries);
-        const rev = this.transactionSync(() => {
-          // Corpus/R2 awaits permit edits; the world revision covers both local rows and source changes.
-          if (this.revision() !== expectedRevision)
-            throw new CorpusConflict({
-              message: "Compendium changed while importing; retry the import",
-            });
-          const revision = this.bump();
-          prepared?.apply(revision);
-          for (const type of pack.types) {
-            if (this.sources?.ownsType(type.id)) continue;
-            const previous = types.find((candidate) => candidate.id === type.id);
-            this.writeCompendiumType(type);
-            if (
-              JSON.stringify(previous?.filters) !== JSON.stringify(type.filters) ||
-              JSON.stringify(previous?.fields) !== JSON.stringify(type.fields)
-            )
-              this.recomputeFacets(type, revision);
-          }
-          for (const entry of entries)
-            this.writeCompendiumEntry({ ...entry, rev: revision }, typeMap.get(entry.typeId));
-          for (const [oldId, newId] of aliases)
-            sql.exec("INSERT INTO compendium_aliases (old_id, new_id) VALUES (?, ?)", oldId, newId);
-          return revision;
-        });
-        this.updated(rev);
-        return json({ types: pack.types.length, created, updated: pack.entries.length - created });
-      } catch (error) {
-        return this.libraryFailure(error);
-      }
+        return yield* Effect.fail(
+          new BadRequest({ message: "A world can have at most 10000 entries" }),
+        );
+      const prepared =
+        sourceEntries.length && this.sources
+          ? yield* this.sources.prepareImport(sourceEntries)
+          : undefined;
+      // Corpus/R2 awaits permit edits; check before the uninterrupted SQLite transaction.
+      if (this.revision() !== expectedRevision)
+        return yield* Effect.fail(
+          new Conflict({ message: "Compendium changed while importing; retry the import" }),
+        );
+      const rev = this.transactionSync(() => {
+        const revision = this.bump();
+        prepared?.apply(revision);
+        for (const type of pack.types) {
+          if (this.sources?.ownsType(type.id)) continue;
+          const previous = types.find((candidate) => candidate.id === type.id);
+          this.writeCompendiumType(type);
+          if (
+            JSON.stringify(previous?.filters) !== JSON.stringify(type.filters) ||
+            JSON.stringify(previous?.fields) !== JSON.stringify(type.fields)
+          )
+            this.recomputeFacets(type, revision);
+        }
+        for (const entry of entries)
+          this.writeCompendiumEntry({ ...entry, rev: revision }, typeMap.get(entry.typeId));
+        for (const [oldId, newId] of aliases)
+          sql.exec("INSERT INTO compendium_aliases (old_id, new_id) VALUES (?, ?)", oldId, newId);
+        return revision;
+      });
+      this.updated(rev);
+      return { types: pack.types.length, created, updated: pack.entries.length - created };
     }
-    return json({ error: "Not found" }, 404);
-  }
+    return yield* Effect.fail(new NotFound({ message: "Not found" }));
+  }, storageFailure);
 }
