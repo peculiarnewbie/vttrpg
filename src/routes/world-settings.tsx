@@ -7,14 +7,16 @@ import { BuilderPanel } from "../components/builder";
 import { CompendiumSettings } from "../components/compendium-settings";
 import { MembersPanel } from "../components/members";
 import { Libraries } from "../components/libraries";
+import { SystemSetup } from "../components/system-setup";
 import { styles } from "../components/styles.stylex";
 import { Button, ErrorBanner, Spinner, TopBar } from "../components/ui";
 import type { SheetTemplate, WorldMember } from "../domain/schemas";
 import { sx } from "../theme/sx";
 
-type Section = "members" | "templates" | "compendium" | "libraries";
+type Section = "system" | "members" | "templates" | "compendium" | "libraries";
 
 const sections: { id: Section; label: string }[] = [
+  { id: "system", label: "Game system" },
   { id: "members", label: "Members" },
   { id: "templates", label: "Sheet templates" },
   { id: "compendium", label: "Compendium" },
@@ -101,6 +103,15 @@ export default function WorldSettings() {
                 )}
               </For>
             </div>
+            <Show when={section() === "system"}>
+              <SystemSetup
+                worldId={params.id}
+                templates={templates()}
+                onTemplates={setTemplates}
+                compendium={compendium}
+                corpus={!!world().features?.corpus}
+              />
+            </Show>
             <Show when={section() === "members"}>
               <MembersPanel
                 worldId={params.id}

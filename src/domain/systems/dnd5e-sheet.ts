@@ -1,7 +1,7 @@
 import type { SheetLayout } from "../sheet-layout";
 
 /*
- * A D&D 5e (2024) character on generic blocks. Ability modifiers, proficiency,
+ * A fifth-edition (2024 rules) character on generic blocks. Ability modifiers, proficiency,
  * saves and skills are derived values the sheet shows and rolls use; the
  * player marks proficiency as pips (1 proficient, 2 expertise for skills).
  * Nothing is written back: hit points, slots and uses are marked by hand.
@@ -53,7 +53,7 @@ const skills = [
 ];
 
 export const dnd5eCharacter: SheetLayout = {
-  system: "D&D 5e (2024)",
+  system: "Fifth Edition (SRD 5.2)",
   name: "Character",
   derived: [
     { key: "prof", label: "Proficiency", expr: "ceil(@level / 4) + 1" },

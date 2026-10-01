@@ -25,8 +25,8 @@ export const firstPartySystems: readonly FirstPartySystem[] = [
   {
     system: {
       id: DND5E_SYSTEM_ID,
-      name: "D&D 5e (2024)",
-      description: "Fifth edition with the 2024 rules, from the SRD 5.2.",
+      name: "Fifth Edition (SRD 5.2)",
+      description: "The 2024 fifth-edition rules, from the System Reference Document 5.2.",
       entryTypes: dnd5eEntryTypes,
       layouts: [dnd5eCharacter],
     },

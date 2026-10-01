@@ -2,7 +2,7 @@ import type { EntryType } from "../compendium";
 import type { Licence } from "../licence";
 
 /*
- * Dungeons & Dragons fifth edition (2024 rules), as published in the System
+ * Fifth edition (2024 rules), as published in the System
  * Reference Document 5.2. Entry types only describe the shape of the content;
  * the text comes from the SRD 5.2 library (tools/importers/srd52).
  *
