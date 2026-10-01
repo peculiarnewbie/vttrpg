@@ -3,8 +3,10 @@ import { CompendiumEntry, EntryType, SaveEntryInput } from "./compendium";
 import { Licence } from "./licence";
 import { SheetLayout } from "./sheet-layout";
 import { SnapshotManifest } from "./snapshot";
+import type { CorpusReply } from "./corpus-errors";
 
-export const CORPUS_API_VERSION = 1 as const;
+/** 2: methods resolve to a CorpusReply (corpus-errors.ts) instead of throwing. */
+export const CORPUS_API_VERSION = 2 as const;
 export const CorpusCall = Schema.Struct({
   apiVersion: Schema.Literal(CORPUS_API_VERSION),
   /** Trusted table-authenticated account; never taken from browser input. */
@@ -54,16 +56,16 @@ export const ManifestCall = Schema.Struct({ ...SourceCall.fields, version: Schem
 
 /** Add methods compatibly; each RPC call validates its version and its whole input. */
 export interface CorpusApi {
-  listSystems(call: CorpusCall): Promise<readonly CorpusSystem[]>;
-  saveSystem(call: typeof SaveSystemCall.Type): Promise<CorpusSystem>;
-  listSources(call: CorpusCall): Promise<readonly CorpusSource[]>;
-  createSource(call: typeof CreateSourceCall.Type): Promise<CorpusSource>;
-  getSource(call: SourceCall): Promise<CorpusSource | null>;
-  saveEntries(call: typeof SaveEntriesCall.Type): Promise<readonly CompendiumEntry[]>;
-  deleteEntries(call: typeof DeleteEntriesCall.Type): Promise<void>;
-  publish(call: SourceCall): Promise<SnapshotManifest>;
-  getLatest(call: SourceCall): Promise<SnapshotManifest | null>;
-  getManifest(call: typeof ManifestCall.Type): Promise<SnapshotManifest | null>;
+  listSystems(call: CorpusCall): Promise<CorpusReply<readonly CorpusSystem[]>>;
+  saveSystem(call: typeof SaveSystemCall.Type): Promise<CorpusReply<CorpusSystem>>;
+  listSources(call: CorpusCall): Promise<CorpusReply<readonly CorpusSource[]>>;
+  createSource(call: typeof CreateSourceCall.Type): Promise<CorpusReply<CorpusSource>>;
+  getSource(call: SourceCall): Promise<CorpusReply<CorpusSource | null>>;
+  saveEntries(call: typeof SaveEntriesCall.Type): Promise<CorpusReply<readonly CompendiumEntry[]>>;
+  deleteEntries(call: typeof DeleteEntriesCall.Type): Promise<CorpusReply<void>>;
+  publish(call: SourceCall): Promise<CorpusReply<SnapshotManifest>>;
+  getLatest(call: SourceCall): Promise<CorpusReply<SnapshotManifest | null>>;
+  getManifest(call: typeof ManifestCall.Type): Promise<CorpusReply<SnapshotManifest | null>>;
 }
 
 export const SourceMode = Schema.Literals(["pinned", "follow"]);
