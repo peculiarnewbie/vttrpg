@@ -1,53 +1,59 @@
 import * as Schema from "effect/Schema";
+import { NonEmptyTrimmed } from "./constraints";
+
+const Attribution = NonEmptyTrimmed(8_000);
+const LicenceUrl = Schema.String.check(
+  Schema.isMaxLength(2_048),
+  Schema.makeFilter(
+    (value) => {
+      try {
+        const url = new URL(value);
+        return (
+          (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password
+        );
+      } catch {
+        return false;
+      }
+    },
+    { message: "Licence URL must use HTTP or HTTPS without credentials" },
+  ),
+);
 
 /** Text rights and attribution travel with every published source and override. */
 export const Licence = Schema.Struct({
-  id: Schema.String,
-  name: Schema.String,
-  url: Schema.optional(Schema.String),
-  attribution: Schema.String,
+  id: NonEmptyTrimmed(120),
+  name: NonEmptyTrimmed(200),
+  url: Schema.optional(LicenceUrl),
+  attribution: Attribution,
   shareAlike: Schema.Boolean,
-});
+}).annotate({ parseOptions: { onExcessProperty: "error" } });
 export type Licence = typeof Licence.Type;
 
 /** Text licences describe attribution, not permission to use art or imply endorsement. */
 export const licenceError = (licence: Licence): string | undefined => {
-  const result = Schema.decodeUnknownResult(Licence, { onExcessProperty: "error" })(licence);
-  if (result._tag === "Failure") return "Invalid text licence";
-  if (!licence.id.trim() || licence.id.length > 120) return "Licence id must be 1–120 characters";
-  if (!licence.name.trim() || licence.name.length > 200)
-    return "Licence name must be 1–200 characters";
-  if (!licence.attribution.trim() || licence.attribution.length > 8_000)
-    return "Licence attribution must be 1–8000 characters";
-  if (licence.url !== undefined) {
-    if (licence.url.length > 2_048) return "Licence URL is too long";
-    try {
-      const url = new URL(licence.url);
-      if (!["https:", "http:"].includes(url.protocol) || url.username || url.password)
-        return "Licence URL must use HTTP or HTTPS";
-    } catch {
-      return "Invalid licence URL";
-    }
-  }
-  return undefined;
+  const result = Schema.decodeUnknownResult(Licence)(licence);
+  return result._tag === "Failure" ? result.failure.message : undefined;
 };
 
-/** Keep the source's rights, adding a world author's attribution when supplied. */
-export const inheritLicence = (base: Licence, proposed?: Licence): Licence => {
-  const error = licenceError(base) ?? (proposed === undefined ? undefined : licenceError(proposed));
-  if (error) throw new Error(error);
+/** Combine validated licences; the combined attribution has a new length. */
+export const mergeLicence = (base: Licence, proposed?: Licence): Licence => {
   const attribution =
     proposed === undefined || base.attribution.includes(proposed.attribution)
       ? base.attribution
       : proposed.attribution.includes(base.attribution)
         ? proposed.attribution
-        : `${base.attribution}\n\n${proposed.attribution}`;
-  const inherited = {
+        : Schema.decodeUnknownSync(Attribution)(`${base.attribution}\n\n${proposed.attribution}`);
+  return {
     ...base,
     attribution,
     shareAlike: base.shareAlike || proposed?.shareAlike === true,
   };
-  const inheritedError = licenceError(inherited);
-  if (inheritedError) throw new Error(inheritedError);
-  return inherited;
+};
+
+/** Keep the source's rights, adding a world author's attribution when supplied. */
+export const inheritLicence = (base: Licence, proposed?: Licence): Licence => {
+  const validated = Schema.decodeUnknownSync(Licence)(base);
+  const additions =
+    proposed === undefined ? undefined : Schema.decodeUnknownSync(Licence)(proposed);
+  return mergeLicence(validated, additions);
 };

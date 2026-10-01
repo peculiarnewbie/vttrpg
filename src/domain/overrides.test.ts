@@ -1,6 +1,13 @@
+import * as Schema from "effect/Schema";
 import { expect, it } from "vitest";
 import type { CompendiumEntry } from "./compendium";
-import { applyOverride, overrideError, type EntryOverride, type EntryPatch } from "./overrides";
+import {
+  applyOverride,
+  overrideError,
+  EntryOverride,
+  EntryPatch,
+  SaveOverrideInput,
+} from "./overrides";
 
 const entry: CompendiumEntry = {
   id: "lantern/item/moss-bell",
@@ -70,7 +77,8 @@ it("uses override attribution when older entries have no licence", () => {
 it("rejects identity changes and invalid base revisions", () => {
   expect(() => applyOverride(entry, { ...override, entryId: "lantern/item/other" })).toThrow();
   for (const baseRev of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
-    expect(() => applyOverride(entry, { ...override, baseRev })).toThrow();
+    expect(() => Schema.decodeUnknownSync(EntryOverride)({ ...override, baseRev })).toThrow();
+    expect(() => Schema.decodeUnknownSync(SaveOverrideInput)({ baseRev, patch: {} })).toThrow();
   }
 });
 
@@ -84,10 +92,12 @@ it("bounds patches and forbids schema bypasses, ambiguous removals and rights ch
     { tags: ["a", "a"] },
     { tags: [""] },
     { tags: ["x".repeat(41)] },
+    { tags: Array.from({ length: 21 }, (_, index) => `tag${index}`) },
     { fields: { bad: null } },
     { fields: { cost: Infinity } },
     { fields: { actions: [{ name: "Ring", cost: NaN }] } },
     { fields: { "../cost": 1 } },
+    { fields: Object.fromEntries(Array.from({ length: 41 }, (_, index) => [`key${index}`, 0])) },
     { fields: { cost: 1 }, removeFields: ["cost"] },
     { removeFields: ["cost", "cost"] },
     { removeFields: Array.from({ length: 41 }, (_, index) => `key${index}`) },
@@ -98,7 +108,26 @@ it("bounds patches and forbids schema bypasses, ambiguous removals and rights ch
     { rev: 99 },
     { visibility: "private" },
   ]) {
-    expect(overrideError(invalid as EntryPatch)).toBeTypeOf("string");
-    expect(() => applyOverride(entry, { ...override, patch: invalid as EntryPatch })).toThrow();
+    expect(overrideError(invalid as EntryPatch), JSON.stringify(invalid)).toBeTypeOf("string");
+    expect(() => Schema.decodeUnknownSync(EntryPatch)(invalid)).toThrow();
+    expect(() =>
+      Schema.decodeUnknownSync(EntryOverride)({ ...override, patch: invalid }),
+    ).toThrow();
   }
+});
+
+it("checks limits created by merging independently valid values", () => {
+  const fields = Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`key${index}`, 0]));
+  const boundedEntry = { ...entry, fields };
+  const additions = Schema.decodeUnknownSync(EntryOverride)({
+    ...override,
+    patch: { fields: { extra: 1 } },
+  });
+  expect(() => applyOverride(boundedEntry, additions)).toThrow("40 fields");
+  const largeEntry = { ...entry, fields: { lore: "é".repeat(7_000) } };
+  const largePatch = Schema.decodeUnknownSync(EntryOverride)({
+    ...override,
+    patch: { body: "x".repeat(4_000) },
+  });
+  expect(() => applyOverride(largeEntry, largePatch)).toThrow("16 KB");
 });
