@@ -8,8 +8,10 @@ import { useSession } from "../client/session";
 import { CharacterSheets } from "../components/character-sheets";
 import type { SheetRoll } from "../components/sheet-blocks";
 import { CompendiumPanel, EntryCard } from "../components/compendium";
+import { CompendiumBrowser } from "../components/compendium-browser";
 import { createCompendium } from "../client/compendium";
 import { formatRefLink } from "../domain/entry-links";
+import type { CompendiumEntry } from "../domain/compendium";
 import { Chat } from "../components/chat";
 import { DiceLanes } from "../components/dice-lanes";
 import { NotesPanel } from "../components/notes";
@@ -57,7 +59,7 @@ const upsert = <T extends { id: string }>(items: T[], item: T) => {
 };
 
 export default function WorldPage() {
-  const params = useParams<{ id: string }>();
+  const params = useParams<{ id: string; view?: string }>();
   const session = useSession();
   const navigate = useNavigate();
 
@@ -337,6 +339,15 @@ export default function WorldPage() {
     { id: "notes", label: "Notes" },
     { id: "compendium", label: "Compendium" },
   ];
+  /** `/worlds/:id/compendium`: the compendium as a page over the table. */
+  const browsing = () => params.view === "compendium";
+  const shareEntry = (entry: CompendiumEntry) =>
+    sendChat({
+      content: formatRefLink(entry.id, entry.name),
+      kind: "ic",
+      visibility: "public",
+      recipientMemberIds: [],
+    });
   /** Roll an entry's oracle table; the server finds the row the dice land on. */
   const rollTable = (entryId: string, field: string) => {
     if (status() === "open")
@@ -392,6 +403,24 @@ export default function WorldPage() {
                 <Show when={isDm()}>
                   <Badge tone="tag">DM</Badge>
                 </Show>
+                <nav {...sx(b.views)} aria-label="View">
+                  <button
+                    type="button"
+                    {...sx(b.view, !browsing() && b.viewActive)}
+                    aria-current={browsing() ? undefined : "page"}
+                    onClick={() => navigate(`/worlds/${params.id}`)}
+                  >
+                    Table
+                  </button>
+                  <button
+                    type="button"
+                    {...sx(b.view, browsing() && b.viewActive)}
+                    aria-current={browsing() ? "page" : undefined}
+                    onClick={() => navigate(`/worlds/${params.id}/compendium`)}
+                  >
+                    Compendium
+                  </button>
+                </nav>
                 <Show when={status() !== "open"}>
                   <span {...sx(styles.statusPill)} role="status">
                     <span {...sx(styles.presenceDot, styles.presenceDotOffline)} />
@@ -454,6 +483,25 @@ export default function WorldPage() {
                   cursorsEnabled={cursorsEnabled() && status() === "open"}
                   onCursor={(position) => controller?.send({ type: "cursor", position })}
                 />
+                <Show when={browsing()}>
+                  <CompendiumBrowser
+                    worldId={params.id}
+                    isDm={isDm()}
+                    me={world().member}
+                    compendium={compendium}
+                    characters={characters()}
+                    templates={templates()}
+                    search={(query) =>
+                      controller ? controller.search(query) : Promise.resolve([])
+                    }
+                    onRoll={(label, dice) => rollLabelled(dice, label)}
+                    onRollTable={rollTable}
+                    onShare={shareEntry}
+                    onValue={setCharacterValue}
+                    insetLeft={panels().chat}
+                    insetRight={panels().tools}
+                  />
+                </Show>
                 <Show when={!panels().chat}>
                   <button
                     type="button"
@@ -600,14 +648,8 @@ export default function WorldPage() {
                         search={(query) =>
                           controller ? controller.search(query) : Promise.resolve([])
                         }
-                        onShare={(entry) =>
-                          sendChat({
-                            content: formatRefLink(entry.id, entry.name),
-                            kind: "ic",
-                            visibility: "public",
-                            recipientMemberIds: [],
-                          })
-                        }
+                        onShare={shareEntry}
+                        onBrowse={() => navigate(`/worlds/${params.id}/compendium`)}
                       />
                     </Show>
                   </div>

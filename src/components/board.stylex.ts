@@ -1,5 +1,5 @@
 import * as stylex from "@stylexjs/stylex";
-import { colors, fonts, radii, skin, space } from "../theme/tokens.stylex";
+import { colors, fontSize, fonts, radii, skin, space } from "../theme/tokens.stylex";
 
 const focusFade = stylex.keyframes({
   "0%": { opacity: 1 },
@@ -96,6 +96,20 @@ export const boardStyles = stylex.create({
     borderBottomStyle: "solid",
     borderBottomColor: colors.border,
   },
+  // Table / Compendium: the world's two views, in the header.
+  views: { display: "flex", gap: "2px", marginLeft: space.x2 },
+  view: {
+    paddingBlock: "2px",
+    paddingInline: space.x2,
+    borderWidth: 0,
+    borderRadius: skin.controlRadius,
+    backgroundColor: { default: "transparent", ":hover": colors.surfaceHover },
+    color: colors.textMuted,
+    fontFamily: fonts.display,
+    fontSize: fontSize.caption,
+    cursor: "pointer",
+  },
+  viewActive: { color: colors.text, backgroundColor: colors.surfaceHover },
   worldName: {
     letterSpacing: skin.nameTracking,
     textTransform: skin.nameTransform,

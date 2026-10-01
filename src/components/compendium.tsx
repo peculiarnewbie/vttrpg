@@ -461,7 +461,7 @@ function FieldInput(props: {
   );
 }
 
-function EntryEditor(props: {
+export function EntryEditor(props: {
   worldId: string;
   compendium?: Pick<CompendiumStore, "row" | "rowsOfType">;
   type: EntryType;
@@ -609,6 +609,8 @@ export function CompendiumPanel(props: {
   onShare?: (entry: CompendiumEntry) => void;
   /** Server search, which also finds words in entries' text (the index only has names and tags). */
   search?: SearchRequest;
+  /** Open the compendium as a page (filters, compare). */
+  onBrowse?: () => void;
 }) {
   const [query, setQuery] = createSignal("");
   const [typeFilter, setTypeFilter] = createSignal<string | null>(null);
@@ -673,6 +675,11 @@ export function CompendiumPanel(props: {
       <div {...sx(styles.row)}>
         <h3 {...sx(styles.h3)}>Compendium</h3>
         <div {...sx(styles.spacer)} />
+        <Show when={props.onBrowse}>
+          <Button small onClick={() => props.onBrowse?.()}>
+            Full page
+          </Button>
+        </Show>
         <Show when={props.isDm && props.compendium.types().length && !editing()}>
           <select
             {...sx(styles.select)}
