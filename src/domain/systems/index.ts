@@ -2,6 +2,10 @@ import type { SourceInput, SystemInput } from "../corpus-rpc";
 import { BLADES_SOURCE_ID, BLADES_SYSTEM_ID, bladesEntryTypes, bladesLicence } from "./blades";
 import { CAIRN_SOURCE_ID, CAIRN_SYSTEM_ID, cairnEntryTypes, cairnLicence } from "./cairn2e";
 import { DND5E_SYSTEM_ID, SRD52_SOURCE_ID, dnd5eEntryTypes, srd52Licence } from "./dnd5e-2024";
+import { bladesCrew, bladesScoundrel } from "./blades-sheet";
+import { cairnCharacter } from "./cairn-sheet";
+import { dnd5eCharacter } from "./dnd5e-sheet";
+import { starforgedCharacter, starforgedStarship } from "./starforged-sheet";
 import {
   STARFORGED_SOURCE_ID,
   STARFORGED_SYSTEM_ID,
@@ -24,7 +28,7 @@ export const firstPartySystems: readonly FirstPartySystem[] = [
       name: "D&D 5e (2024)",
       description: "Fifth edition with the 2024 rules, from the SRD 5.2.",
       entryTypes: dnd5eEntryTypes,
-      layouts: [],
+      layouts: [dnd5eCharacter],
     },
     source: {
       id: SRD52_SOURCE_ID,
@@ -40,7 +44,7 @@ export const firstPartySystems: readonly FirstPartySystem[] = [
       name: "Ironsworn: Starforged",
       description: "Solo, co-op and guided science-fiction adventure.",
       entryTypes: starforgedEntryTypes,
-      layouts: [],
+      layouts: [starforgedCharacter, starforgedStarship],
     },
     source: {
       id: STARFORGED_SOURCE_ID,
@@ -56,7 +60,7 @@ export const firstPartySystems: readonly FirstPartySystem[] = [
       name: "Cairn (2nd edition)",
       description: "Adventure game about exploring a dark and mysterious Wood.",
       entryTypes: cairnEntryTypes,
-      layouts: [],
+      layouts: [cairnCharacter],
     },
     source: {
       id: CAIRN_SOURCE_ID,
@@ -72,7 +76,7 @@ export const firstPartySystems: readonly FirstPartySystem[] = [
       name: "Blades in the Dark",
       description: "Daring scoundrels building a criminal enterprise.",
       entryTypes: bladesEntryTypes,
-      layouts: [],
+      layouts: [bladesScoundrel, bladesCrew],
     },
     source: {
       id: BLADES_SOURCE_ID,
