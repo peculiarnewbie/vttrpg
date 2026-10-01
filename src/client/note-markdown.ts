@@ -60,7 +60,10 @@ function inline(text: string, entryLink?: EntryLinkResolver): string {
 const TABLE_SEPARATOR = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
 /** Cells split on `|`, except escaped `\|` and pipes inside `[[ref:…|…]]` / `[[r:…|…]]` links. */
 const tableRow = (line: string) => {
-  const text = line.trim().replace(/^\|/, "").replace(/(?<!\\)\|$/, "");
+  const text = line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/(?<!\\)\|$/, "");
   const cells: string[] = [];
   let cell = "";
   let depth = 0;
