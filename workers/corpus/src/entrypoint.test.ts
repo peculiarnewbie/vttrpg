@@ -1,12 +1,17 @@
 // @vitest-environment node
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, assert, beforeAll, describe, expect, it } from "vitest";
 import type { CompendiumEntry, SaveEntryInput } from "../../../src/domain/compendium";
-import type { CorpusSource, CorpusSystem } from "../../../src/domain/corpus-rpc";
+import {
+  CORPUS_API_VERSION,
+  type CorpusSource,
+  type CorpusSystem,
+} from "../../../src/domain/corpus-rpc";
+import type { CorpusReply } from "../../../src/domain/corpus-errors";
 import { decodeBodies, decodeIndex, type SnapshotManifest } from "../../../src/domain/snapshot";
 import { startTabletop, type Tabletop } from "../../../src/test/miniflare";
 
-const owner = { apiVersion: 1, accountId: "owner" };
-const other = { apiVersion: 1, accountId: "other" };
+const owner = { apiVersion: CORPUS_API_VERSION, accountId: "owner" };
+const other = { apiVersion: CORPUS_API_VERSION, accountId: "other" };
 const system = {
   id: "invented",
   name: "Invented game",
@@ -29,6 +34,11 @@ const input: SaveEntryInput = {
 
 describe("corpus service RPC and immutable publication", () => {
   let app: Tabletop;
+  const corpusValue = async <T>(method: string, call: unknown): Promise<T> => {
+    const reply = await app.corpusCall<CorpusReply<T>>(method, call);
+    assert(reply.ok, JSON.stringify(reply));
+    return reply.value;
+  };
   beforeAll(async () => {
     app = await startTabletop({ corpus: true });
   }, 30000);
@@ -49,22 +59,27 @@ describe("corpus service RPC and immutable publication", () => {
       "getLatest",
       "getManifest",
     ]) {
-      await expect(app.corpusCall(method, { ...owner, apiVersion: 2 })).rejects.toThrow();
-      await expect(app.corpusCall(method, { ...owner, accountId: "" })).rejects.toThrow();
+      await expect(
+        app.corpusCall(method, { ...owner, apiVersion: CORPUS_API_VERSION + 1 }),
+      ).resolves.toMatchObject({ ok: false, error: { _tag: "CorpusInvalid" } });
+      await expect(app.corpusCall(method, { ...owner, accountId: "" })).resolves.toMatchObject({
+        ok: false,
+        error: { _tag: "CorpusInvalid" },
+      });
     }
     await expect(
       app.corpusCall("saveSystem", { ...owner, system: { ...system, id: "world" } }),
-    ).rejects.toThrow();
+    ).resolves.toMatchObject({ ok: false, error: { _tag: "CorpusInvalid" } });
   });
 
   it("enforces registry ownership and source identity without altering existing sources", async () => {
-    await app.corpusCall("saveSystem", { ...owner, system });
+    await corpusValue("saveSystem", { ...owner, system });
     await expect(
       app.corpusCall("saveSystem", { ...other, system: { ...system, name: "Changed" } }),
-    ).rejects.toThrow("owner");
-    const systems = await app.corpusCall<CorpusSystem[]>("listSystems", other);
+    ).resolves.toMatchObject({ ok: false, error: { _tag: "CorpusForbidden" } });
+    const systems = await corpusValue<CorpusSystem[]>("listSystems", other);
     expect(systems[0].name).toBe(system.name);
-    await app.corpusCall("createSource", {
+    await corpusValue("createSource", {
       ...owner,
       source: {
         id: "book",
@@ -85,21 +100,24 @@ describe("corpus service RPC and immutable publication", () => {
           visibility: "private",
         },
       }),
-    ).rejects.toThrow("immutable");
-    expect(await app.corpusCall<CorpusSource[]>("listSources", other)).toEqual([]);
-    await expect(app.corpusCall("getSource", { ...other, sourceId: "book" })).rejects.toThrow();
-    expect(await app.corpusCall("getLatest", { ...owner, sourceId: "book" })).toBeNull();
+    ).resolves.toMatchObject({ ok: false, error: { _tag: "CorpusConflict" } });
+    expect(await corpusValue<CorpusSource[]>("listSources", other)).toEqual([]);
+    await expect(
+      app.corpusCall("getSource", { ...other, sourceId: "book" }),
+    ).resolves.toMatchObject({ ok: false, error: { _tag: "CorpusForbidden" } });
+    expect(await corpusValue("getLatest", { ...owner, sourceId: "book" })).toBeNull();
     await expect(
       app.corpusCall("saveEntries", { ...other, sourceId: "book", entries: [input] }),
-    ).rejects.toThrow("owner");
-    await expect(app.corpusCall("publish", { ...other, sourceId: "book" })).rejects.toThrow(
-      "owner",
-    );
+    ).resolves.toMatchObject({ ok: false, error: { _tag: "CorpusForbidden" } });
+    await expect(app.corpusCall("publish", { ...other, sourceId: "book" })).resolves.toMatchObject({
+      ok: false,
+      error: { _tag: "CorpusForbidden" },
+    });
   });
 
   it("keeps stable ids/revisions and freezes public/DM data and type definitions", async () => {
     const call = { ...owner, sourceId: "book" };
-    const entries = await app.corpusCall<CompendiumEntry[]>("saveEntries", {
+    const entries = await corpusValue<CompendiumEntry[]>("saveEntries", {
       ...call,
       entries: [input, { ...input, name: "Hidden synthetic note", visibility: "dm" }],
     });
@@ -107,11 +125,11 @@ describe("corpus service RPC and immutable publication", () => {
     expect(entries[1].rev).toBeGreaterThan(entries[0].rev!);
     await expect(
       app.corpusCall("saveEntries", { ...call, entries: [{ ...input, id: "other/spell/wrong" }] }),
-    ).rejects.toThrow("belong");
+    ).resolves.toMatchObject({ ok: false, error: { _tag: "CorpusInvalid" } });
     await expect(
       app.corpusCall("deleteEntries", { ...call, ids: ["elsewhere/spell/wrong"] }),
-    ).rejects.toThrow("another source");
-    const manifest = await app.corpusCall<SnapshotManifest>("publish", call);
+    ).resolves.toMatchObject({ ok: false, error: { _tag: "CorpusInvalid" } });
+    const manifest = await corpusValue<SnapshotManifest>("publish", call);
     expect(manifest.version).toBe(1);
     const bucket = await app.mf.getR2Bucket("CORPUS_BUCKET", "corpus");
     const publicIndex = await bucket.get(manifest.publicIndex.key);
@@ -127,17 +145,17 @@ describe("corpus service RPC and immutable publication", () => {
     const chunk = manifest.bodyChunks.find((item) => item.visibility === "public")!;
     const original = await bucket.get(chunk.file.key);
     const originalBytes = new Uint8Array(await original!.arrayBuffer());
-    const changed = await app.corpusCall<CompendiumEntry[]>("saveEntries", {
+    const changed = await corpusValue<CompendiumEntry[]>("saveEntries", {
       ...call,
       entries: [{ ...input, id: entries[0].id, name: "Renamed synthetic lantern" }],
     });
     expect(changed[0].id).toBe(entries[0].id);
     expect(changed[0].rev).toBeGreaterThan(entries[1].rev!);
-    await app.corpusCall("saveSystem", {
+    await corpusValue("saveSystem", {
       ...owner,
       system: { ...system, entryTypes: [{ ...system.entryTypes[0], name: "Renamed type" }] },
     });
-    const latest = await app.corpusCall<SnapshotManifest>("getLatest", {
+    const latest = await corpusValue<SnapshotManifest>("getLatest", {
       ...other,
       sourceId: "book",
     });
@@ -148,9 +166,7 @@ describe("corpus service RPC and immutable publication", () => {
       sourceVersion: 1,
       sourceRev: entries[0].rev,
     });
-    expect(
-      await app.corpusCall("getManifest", { ...other, sourceId: "book", version: 2 }),
-    ).toBeNull();
+    expect(await corpusValue("getManifest", { ...other, sourceId: "book", version: 2 })).toBeNull();
   });
 
   it("does not reuse a version after registry commit fails, preserving the old publication", async () => {
@@ -161,19 +177,22 @@ describe("corpus service RPC and immutable publication", () => {
       )
       .run();
     const call = { ...owner, sourceId: "book" };
-    await expect(app.corpusCall("publish", call)).rejects.toThrow();
-    expect((await app.corpusCall<SnapshotManifest>("getLatest", call)).version).toBe(1);
-    expect(await app.corpusCall("getManifest", { ...call, version: 2 })).toBeNull();
+    await expect(app.corpusCall("publish", call)).resolves.toMatchObject({
+      ok: false,
+      error: { _tag: "CorpusUnavailable" },
+    });
+    expect((await corpusValue<SnapshotManifest>("getLatest", call)).version).toBe(1);
+    expect(await corpusValue("getManifest", { ...call, version: 2 })).toBeNull();
     await db.prepare("DROP TRIGGER fail_version").run();
-    const published = await app.corpusCall<SnapshotManifest>("publish", call);
+    const published = await corpusValue<SnapshotManifest>("publish", call);
     expect(published.version).toBe(3);
-    const original = await app.corpusCall<SnapshotManifest>("getManifest", { ...call, version: 1 });
+    const original = await corpusValue<SnapshotManifest>("getManifest", { ...call, version: 1 });
     expect(original.types[0].name).toBe("Spell");
     expect(published.types[0].name).toBe("Renamed type");
   });
 
   it("only exposes private sources to their owner even after publication", async () => {
-    await app.corpusCall("createSource", {
+    await corpusValue("createSource", {
       ...owner,
       source: {
         id: "private-book",
@@ -184,20 +203,20 @@ describe("corpus service RPC and immutable publication", () => {
       },
     });
     const call = { ...owner, sourceId: "private-book" };
-    await app.corpusCall("saveEntries", { ...call, entries: [input] });
-    await app.corpusCall("publish", call);
+    await corpusValue("saveEntries", { ...call, entries: [input] });
+    await corpusValue("publish", call);
     expect(
-      (await app.corpusCall<CorpusSource[]>("listSources", other)).map((source) => source.id),
+      (await corpusValue<CorpusSource[]>("listSources", other)).map((source) => source.id),
     ).toEqual(["book"]);
     for (const method of ["getSource", "getLatest", "getManifest"])
       await expect(
         app.corpusCall(method, { ...other, sourceId: "private-book", version: 1 }),
-      ).rejects.toThrow("private");
+      ).resolves.toMatchObject({ ok: false, error: { _tag: "CorpusForbidden" } });
   });
 
   it("atomically rejects entries whose combined licence and body exceed the publication limit", async () => {
     const longLicence = { ...licence, attribution: "a".repeat(8000) };
-    await app.corpusCall("createSource", {
+    await corpusValue("createSource", {
       ...owner,
       source: {
         id: "size-budget",
@@ -213,14 +232,14 @@ describe("corpus service RPC and immutable publication", () => {
         ...call,
         entries: [input, { ...input, name: "Too large when licensed", body: "x".repeat(10000) }],
       }),
-    ).rejects.toThrow("including licence");
-    const saved = await app.corpusCall<CompendiumEntry[]>("saveEntries", {
+    ).resolves.toMatchObject({ ok: false, error: { _tag: "CorpusInvalid" } });
+    const saved = await corpusValue<CompendiumEntry[]>("saveEntries", {
       ...call,
       entries: [{ ...input, body: "é".repeat(3750) }],
     });
     expect(saved[0].id).toBe("size-budget/spell/invented-lantern");
     expect(saved[0].rev).toBe(1);
-    const manifest = await app.corpusCall<SnapshotManifest>("publish", call);
+    const manifest = await corpusValue<SnapshotManifest>("publish", call);
     expect(manifest.entryCount).toBe(1);
     const bucket = await app.mf.getR2Bucket("CORPUS_BUCKET", "corpus");
     const object = await bucket.get(manifest.bodyChunks[0].file.key);
@@ -233,5 +252,46 @@ describe("corpus service RPC and immutable publication", () => {
     expect(new TextEncoder().encode(JSON.stringify(published[0])).byteLength).toBeLessThanOrEqual(
       16 * 1024,
     );
+  });
+  it("rejects a removed draft type before reserving a publication version", async () => {
+    const changingSystem = { ...system, id: "changing-types" };
+    await corpusValue("saveSystem", { ...owner, system: changingSystem });
+    await corpusValue("createSource", {
+      ...owner,
+      source: {
+        id: "changing-book",
+        systemId: changingSystem.id,
+        name: "Changing book",
+        licence,
+        visibility: "private",
+      },
+    });
+    const call = { ...owner, sourceId: "changing-book" };
+    await corpusValue("saveEntries", { ...call, entries: [input] });
+    await corpusValue("saveSystem", { ...owner, system: { ...changingSystem, entryTypes: [] } });
+    await expect(app.corpusCall("publish", call)).resolves.toMatchObject({
+      ok: false,
+      error: { _tag: "CorpusConflict" },
+    });
+    await corpusValue("saveSystem", { ...owner, system: changingSystem });
+    const manifest = await corpusValue<SnapshotManifest>("publish", call);
+    expect(manifest.version).toBe(1);
+    expect(manifest.entryCount).toBe(1);
+  });
+
+  it("serializes simultaneous publications and keeps deleted ids reserved", async () => {
+    const call = { ...owner, sourceId: "changing-book" };
+    const [first, second] = await Promise.all([
+      corpusValue<SnapshotManifest>("publish", call),
+      corpusValue<SnapshotManifest>("publish", call),
+    ]);
+    expect([first.version, second.version].sort()).toEqual([2, 3]);
+    await corpusValue("deleteEntries", { ...call, ids: ["changing-book/spell/invented-lantern"] });
+    const saved = await corpusValue<CompendiumEntry[]>("saveEntries", {
+      ...call,
+      entries: [input],
+    });
+    expect(saved[0].id).toBe("changing-book/spell/invented-lantern-2");
+    expect(saved[0].rev).toBe(3);
   });
 });

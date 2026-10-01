@@ -1,3 +1,7 @@
+import { isSlug, SLUG_MAX } from "./constraints";
+
+export { SLUG_MAX };
+
 /*
  * Entry ids: `<source>/<type>/<slug>`, e.g. `world/knight/the-rust-knight` or
  * (from phase 4, libraries) `srd52/spell/fireball`. Fixed when the entry is
@@ -12,8 +16,6 @@
 
 export const WORLD_SOURCE = "world";
 
-export const SLUG_MAX = 60;
-
 export type EntryIdParts = {
   readonly source: string;
   readonly typeId: string;
@@ -21,7 +23,7 @@ export type EntryIdParts = {
 };
 
 // As loose as type ids (compendium-rules.ts), so every existing type can own entries.
-const validPart = (part: string) => part.length <= SLUG_MAX && /^[a-z0-9][a-z0-9_-]*$/.test(part);
+const validPart = isSlug;
 
 /** `source/type/slug`. Throws if a part isn't a valid slug (a programming error). */
 export const entryId = (source: string, typeId: string, slug: string): string => {
@@ -63,4 +65,10 @@ export const uniqueSlug = (base: string, taken: (slug: string) => boolean): stri
     const candidate = base.slice(0, SLUG_MAX - suffix.length).replace(/[-_]+$/g, "") + suffix;
     if (!taken(candidate)) return candidate;
   }
+};
+
+/** The source of a library entry; world and legacy ids have no library source. */
+export const librarySource = (id: string): string | undefined => {
+  const source = parseEntryId(id)?.source;
+  return source === WORLD_SOURCE ? undefined : source;
 };

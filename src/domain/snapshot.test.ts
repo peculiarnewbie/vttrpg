@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import { expect, it } from "vitest";
 import type { CompendiumEntry, IndexRow } from "./compendium";
 import {
@@ -10,8 +11,14 @@ import {
   snapshotLimits,
   snapshotPrefix,
   validateManifest,
-  type PackedIndex,
-  type SnapshotManifest,
+  PackedIndex,
+  PackedIndexRow,
+  SnapshotManifest,
+  SnapshotFile,
+  BodyChunk,
+  SnapshotBodies,
+  SnapshotEntry,
+  SnapshotIndexRow,
 } from "./snapshot";
 
 const row: IndexRow = {
@@ -123,6 +130,7 @@ it("rejects malformed schemas, dictionary references, duplicate identities and u
     { ...packed, rows: [[...packed.rows[0].slice(0, 5), 0, null]] },
     { ...packed, rows: [[...packed.rows[0].slice(0, 3), [999], ...packed.rows[0].slice(4)]] },
   ]) {
+    expect(() => Schema.decodeUnknownSync(PackedIndex)(bad)).toThrow();
     await expect(decodeIndex(await rawGzip(bad))).rejects.toThrow();
   }
   await expect(decodeIndex(new Uint8Array([1, 2, 3]))).rejects.toThrow();
@@ -165,6 +173,7 @@ it("round-trips body chunks including source rights and rejects malformed bodies
       entries: [{ ...entry, body: "x".repeat(12_001) }],
     },
   ]) {
+    expect(() => Schema.decodeUnknownSync(SnapshotBodies)(bad)).toThrow();
     await expect(decodeBodies(await rawGzip(bad))).rejects.toThrow();
   }
   await expect(
@@ -219,6 +228,7 @@ it("validates exact source keys and chunk identity/counts without mutating manif
     },
     { ...manifest, bodyChunks: [{ ...chunk, ids: [] }], entryCount: 0 },
   ]) {
+    expect(() => Schema.decodeUnknownSync(SnapshotManifest)(bad)).toThrow();
     expect(() => validateManifest(bad)).toThrow();
   }
 });
@@ -254,4 +264,85 @@ it("accepts the maximum snapshot version and rejects versions above it", () => {
   expect(() => snapshotPrefix("lantern", snapshotLimits.version + 1)).toThrow(
     "Invalid source version",
   );
+});
+
+it("decodes file and chunk constraints without a manifest validator", () => {
+  const chunk = manifest.bodyChunks[0];
+  for (const bad of [
+    { ...chunk.file, bytes: 0 },
+    { ...chunk.file, bytes: 1.5 },
+    { ...chunk.file, bytes: snapshotLimits.bodyBytes + 1 },
+    { ...chunk.file, sha256: "A".repeat(64) },
+  ])
+    expect(() => Schema.decodeUnknownSync(SnapshotFile)(bad)).toThrow();
+  for (const bad of [
+    { ...chunk, typeId: "../item" },
+    { ...chunk, ids: [] },
+    { ...chunk, ids: [entry.id, entry.id] },
+    { ...chunk, ids: ["not-an-id"] },
+    { ...chunk, ids: ["lantern/spell/moss-bell"] },
+    { ...chunk, ids: Array.from({ length: 101 }, (_, index) => `lantern/item/bell-${index}`) },
+    { ...chunk, file: file(keys.body("item", "public", snapshotLimits.entries)) },
+    { ...chunk, file: file(chunk.file.key.replace(".0.", ".00.")) },
+  ])
+    expect(() => Schema.decodeUnknownSync(BodyChunk)(bad)).toThrow();
+});
+
+it("decodes row and entry bounds without the snapshot codecs", () => {
+  for (const bad of [
+    { ...row, id: "lantern/spell/moss-bell" },
+    { ...row, rev: 0 },
+    { ...row, name: " " },
+    { ...row, name: "x".repeat(121) },
+    { ...row, tags: ["x".repeat(41)] },
+    { ...row, tags: Array(21).fill("tag") },
+    { ...row, updatedAt: "x".repeat(121) },
+    { ...row, facets: { cost: NaN } },
+    { ...row, facets: { long: "é".repeat(9_000) } },
+  ])
+    expect(() => Schema.decodeUnknownSync(SnapshotIndexRow)(bad)).toThrow();
+  for (const bad of [
+    { ...entry, rev: 0 },
+    { ...entry, sourceRev: 0 },
+    { ...entry, sourceVersion: snapshotLimits.version + 1 },
+    { ...entry, licence: { ...entry.licence, attribution: " " } },
+    { ...entry, fields: { nested: [{ number: Infinity }] } },
+    { ...entry, body: "x".repeat(12_001) },
+    { ...entry, body: "é".repeat(9_000) },
+  ])
+    expect(() => Schema.decodeUnknownSync(SnapshotEntry)(bad)).toThrow();
+  const legacy = { ...entry, rev: undefined, sourceRev: undefined, sourceVersion: undefined };
+  expect(Schema.decodeUnknownSync(SnapshotEntry)(legacy)).toEqual(legacy);
+  // Snapshot tags historically permit blank or repeated labels.
+  expect(Schema.decodeUnknownSync(SnapshotIndexRow)({ ...row, tags: ["", "", " "] }).tags).toEqual([
+    "",
+    "",
+    " ",
+  ]);
+});
+
+it("decodes packed-row bounds before resolving dictionary references", () => {
+  const packedRow = [0, 1, 2, [3], 4, 1, null];
+  expect(Schema.decodeUnknownSync(PackedIndexRow)(packedRow)).toEqual(packedRow);
+  for (const bad of [
+    [-1, ...packedRow.slice(1)],
+    [Number.MAX_SAFE_INTEGER + 1, ...packedRow.slice(1)],
+    [...packedRow.slice(0, 5), 0, null],
+    [...packedRow.slice(0, 5), Number.MAX_SAFE_INTEGER + 1, null],
+    [...packedRow.slice(0, 3), [-1], ...packedRow.slice(4)],
+    [...packedRow.slice(0, 6), { cost: Infinity }],
+  ])
+    expect(() => Schema.decodeUnknownSync(PackedIndexRow)(bad)).toThrow();
+});
+
+it("checks the original manifest byte budget before stripping excess properties", () => {
+  expect(Schema.decodeUnknownSync(SnapshotManifest)({ ...manifest, extra: "metadata" })).toEqual(
+    manifest,
+  );
+  expect(() =>
+    Schema.decodeUnknownSync(SnapshotManifest)({
+      ...manifest,
+      extra: "x".repeat(snapshotLimits.manifestBytes),
+    }),
+  ).toThrow("Snapshot manifest is too large");
 });
