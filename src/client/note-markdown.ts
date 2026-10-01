@@ -21,7 +21,9 @@ export type EntryLinkResolver = (link: { name: string; id?: string }) => string 
 
 function inline(text: string, entryLink?: EntryLinkResolver): string {
   const pattern = new RegExp(
-    ENTRY_LINK.source + /|`([^`]+)`|\*\*([^*]+)\*\*|\*([^*]+)\*|\[([^\]]+)\]\(([^\s)]+)\)/.source,
+    ENTRY_LINK.source +
+      /|`([^`]+)`|\*\*([^*]+)\*\*|\*([^*]+)\*|\[([^\]]+)\]\(([^\s)]+)\)|(?<!\w)_([^_\n]+)_(?!\w)/
+        .source,
     "g",
   );
   let result = "";
@@ -49,6 +51,7 @@ function inline(text: string, entryLink?: EntryLinkResolver): string {
     } else if (match[2] !== undefined) result += `<code>${escapeHtml(match[2])}</code>`;
     else if (match[3] !== undefined) result += `<strong>${escapeHtml(match[3])}</strong>`;
     else if (match[4] !== undefined) result += `<em>${escapeHtml(match[4])}</em>`;
+    else if (match[7] !== undefined) result += `<em>${escapeHtml(match[7])}</em>`;
     else if (/^https?:\/\//i.test(match[6]) || /^mailto:/i.test(match[6])) {
       result += `<a href="${escapeHtml(match[6])}" rel="noreferrer noopener">${escapeHtml(match[5])}</a>`;
     } else result += escapeHtml(match[0]);

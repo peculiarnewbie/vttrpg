@@ -54,13 +54,14 @@ const DIE_SIZES = new Set([2, 3, 4, 6, 8, 10, 12, 20, 100]);
 
 /**
  * The dice a table rolls, derived from its rows: rows from 1 to a die size
- * (1–20, 1–6) roll that die, so one oracle type serves tables of every size.
- * Anything else (2d6 tables running 2–12, tables with gaps at the ends) keeps
- * the field's own notation.
+ * roll that die (1–20 → 1d20), and rows from k to k × a die size roll k of them
+ * (2–12 → 2d6, 3–18 → 3d6), so one oracle type serves tables of every size.
+ * Anything else keeps the field's own notation.
  */
 export const oracleDice = (fieldDice: string | undefined, rows: readonly OracleRow[]) => {
-  const first = rows[0];
-  const last = rows.at(-1);
-  if (first?.min === 1 && last && DIE_SIZES.has(last.max)) return `1d${last.max}`;
-  return fieldDice;
+  const first = rows[0]?.min;
+  const last = rows.at(-1)?.max;
+  if (first === undefined || last === undefined || first < 1 || first > 4) return fieldDice;
+  const sides = last / first;
+  return Number.isInteger(sides) && DIE_SIZES.has(sides) ? `${first}d${sides}` : fieldDice;
 };

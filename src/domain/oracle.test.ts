@@ -69,8 +69,11 @@ describe("oracleDice", () => {
     expect(oracleDice("1d6", rows(100))).toBe("1d100");
     expect(oracleDice("1d100", rows(10))).toBe("1d10");
   });
+  it("rolls several dice when the rows run from k to k × a die size", () => {
+    expect(oracleDice("1d6", rows(12, 2))).toBe("2d6");
+    expect(oracleDice("1d6", rows(18, 3))).toBe("3d6");
+  });
   it("keeps the field's dice otherwise", () => {
-    expect(oracleDice("2d6", rows(12, 2))).toBe("2d6");
     expect(oracleDice("1d100", rows(7))).toBe("1d100");
     expect(oracleDice("1d100", [])).toBe("1d100");
   });

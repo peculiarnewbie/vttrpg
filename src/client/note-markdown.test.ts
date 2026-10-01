@@ -134,3 +134,9 @@ it("renders pipe tables, dropping an empty header row, and blockquotes", () => {
     ].join("\n"),
   );
 });
+
+it("reads _underscores_ as italics only at word boundaries", () => {
+  expect(renderNoteMarkdown("Gloves (_petty_), a snake_case_name and _two words_.")).toBe(
+    "<p>Gloves (<em>petty</em>), a snake_case_name and <em>two words</em>.</p>",
+  );
+});
