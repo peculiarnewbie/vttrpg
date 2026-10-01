@@ -111,7 +111,12 @@ const fixture = async () => {
 };
 
 it("parses dry-run, remote environments and shared local state targets", () => {
-  expect(parseOptions(["fixtures"])).toMatchObject({ env: "production", local: false, yes: false });
+  expect(() => parseOptions(["fixtures"])).toThrow("Choose a target");
+  expect(parseOptions(["fixtures", "--env", "production"])).toMatchObject({
+    env: "production",
+    local: false,
+    yes: false,
+  });
   expect(parseOptions(["bundle.json", "--env", "preview", "--yes"])).toEqual({
     bundlePath: "bundle.json",
     env: "preview",

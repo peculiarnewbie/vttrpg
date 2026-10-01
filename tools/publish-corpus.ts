@@ -71,6 +71,9 @@ export const parseOptions = (args: readonly string[]): PublishOptions => {
       "Usage: corpus:publish <source|bundle.json> [--env production|preview | --local] [--yes]",
     );
   if (local && args.includes("--env")) throw new Error("Use --local or --env, not both");
+  // Production is never a default: the target is always typed out.
+  if (!local && !args.includes("--env"))
+    throw new Error("Choose a target: --local, --env preview or --env production");
   return {
     bundlePath: source.endsWith(".json") ? source : resolve(".cache/bundles", `${source}.json`),
     env,
