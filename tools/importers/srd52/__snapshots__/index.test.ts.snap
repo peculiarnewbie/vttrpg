@@ -1,0 +1,800 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`SRD 5.2 > converts a licensed fixture of every available type, and excludes unlicensed rules/tables/features 1`] = `
+[
+  {
+    "body": "A creature you touch regains a number of Hit Points equal to [[r:2d8|2d8]] plus your spellcasting ability modifier.
+
+**Using a Higher-Level Spell Slot.** The healing increases by 2d8 for each spell slot level above 1.",
+    "fields": {
+      "casting": "Action",
+      "components": [
+        "V",
+        "S",
+      ],
+      "duration": "Instantaneous",
+      "level": 1,
+      "properties": [],
+      "range": "Touch",
+      "rolls": [
+        {
+          "name": "Cure Wounds",
+          "roll": "2d8+@spell_mod",
+        },
+      ],
+      "school": "Abjuration",
+    },
+    "id": "srd52/spell/cure-wounds",
+    "name": "Cure Wounds",
+    "tags": [],
+    "typeId": "spell",
+    "visibility": "public",
+  },
+  {
+    "body": "A bright streak flashes from you to a point you choose within range and then blossoms with a low roar into a fiery explosion. Each creature in a 20-foot-radius Sphere centered on that point makes a Dexterity saving throw, taking [[r:8d6|8d6 Fire damage]] on a failed save or half as much damage on a successful one.
+
+Flammable objects in the area that aren't being worn or carried start burning.
+
+**Using a Higher-Level Spell Slot.** The damage increases by 1d6 for each spell slot level above 3.",
+    "fields": {
+      "casting": "Action",
+      "components": [
+        "V",
+        "S",
+        "M",
+      ],
+      "duration": "Instantaneous",
+      "level": 3,
+      "material": "a ball of bat guano and sulfur",
+      "properties": [],
+      "range": "150 feet",
+      "rolls": [
+        {
+          "name": "Fireball",
+          "roll": "8d6",
+        },
+      ],
+      "school": "Evocation",
+    },
+    "id": "srd52/spell/fireball",
+    "name": "Fireball",
+    "tags": [],
+    "typeId": "spell",
+    "visibility": "public",
+  },
+  {
+    "body": "",
+    "fields": {
+      "ac": "12",
+      "actions": [
+        {
+          "name": "Bite",
+          "roll": "1d20+4 | 1d6+2",
+          "text": "Melee Attack Roll: +4, reach 5 ft. [[r:1d6+2|1d6+2 Piercing]]. If the target is a Medium or smaller creature, it has the Prone condition.",
+        },
+      ],
+      "alignment": "Unaligned",
+      "cha": 6,
+      "con": 12,
+      "cr": 0.25,
+      "cr_label": "1/4",
+      "dex": 15,
+      "hp": "11 (2d8 + 2)",
+      "initiative": "+2",
+      "int": 3,
+      "senses": "Darkvision 60 ft., Passive Perception 15",
+      "size": "Medium",
+      "skills": "Perception +5, Stealth +4",
+      "speed": "40 ft.",
+      "str": 14,
+      "traits": [
+        {
+          "name": "Pack Tactics",
+          "text": "The wolf has Advantage on an attack roll against a creature if at least one of the wolf's allies is within 5 feet of the creature and the ally doesn't have the Incapacitated condition.",
+        },
+      ],
+      "type": "Beast",
+      "wis": 12,
+      "xp": "50",
+    },
+    "id": "srd52/monster/wolf",
+    "name": "Wolf",
+    "tags": [],
+    "typeId": "monster",
+    "visibility": "public",
+  },
+  {
+    "body": "",
+    "fields": {
+      "ac": "12",
+      "actions": [
+        {
+          "name": "Bites",
+          "roll": "1d20+4 | 2d4",
+          "text": "Melee Attack Roll: +4, reach 5 ft. [[r:2d4|2d4 Piercing]], or [[r:1d4|1d4 Piercing]] if the swarm is Bloodied",
+        },
+      ],
+      "alignment": "Unaligned",
+      "cha": 4,
+      "con": 10,
+      "cr": 0.25,
+      "cr_label": "1/4",
+      "dex": 15,
+      "hp": "11 (2d10)",
+      "immunities": "Charmed, Frightened, Grappled, Paralyzed, Petrified, Prone, Restrained, Stunned",
+      "initiative": "+2",
+      "int": 2,
+      "resistances": "Bludgeoning, Piercing, Slashing",
+      "senses": "Blindsight 60 ft., Passive Perception 11",
+      "size": "Large",
+      "speed": "5 ft., Fly 30 ft.",
+      "str": 5,
+      "traits": [
+        {
+          "name": "Swarm",
+          "text": "The swarm can occupy another creature's space and vice versa, and the swarm can move through any opening large enough for a Tiny bat. The swarm can't regain Hit Points or gain Temporary Hit Points.",
+        },
+      ],
+      "type": "Beast",
+      "wis": 12,
+      "xp": "50",
+    },
+    "id": "srd52/monster/swarm-of-bats",
+    "name": "Swarm of Bats",
+    "tags": [],
+    "typeId": "monster",
+    "visibility": "public",
+  },
+  {
+    "body": "As a Utilize action, you can tie a knot with Rope if you succeed on a DC 10 Dexterity (Sleight of Hand) check. The Rope can be burst with a successful DC 20 Strength (Athletics) check.
+
+You can bind an unwilling creature with the Rope only if the creature has the Grappled, Incapacitated, or Restrained condition. If the creature's legs are bound, the creature has the Restrained condition until it escapes. Escaping the Rope requires the creature to make a successful DC 15 Dexterity (Acrobatics) check as an action.",
+    "fields": {
+      "category": "Adventuring Gear",
+      "cost": "1 gp",
+      "weight": "5 lb",
+    },
+    "id": "srd52/gear/rope",
+    "name": "Rope",
+    "tags": [],
+    "typeId": "gear",
+    "visibility": "public",
+  },
+  {
+    "body": "",
+    "fields": {
+      "ac": "11 + Dex modifier",
+      "category": "Light",
+      "cost": "10 gp",
+      "weight": "10 lb",
+    },
+    "id": "srd52/armor/leather-armor",
+    "name": "Leather Armor",
+    "tags": [],
+    "typeId": "armor",
+    "visibility": "public",
+  },
+  {
+    "body": "This bag has an interior space considerably larger than its outside dimensions—roughly 2 feet square and 4 feet deep on the inside. The bag can hold up to 500 pounds, not exceeding a volume of 64 cubic feet. The bag weighs 5 pounds, regardless of its contents. Retrieving an item from the bag requires a Utilize action.
+
+If the bag is overloaded, pierced, or torn, it is destroyed, and its contents are scattered in the Astral Plane. If the bag is turned inside out, its contents spill forth unharmed, but the bag must be put right before it can be used again. The bag holds enough air for 10 minutes of breathing, divided by the number of breathing creatures inside.
+
+Placing a *Bag of Holding* inside an extradimensional space created by a *Handy Haversack*, *Portable Hole*, or similar item instantly destroys both items and opens a gate to the Astral Plane. The gate originates where the one item was placed inside the other. Any creature within a 10-foot-radius Sphere centered on the gate is sucked through it to a random location on the Astral Plane. The gate then closes. The gate is one-way and can't be reopened.",
+    "fields": {
+      "category": "Wondrous Item",
+      "rarity": "Uncommon",
+      "rolls": [],
+    },
+    "id": "srd52/magic-item/bag-of-holding",
+    "name": "Bag of Holding",
+    "tags": [],
+    "typeId": "magic-item",
+    "visibility": "public",
+  },
+  {
+    "body": "",
+    "fields": {
+      "category": "Martial Melee",
+      "cost": "15 gp",
+      "damage": "1d8",
+      "damage_type": "Slashing",
+      "mastery": "Sap",
+      "properties": [
+        "Versatile",
+      ],
+      "property_notes": "Versatile (1d10)",
+      "weight": "3 lb",
+    },
+    "id": "srd52/weapon/longsword",
+    "name": "Longsword",
+    "tags": [],
+    "typeId": "weapon",
+    "visibility": "public",
+  },
+  {
+    "body": "",
+    "fields": {
+      "category": "Simple Ranged",
+      "cost": "25 gp",
+      "damage": "1d6",
+      "damage_type": "Piercing",
+      "mastery": "Vex",
+      "properties": [
+        "Ammunition",
+        "Two-Handed",
+        "Range",
+      ],
+      "property_notes": "Range 80/320",
+      "weight": "2 lb",
+    },
+    "id": "srd52/weapon/shortbow",
+    "name": "Shortbow",
+    "tags": [],
+    "typeId": "weapon",
+    "visibility": "public",
+  },
+  {
+    "body": "Your practice of martial arts gives you mastery of combat styles that use your Unarmed Strike and Monk weapons, which are the following:
+
+- Simple Melee weapons
+- Martial Melee weapons that have the Light property
+
+You gain the following benefits while you are unarmed or wielding only Monk weapons and you aren't wearing armor or wielding a Shield.
+
+**Bonus Unarmed Strike.** You can make an Unarmed Strike as a Bonus Action.
+
+**Martial Arts Die.** You can roll 1d6 in place of the normal damage of your Unarmed Strike or Monk weapons. This die changes as you gain Monk levels, as shown in the Martial Arts column of the Monk Features table.
+
+**Current Martial Arts Die:** [[ref:srd52/class/monk|Martial Arts Die by level]]
+
+**Dexterous Attacks.**You can use your Dexterity modifier instead of your Strength modifier for the attack and damage rolls of your Unarmed Strikes and Monk weapons. In addition, when you use the Grapple or Shove option of your Unarmed Strike, you can use your Dexterity modifier instead of your Strength modifier to determine the save DC.",
+    "fields": {
+      "class": "Monk",
+      "level": 1,
+      "rolls": [],
+    },
+    "id": "srd52/feature/martial-arts",
+    "name": "Martial Arts",
+    "tags": [],
+    "typeId": "feature",
+    "visibility": "public",
+  },
+  {
+    "body": "### Core Monk Traits
+
+| Primary Ability | Dexterity and Wisdom |
+| --- | --- |
+| Hit Point Die | D8 per Monk level |
+| Saving Throw Proficiencies | Strength and Dexterity |
+| Skill Proficiencies | *Choose 2:* Acrobatics, Athletics, History, Insight, Religion, or Stealth |
+| Weapon Proficiencies | Simple weapons and Martial weapons that have the Light property |
+| Tool Proficiencies | *Choose one type of Artisan's Tools or Musical Instrument* |
+| Armor Training | None |
+| Starting Equipment | *Choose A or B:* (A) Spear, 5 Daggers, Artisan's Tools or Musical Instrument chosen for the tool proficiency above, Explorer's Pack, and 11 GP; or (B) 50 GP |
+
+## Becoming a Monk …
+
+### As a Level 1 Character
+
+- Gain all the traits in the Core Monk Traits table.
+- Gain the Monk's level 1 features, which are listed in the Monk Features table.
+
+### As a Multiclass Character
+
+- Gain the Hit Point Die trait from the Core Monk Traits table.
+- Gain the Monk's level 1 features, which are listed in the Monk Features table.",
+    "fields": {
+      "features": [
+        "srd52/feature/martial-arts",
+      ],
+      "hit_die": "1d8",
+      "levels": [
+        {
+          "extra": "Martial Arts Die: 1d6; Focus Points: 1",
+          "features": "Martial Arts",
+          "level": 1,
+          "proficiency": "+2",
+        },
+        {
+          "extra": "Martial Arts Die: 1d6; Unarmored Movement: 10; Focus Points: 2",
+          "features": "",
+          "level": 2,
+          "proficiency": "+2",
+        },
+        {
+          "extra": "Martial Arts Die: 1d6; Unarmored Movement: 10; Focus Points: 3",
+          "features": "Subclass",
+          "level": 3,
+          "proficiency": "+2",
+        },
+        {
+          "extra": "Martial Arts Die: 1d6; Unarmored Movement: 10; Focus Points: 4",
+          "features": "Ability Score Improvement",
+          "level": 4,
+          "proficiency": "+2",
+        },
+        {
+          "extra": "Martial Arts Die: 1d8; Unarmored Movement: 10; Focus Points: 5",
+          "features": "",
+          "level": 5,
+          "proficiency": "+3",
+        },
+        {
+          "extra": "Martial Arts Die: 1d8; Unarmored Movement: 15; Focus Points: 6",
+          "features": "",
+          "level": 6,
+          "proficiency": "+3",
+        },
+        {
+          "extra": "Martial Arts Die: 1d8; Unarmored Movement: 15; Focus Points: 7",
+          "features": "",
+          "level": 7,
+          "proficiency": "+3",
+        },
+        {
+          "extra": "Martial Arts Die: 1d8; Unarmored Movement: 15; Focus Points: 8",
+          "features": "Ability Score Improvement",
+          "level": 8,
+          "proficiency": "+3",
+        },
+        {
+          "extra": "Martial Arts Die: 1d8; Unarmored Movement: 15; Focus Points: 9",
+          "features": "",
+          "level": 9,
+          "proficiency": "+4",
+        },
+        {
+          "extra": "Martial Arts Die: 1d8; Unarmored Movement: 20; Focus Points: 10",
+          "features": "",
+          "level": 10,
+          "proficiency": "+4",
+        },
+        {
+          "extra": "Martial Arts Die: 1d10; Unarmored Movement: 20; Focus Points: 11",
+          "features": "",
+          "level": 11,
+          "proficiency": "+4",
+        },
+        {
+          "extra": "Martial Arts Die: 1d10; Unarmored Movement: 20; Focus Points: 12",
+          "features": "Ability Score Improvement",
+          "level": 12,
+          "proficiency": "+4",
+        },
+        {
+          "extra": "Martial Arts Die: 1d10; Unarmored Movement: 20; Focus Points: 13",
+          "features": "",
+          "level": 13,
+          "proficiency": "+5",
+        },
+        {
+          "extra": "Martial Arts Die: 1d10; Unarmored Movement: 25; Focus Points: 14",
+          "features": "",
+          "level": 14,
+          "proficiency": "+5",
+        },
+        {
+          "extra": "Martial Arts Die: 1d10; Unarmored Movement: 25; Focus Points: 15",
+          "features": "",
+          "level": 15,
+          "proficiency": "+5",
+        },
+        {
+          "extra": "Martial Arts Die: 1d10; Unarmored Movement: 25; Focus Points: 16",
+          "features": "Ability Score Improvement",
+          "level": 16,
+          "proficiency": "+5",
+        },
+        {
+          "extra": "Martial Arts Die: 1d12; Unarmored Movement: 25; Focus Points: 17",
+          "features": "",
+          "level": 17,
+          "proficiency": "+6",
+        },
+        {
+          "extra": "Martial Arts Die: 1d12; Unarmored Movement: 30; Focus Points: 18",
+          "features": "",
+          "level": 18,
+          "proficiency": "+6",
+        },
+        {
+          "extra": "Martial Arts Die: 1d12; Unarmored Movement: 30; Focus Points: 19",
+          "features": "Epic Boon",
+          "level": 19,
+          "proficiency": "+6",
+        },
+        {
+          "extra": "Martial Arts Die: 1d12; Unarmored Movement: 30; Focus Points: 20",
+          "features": "Ability Score Improvement",
+          "level": 20,
+          "proficiency": "+6",
+        },
+      ],
+      "primary": "Dexterity and Wisdom",
+    },
+    "id": "srd52/class/monk",
+    "name": "Monk",
+    "tags": [],
+    "typeId": "class",
+    "visibility": "public",
+  },
+  {
+    "body": "> Create Explosive Elemental Effects
+
+Your studies focus on magic that creates powerful elemental effects such as bitter cold, searing flame, rolling thunder, crackling lightning, and burning acid. Some Evokers find employment in military forces, serving as artillery to blast armies from afar. Others use their power to protect others, while some seek their own gain.",
+    "fields": {
+      "class": "srd52/class/wizard",
+      "features": [
+        "srd52/feature/sculpt-spells",
+      ],
+      "levels": [
+        {
+          "features": "",
+          "level": 1,
+        },
+        {
+          "features": "",
+          "level": 2,
+        },
+        {
+          "features": "",
+          "level": 3,
+        },
+        {
+          "features": "",
+          "level": 4,
+        },
+        {
+          "features": "",
+          "level": 5,
+        },
+        {
+          "features": "Sculpt Spells",
+          "level": 6,
+        },
+        {
+          "features": "",
+          "level": 7,
+        },
+        {
+          "features": "",
+          "level": 8,
+        },
+        {
+          "features": "",
+          "level": 9,
+        },
+        {
+          "features": "",
+          "level": 10,
+        },
+        {
+          "features": "",
+          "level": 11,
+        },
+        {
+          "features": "",
+          "level": 12,
+        },
+        {
+          "features": "",
+          "level": 13,
+        },
+        {
+          "features": "",
+          "level": 14,
+        },
+        {
+          "features": "",
+          "level": 15,
+        },
+        {
+          "features": "",
+          "level": 16,
+        },
+        {
+          "features": "",
+          "level": 17,
+        },
+        {
+          "features": "",
+          "level": 18,
+        },
+        {
+          "features": "",
+          "level": 19,
+        },
+        {
+          "features": "",
+          "level": 20,
+        },
+      ],
+    },
+    "id": "srd52/subclass/evoker",
+    "name": "Evoker",
+    "tags": [],
+    "typeId": "subclass",
+    "visibility": "public",
+  },
+  {
+    "body": "You can create pockets of relative safety within the effects of your evocations. When you cast an Evocation spell that affects other creatures that you can see, you can choose a number of them equal to 1 plus the spell's level. The chosen creatures automatically succeed on their saving throws against the spell, and they take no damage if they would normally take half damage on a successful save.",
+    "fields": {
+      "class": "Wizard",
+      "level": 6,
+      "rolls": [],
+      "subclass": "Evoker",
+    },
+    "id": "srd52/feature/sculpt-spells",
+    "name": "Sculpt Spells",
+    "tags": [],
+    "typeId": "feature",
+    "visibility": "public",
+  },
+  {
+    "body": "### Core Wizard Traits
+
+| **Primary Ability** | Intelligence |
+| --- | --- |
+| **Hit Point Die** | D6 per Wizard level |
+| **Saving Throw Proficiencies** | Intelligence and Wisdom |
+| **Skill Proficiencies** | *Choose 2:*Arcana, History, Insight, Investigation, Medicine, Nature, or Religion |
+| **Weapon Proficiencies** | Simple weapons |
+| **Armor Training** | None |
+| **Starting Equipment** | *Choose A or B:* (A) 2 Daggers, Arcane Focus (Quarterstaff), Robe, Spellbook, Scholar's Pack, and 5 GP; or (B) 55 GP |
+
+## Becoming a Wizard …
+
+### As a Level 1 Character
+
+- Gain all the traits in the Core Wizard Traits table.
+- Gain the Wizard's level 1 features, which are listed in the Wizard Features table.
+
+### As a Multiclass Character
+
+- Gain the Hit Point Die from the Core Wizard Traits table.
+- Gain the Wizard's level 1 features, which are listed in the Wizard Features table. See the multiclassing rules to determine your available spell slots.
+
+**Expanding and Replacing a Spellbook**
+
+The spells you add to your spellbook as you gain levels reflect your ongoing magical research, but you might find other spells during your adventures that you can add to the book. You could discover a Wizard spell on a Spell Scroll, for example, and then copy it into your spellbook.
+
+**Copying a Spell into the Book.** When you find a level 1+ Wizard spell, you can copy it into your spellbook if it's of a level you can prepare and if you have time to copy it. For each level of the spell, the transcription takes 2 hours and costs 50 GP. Afterward you can prepare the spell like the other spells in your spellbook.
+
+**Copying the Book.** You can copy a spell from your spellbook into another book. This is like copying a new spell into your spellbook but faster, since you already know how to cast the spell. You need spend only 1 hour and 10 GP for each level of the copied spell.
+
+If you lose your spellbook, you can use the same procedure to transcribe the Wizard spells that you have prepared into a new spellbook. Filling out the remainder of the new book requires you to find new spells to do so. For this reason, many wizards keep a backup spellbook.",
+    "fields": {
+      "armor": "None",
+      "equipment": "*Choose A or B:* (A) 2 Daggers, Arcane Focus (Quarterstaff), Robe, Spellbook, Scholar's Pack, and 5 GP; or (B) 55 GP",
+      "features": [],
+      "hit_die": "1d6",
+      "levels": [
+        {
+          "extra": "Max Prepared Spells: 4; Cantrips Known: 3",
+          "features": "",
+          "level": 1,
+          "proficiency": "+2",
+        },
+        {
+          "extra": "Max Prepared Spells: 5; Cantrips Known: 3",
+          "features": "",
+          "level": 2,
+          "proficiency": "+2",
+        },
+        {
+          "extra": "Max Prepared Spells: 6; Cantrips Known: 3",
+          "features": "Subclass",
+          "level": 3,
+          "proficiency": "+2",
+        },
+        {
+          "extra": "Max Prepared Spells: 7; Cantrips Known: 4",
+          "features": "Ability Score Improvement",
+          "level": 4,
+          "proficiency": "+2",
+        },
+        {
+          "extra": "Max Prepared Spells: 9; Cantrips Known: 4",
+          "features": "",
+          "level": 5,
+          "proficiency": "+3",
+        },
+        {
+          "extra": "Max Prepared Spells: 10; Cantrips Known: 4",
+          "features": "",
+          "level": 6,
+          "proficiency": "+3",
+        },
+        {
+          "extra": "Max Prepared Spells: 11; Cantrips Known: 4",
+          "features": "",
+          "level": 7,
+          "proficiency": "+3",
+        },
+        {
+          "extra": "Max Prepared Spells: 12; Cantrips Known: 4",
+          "features": "Ability Score Improvement",
+          "level": 8,
+          "proficiency": "+3",
+        },
+        {
+          "extra": "Max Prepared Spells: 14; Cantrips Known: 4",
+          "features": "",
+          "level": 9,
+          "proficiency": "+4",
+        },
+        {
+          "extra": "Max Prepared Spells: 15; Cantrips Known: 5",
+          "features": "",
+          "level": 10,
+          "proficiency": "+4",
+        },
+        {
+          "extra": "Max Prepared Spells: 16; Cantrips Known: 5",
+          "features": "",
+          "level": 11,
+          "proficiency": "+4",
+        },
+        {
+          "extra": "Max Prepared Spells: 16; Cantrips Known: 5",
+          "features": "Ability Score Improvement",
+          "level": 12,
+          "proficiency": "+4",
+        },
+        {
+          "extra": "Max Prepared Spells: 17; Cantrips Known: 5",
+          "features": "",
+          "level": 13,
+          "proficiency": "+5",
+        },
+        {
+          "extra": "Max Prepared Spells: 18; Cantrips Known: 5",
+          "features": "",
+          "level": 14,
+          "proficiency": "+5",
+        },
+        {
+          "extra": "Max Prepared Spells: 19; Cantrips Known: 5",
+          "features": "",
+          "level": 15,
+          "proficiency": "+5",
+        },
+        {
+          "extra": "Max Prepared Spells: 21; Cantrips Known: 5",
+          "features": "Ability Score Improvement",
+          "level": 16,
+          "proficiency": "+5",
+        },
+        {
+          "extra": "Max Prepared Spells: 22; Cantrips Known: 5",
+          "features": "",
+          "level": 17,
+          "proficiency": "+6",
+        },
+        {
+          "extra": "Max Prepared Spells: 23; Cantrips Known: 5",
+          "features": "",
+          "level": 18,
+          "proficiency": "+6",
+        },
+        {
+          "extra": "Max Prepared Spells: 24; Cantrips Known: 5",
+          "features": "Epic Boon",
+          "level": 19,
+          "proficiency": "+6",
+        },
+        {
+          "extra": "Max Prepared Spells: 25; Cantrips Known: 5",
+          "features": "",
+          "level": 20,
+          "proficiency": "+6",
+        },
+      ],
+      "primary": "Intelligence",
+      "saves": "Intelligence and Wisdom",
+      "skills": "*Choose 2:*Arcana, History, Insight, Investigation, Medicine, Nature, or Religion",
+      "weapons": "Simple weapons",
+    },
+    "id": "srd52/class/wizard",
+    "name": "Wizard",
+    "tags": [],
+    "typeId": "class",
+    "visibility": "public",
+  },
+  {
+    "body": "**Ability Scores:** Constitution, Intelligence, Wisdom
+
+**Feat:** Magic Initiate (Wizard)
+
+**Skill Proficiencies:** Arcana and History
+
+**Tool Proficiency:** Calligrapher's Supplies
+
+**Equipment:** *Choose A or B:* (A) Quarterstaff, Calligrapher's Supplies, Book (history), Parchment (8 sheets), Robe, 8 GP; or (B) 50 GP",
+    "fields": {
+      "abilities": "Constitution, Intelligence, Wisdom",
+      "equipment": "*Choose A or B:* (A) Quarterstaff, Calligrapher's Supplies, Book (history), Parchment (8 sheets), Robe, 8 GP; or (B) 50 GP",
+      "skills": "Arcana and History",
+      "tool": "Calligrapher's Supplies",
+    },
+    "id": "srd52/background/sage",
+    "name": "Sage",
+    "tags": [],
+    "typeId": "background",
+    "visibility": "public",
+  },
+  {
+    "body": "### Human Traits
+
+**Creature Type:** Humanoid
+
+**Size:** Medium (about 4–7 feet tall) or Small (about 2–4 feet tall), chosen when you select this species
+
+**Speed:** 30 feet
+
+As a Human, you have these special traits.
+
+**Resourceful.** You gain Heroic Inspiration whenever you finish a Long Rest.
+
+**Skillful.** You gain proficiency in one skill of your choice.
+
+**Versatile.** You gain an Origin feat of your choice (see chapter 5). Skilled is recommended.",
+    "fields": {
+      "creature_type": "Humanoid",
+      "size": "Medium (about 4–7 feet tall) or Small (about 2–4 feet tall), chosen when you select this species",
+      "speed": "30 feet",
+      "traits": [
+        {
+          "name": "Resourceful",
+          "text": "You gain Heroic Inspiration whenever you finish a Long Rest.",
+        },
+        {
+          "name": "Skillful",
+          "text": "You gain proficiency in one skill of your choice.",
+        },
+        {
+          "name": "Versatile",
+          "text": "You gain an Origin feat of your choice (see chapter 5). Skilled is recommended.",
+        },
+      ],
+    },
+    "id": "srd52/species/human",
+    "name": "Human",
+    "tags": [],
+    "typeId": "species",
+    "visibility": "public",
+  },
+  {
+    "body": "You gain the following benefits.
+
+**Initiative Proficiency.** When you roll Initiative, you can add your Proficiency Bonus to the roll.
+
+**Initiative Swap.** Immediately after you roll Initiative, you can swap your Initiative with the Initiative of one willing ally in the same combat. You can't make this swap if you or the ally has the Incapacitated condition.",
+    "fields": {
+      "category": "Origin",
+      "repeatable": "No",
+      "rolls": [],
+    },
+    "id": "srd52/feat/alert",
+    "name": "Alert",
+    "tags": [],
+    "typeId": "feat",
+    "visibility": "public",
+  },
+  {
+    "body": "You gain proficiency in any combination of three skills or tools of your choice.
+
+**Repeatable.** You can take this feat more than once.",
+    "fields": {
+      "category": "Origin",
+      "repeatable": "Yes",
+      "rolls": [],
+    },
+    "id": "srd52/feat/skilled",
+    "name": "Skilled",
+    "tags": [],
+    "typeId": "feat",
+    "visibility": "public",
+  },
+]
+`;

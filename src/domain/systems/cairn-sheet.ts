@@ -1,0 +1,91 @@
+import type { SheetLayout } from "../sheet-layout";
+
+/*
+ * A Cairn 2e character on generic blocks: attributes as current/maximum
+ * trackers that roll the d20 save, ten inventory slots where bulky items take
+ * two, and the background linked from the library. Whether a save succeeds is
+ * the table's call.
+ */
+
+export const cairnCharacter: SheetLayout = {
+  system: "Cairn (2nd edition)",
+  name: "Character",
+  pages: [
+    {
+      id: "character",
+      title: "Character",
+      blocks: [
+        {
+          id: "background",
+          type: "entry",
+          key: "background",
+          entryType: "background",
+          label: "Background",
+          variant: "line",
+        },
+        {
+          id: "attributes",
+          type: "trackers",
+          span: 3,
+          items: [
+            { key: "str", label: "STR", min: 0, max: 18, roll: "1d20" },
+            { key: "dex", label: "DEX", min: 0, max: 18, roll: "1d20" },
+            { key: "wil", label: "WIL", min: 0, max: 18, roll: "1d20" },
+          ],
+        },
+        {
+          id: "condition",
+          type: "trackers",
+          span: 3,
+          items: [{ key: "hp", label: "HP", min: 0, max: 6 }],
+        },
+        {
+          id: "numbers",
+          type: "stats",
+          span: 3,
+          items: [
+            { key: "armor", label: "Armor" },
+            { key: "gold", label: "Gold" },
+            { key: "age", label: "Age" },
+          ],
+        },
+        {
+          id: "deprived",
+          type: "checks",
+          key: "deprived",
+          label: "Status",
+          variant: "tags",
+          options: ["Deprived"],
+          span: 3,
+        },
+        {
+          id: "inventory",
+          type: "list",
+          key: "inventory",
+          title: "Inventory",
+          variant: "slots",
+          slots: 10,
+          slotSize: "slots",
+          source: { entryType: "item" },
+          columns: [
+            { key: "name", label: "Item", kind: "text" },
+            { key: "damage", label: "Damage", kind: "dice" },
+            { key: "uses", label: "Uses", kind: "text" },
+            { key: "slots", label: "Slots", kind: "number" },
+          ],
+        },
+        {
+          id: "rolls",
+          type: "rolls",
+          items: [
+            { label: "d20", dice: "1d20" },
+            { label: "d6", dice: "1d6" },
+            { label: "Impaired", dice: "1d4" },
+          ],
+        },
+        { id: "bonds", type: "text", key: "bonds", label: "Bonds & omens" },
+        { id: "notes", type: "text", key: "notes", label: "Notes" },
+      ],
+    },
+  ],
+};

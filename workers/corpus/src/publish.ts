@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import { SnapshotBucket } from "./bucket";
+export { SnapshotBucket } from "./bucket";
 import { bindingCall } from "./effects";
 import type { CompendiumEntry, EntryType, IndexRow } from "../../../src/domain/compendium";
 import type { CorpusSource } from "../../../src/domain/corpus-rpc";

@@ -315,7 +315,8 @@ it("decodes a chunk once for a hundred ids and rechecks visibility on warm reads
   try {
     const { sources, reads, files, manifest, entries } = await sourceFixture(fixture);
     await Effect.runPromise(sources.enable("book", {}));
-    expect(reads.get(manifest.bodyChunks[0].file.key)).toBeUndefined();
+    // Ingest reads each chunk once, for the entries' search text.
+    expect(reads.get(manifest.bodyChunks[0].file.key)).toBe(1);
     const ids = entries.map((entry) => entry.id);
     expect((await Effect.runPromise(sources.bodies(ids, "player"))).size).toBe(100);
     expect(reads.get(manifest.bodyChunks[0].file.key)).toBe(1);
@@ -360,18 +361,24 @@ it("rejects a blocked or changed entry after an outgoing body read yields", asyn
   try {
     let release: (() => void) | undefined;
     let started: (() => void) | undefined;
+    // Ingest reads bodies too (search text); pause only the read under test.
+    let armed = false;
     const waiting = new Promise<void>((resolve) => {
       started = resolve;
     });
     const pause = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const { sources, entries } = await sourceFixture(fixture, async () => {
+    const { sources, fresh, entries } = await sourceFixture(fixture, async () => {
+      if (!armed) return;
       started?.();
       await pause;
     });
     await Effect.runPromise(sources.enable("book", {}));
-    const reading = Effect.runPromise(sources.resolve(entries[0].id, "player"));
+    // A restarted DO has no decoded chunks, so this read awaits R2.
+    const cold = await fresh();
+    armed = true;
+    const reading = Effect.runPromise(cold.resolve(entries[0].id, "player"));
     await waiting;
     await Effect.runPromise(
       sources.handle("PUT", `compendium/blocked/${encodeURIComponent(entries[0].id)}`, {}, "dm"),
@@ -509,22 +516,25 @@ const sourceFixture = async (
       getManifest: async ({ version }) => ({ ok: true, value: versions.get(version) ?? null }),
     }),
   );
-  const sources = await Effect.runPromise(
-    WorldSources.make(fixture.compendium).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          Layer.succeed(SourceStorage, {
-            sql: fixture.sql,
-            transactionSync: fixture.transactionSync,
-            storage: { sql: fixture.sql } as DurableObjectStorage,
-          }),
-          Layer.succeed(CorpusClient, client),
-          Layer.succeed(CorpusBucket, bucket),
-          Layer.succeed(CorpusAccountId, () => "account"),
+  /** A WorldSources over the same storage with empty in-memory caches (a restarted DO). */
+  const fresh = () =>
+    Effect.runPromise(
+      WorldSources.make(fixture.compendium).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(SourceStorage, {
+              sql: fixture.sql,
+              transactionSync: fixture.transactionSync,
+              storage: { sql: fixture.sql } as DurableObjectStorage,
+            }),
+            Layer.succeed(CorpusClient, client),
+            Layer.succeed(CorpusBucket, bucket),
+            Layer.succeed(CorpusAccountId, () => "account"),
+          ),
         ),
       ),
-    ),
-  );
+    );
+  const sources = await fresh();
   await Effect.runPromise(sources.migrate());
   fixture.compendium.setSources({
     available: true,
@@ -534,7 +544,7 @@ const sourceFixture = async (
     exportEntries: () => sources.exportEntries().pipe(Effect.mapError(apiError)),
     prepareImport: (entries) => sources.prepareImport(entries).pipe(Effect.mapError(apiError)),
   });
-  return { sources, files, reads, manifest, entries, offer };
+  return { sources, fresh, files, reads, manifest, entries, offer };
 };
 
 it("reviews both immutable versions, reuses verified chunks, and keeps the pinned index and overrides", async () => {

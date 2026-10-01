@@ -31,7 +31,11 @@ let counter = 0;
 const type: EntryType = {
   id: "item",
   name: "Item",
-  fields: [{ key: "cost", label: "Cost", kind: "number" }],
+  fields: [
+    { key: "cost", label: "Cost", kind: "number" },
+    { key: "summary", label: "Summary", kind: "text" },
+    { key: "details", label: "Details", kind: "longtext" },
+  ],
   filters: [{ key: "cost", kind: "range" }],
 };
 const licence = {
@@ -149,7 +153,7 @@ afterAll(async () => {
   await tabletop?.dispose();
 });
 
-it("ingests only indexes, includes sources in bounded search, and keeps source bodies and revisions in R2", async () => {
+it("stores searchable indexes, includes sources in bounded search, and keeps source bodies and revisions in R2", async () => {
   const [visible, hidden] = await save([input("Sword"), input("Secret sword", "dm")]);
   await publish();
   const source = Schema.decodeUnknownSync(WorldSource)(await (await enable()).json());
@@ -180,6 +184,99 @@ it("ingests only indexes, includes sources in bounded search, and keeps source b
   expect(JSON.stringify(delta)).not.toContain(hidden.id);
   for (const path of ["libraries", "libraries/blocked", overridePath(visible.id)])
     expect((await worldCall(path, { cookie: playerCookie })).status).toBe(403);
+});
+
+it("searches verified library bodies and text fields, updates overrides and versions, and hides DM text over WebSocket", async () => {
+  const [visible, hidden] = await save([
+    {
+      ...input("Lantern"),
+      body: "Luminescence fills the room.",
+      fields: { cost: 5, summary: "Éther", details: "Quicksilver mist" },
+    },
+    { ...input("Hidden", "dm"), body: "Necromancy secrets." },
+  ]);
+  await publish();
+  expect((await enable()).status).toBe(200);
+  for (const word of ["luminescence", "ether", "quicksilver"])
+    expect((await search(word)).map((row) => row.id)).toEqual([visible.id]);
+  expect(await search("necromancy")).toEqual([]);
+  expect((await search("necromancy", cookie)).map((row) => row.id)).toEqual([hidden.id]);
+  expect(JSON.stringify(await index())).not.toContain("luminescence");
+  expect(
+    (
+      await worldCall(overridePath(visible.id), {
+        method: "PUT",
+        body: {
+          baseRev: visible.rev,
+          patch: {
+            body: "Prismatic light.",
+            fields: { summary: "Stardust" },
+            removeFields: ["details"],
+          },
+        },
+      })
+    ).status,
+  ).toBe(200);
+  for (const word of ["luminescence", "ether", "quicksilver"])
+    expect(await search(word)).toEqual([]);
+  for (const word of ["prismatic", "stardust"])
+    expect((await search(word)).map((row) => row.id)).toEqual([visible.id]);
+  await worldCall(blockPath(visible.id), { method: "PUT" });
+  expect(await search("prismatic")).toEqual([]);
+  await worldCall(blockPath(visible.id), { method: "DELETE" });
+  expect((await search("prismatic")).map((row) => row.id)).toEqual([visible.id]);
+  await worldCall(overridePath(visible.id), { method: "DELETE" });
+  expect(await search("prismatic")).toEqual([]);
+  expect((await search("luminescence")).map((row) => row.id)).toEqual([visible.id]);
+  const [updated] = await save([
+    { ...input("Lantern"), id: visible.id, body: "Incandescence returns." },
+  ]);
+  await publish();
+  await worldCall("libraries/check", { method: "POST" });
+  expect(await search("incandescence")).toEqual([]);
+  await enable({ version: 2, mode: "follow" });
+  expect(await search("luminescence")).toEqual([]);
+  expect((await search("incandescence")).map((row) => row.id)).toEqual([visible.id]);
+  await worldCall(overridePath(visible.id), {
+    method: "PUT",
+    body: { baseRev: updated.rev, patch: { body: "Prismatic again." } },
+  });
+  await save([{ ...input("Lantern"), id: visible.id, body: "Phosphorescence appears." }]);
+  await publish();
+  await worldCall("libraries/check", { method: "POST" });
+  expect(await search("phosphorescence")).toEqual([]);
+  expect((await search("prismatic")).map((row) => row.id)).toEqual([visible.id]);
+  await worldCall(overridePath(visible.id), { method: "DELETE" });
+  expect((await search("phosphorescence")).map((row) => row.id)).toEqual([visible.id]);
+});
+
+it("backfills legacy enabled libraries once and keeps unchanged entries out of update diffs", async () => {
+  const [entry] = await save([{ ...input("Lantern"), body: "Luminescence shines." }]);
+  await publish();
+  await enable();
+  const db = await storage();
+  await db.exec("UPDATE world_sources SET text_indexed=0 WHERE source_id=?", sourceId);
+  await db.exec(
+    "UPDATE source_index SET row_json=json_remove(row_json, '$.textKey') WHERE source_id=?",
+    sourceId,
+  );
+  await db.exec("UPDATE compendium_entries SET text_key='' WHERE source_id=?", sourceId);
+  expect(
+    await db.exec<{ text_key: string }>(
+      "SELECT text_key FROM compendium_entries WHERE source_id=?",
+      sourceId,
+    ),
+  ).toEqual([{ text_key: "" }]);
+  expect((await worldCall("libraries/check", { method: "POST" })).status).toBe(200);
+  expect((await search("luminescence")).map((row) => row.id)).toEqual([entry.id]);
+  const before = await index();
+  await worldCall("libraries/check", { method: "POST" });
+  expect(await index()).toEqual(before);
+  await publish();
+  const checked = Schema.decodeUnknownSync(WorldLibraries)(
+    await (await worldCall("libraries/check", { method: "POST" })).json(),
+  );
+  expect(checked.enabled[0].update).toMatchObject({ changed: [], added: [], removed: [] });
 });
 
 it("keeps pinned bodies until acceptance, reports added/changed/removed IDs, and follows new versions without changing local entries", async () => {
@@ -426,21 +523,14 @@ it("rejects ordinary mutation of corpus IDs and conflicting types before an atom
   expect(listed.enabled).toEqual([]);
 });
 
-it("rejects corrupted snapshot bytes before enabling anything and never downloads bodies to enable", async () => {
+it("rejects missing bodies and corrupted snapshot bytes before enabling anything", async () => {
   await save([input("Sword")]);
   const manifest = await publish();
   const bucket = await tabletop.mf.getR2Bucket("CORPUS_BUCKET", "corpus");
   for (const chunk of manifest.bodyChunks) await bucket.delete(chunk.file.key);
-  expect((await enable()).status).toBe(200); // Enabling uses only public and DM indexes.
-  expect(
-    (
-      await worldCall("compendium/bodies", {
-        method: "POST",
-        body: { ids: [`${sourceId}/item/sword`] },
-      })
-    ).status,
-  ).toBe(503);
-  await worldCall(`libraries/${sourceId}`, { method: "DELETE" });
+  expect((await enable()).status).toBe(503);
+  expect((await index()).upserts).toEqual([]);
+  expect((await search("description")).length).toBe(0);
   // A new immutable version gives an uncached key for the integrity check.
   const fresh = await publish();
   await bucket.put(fresh.publicIndex.key, new Uint8Array([1, 2, 3]));

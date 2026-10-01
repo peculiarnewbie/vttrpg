@@ -9,6 +9,7 @@ import WorldSettings from "./routes/world-settings";
 
 // Design lab for comparing art directions; lazy so its fonts stay out of the app bundle.
 const SheetLab = lazy(() => import("./routes/sheet-lab"));
+const Legal = lazy(() => import("./routes/legal"));
 const SystemsLab = lazy(() => import("./routes/systems-lab"));
 import { ThemeProvider, useTheme } from "./theme/theme-context";
 
@@ -16,6 +17,7 @@ const Router = createRouter({
   routes: [
     { path: "/", component: SignIn },
     { path: "/dashboard", component: Dashboard },
+    { path: "/legal", component: Legal },
     // One route for the table and its compendium page, so switching keeps the connection.
     {
       path: "/worlds/:id/:view?",

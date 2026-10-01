@@ -905,6 +905,17 @@ it("rejects invalid persisted oracle dice and rows and allows a total to land in
     await peer.sync();
   };
   try {
+    // Rows spanning a die roll that die (oracleDice); 1–7 spans none, so the field's notation counts.
+    await db.exec(
+      "UPDATE compendium_entries SET fields = ? WHERE id = ?",
+      JSON.stringify({
+        action: [
+          { min: 1, max: 3, text: "Low" },
+          { min: 4, max: 7, text: "High" },
+        ],
+      }),
+      saved.id,
+    );
     for (const dice of ["not dice", "1d6 + @cost"]) {
       await db.exec(
         "UPDATE compendium_types SET fields = ? WHERE id = ?",
