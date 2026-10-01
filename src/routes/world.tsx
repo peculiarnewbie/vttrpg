@@ -374,7 +374,7 @@ export default function WorldPage() {
     });
   /** Roll an entry's oracle table; the server finds the row the dice land on. */
   const rollTable = (entryId: string, field: string) => {
-    if (status() === "open") send({ type: "roll.table", entryId, field, visibility: "public" });
+    send({ type: "roll.table", entryId, field, visibility: "public" });
   };
 
   /**
@@ -382,8 +382,7 @@ export default function WorldPage() {
    * `sheet` lets the server resolve `@refs` against that character (and a list row).
    */
   const rollLabelled = (notation: string, label: string, sheet?: SheetRoll) => {
-    if (status() === "open")
-      send({ type: "roll.dice", notation, label, visibility: "public", ...sheet });
+    send({ type: "roll.dice", notation, label, visibility: "public", ...sheet });
   };
 
   return (
