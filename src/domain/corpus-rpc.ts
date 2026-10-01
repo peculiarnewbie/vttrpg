@@ -80,6 +80,8 @@ export const SourceUpdateSummary = Schema.Struct({
   added: Schema.Array(Schema.String),
   changed: Schema.Array(Schema.String),
   removed: Schema.Array(Schema.String),
+  /** Entry names by id (the newer name for changed entries), so the DM reads names, not ids. */
+  names: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
 export type SourceUpdateSummary = typeof SourceUpdateSummary.Type;
 export const WorldSource = Schema.Struct({
@@ -97,3 +99,32 @@ export const WorldLibraries = Schema.Struct({
   enabled: Schema.Array(WorldSource),
 });
 export type WorldLibraries = typeof WorldLibraries.Type;
+
+/**
+ * One entry of a pending library update, as the DM reviews it: the pinned
+ * version's entry and the offered one (library text only — a table override,
+ * if any, is flagged, and keeps applying after the update).
+ */
+export const LibraryEntryDiff = Schema.Struct({
+  entryId: Schema.String,
+  fromVersion: Schema.Int,
+  toVersion: Schema.Int,
+  /** Absent when the update adds the entry. */
+  from: Schema.optional(CompendiumEntry),
+  /** Absent when the update removes the entry. */
+  to: Schema.optional(CompendiumEntry),
+  overridden: Schema.Boolean,
+});
+export type LibraryEntryDiff = typeof LibraryEntryDiff.Type;
+
+/** A library entry the DM hid from this world. `name`/`typeId` are absent if the library no longer has it. */
+export const BlockedEntry = Schema.Struct({
+  id: Schema.String,
+  name: Schema.optional(Schema.String),
+  typeId: Schema.optional(Schema.String),
+});
+export const BlockedEntries = Schema.Struct({
+  ids: Schema.Array(Schema.String),
+  entries: Schema.Array(BlockedEntry),
+});
+export type BlockedEntries = typeof BlockedEntries.Type;
