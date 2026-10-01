@@ -1,0 +1,316 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Starforged text importer > converts Background Assets exactly 1`] = `
+{
+  "body": "If you want some direction for your starting paths, roll or pick from the table below and take the two paths associated with your selected background.",
+  "fields": {
+    "group": "Campaign Launch Oracles › Background Assets",
+    "table": [
+      {
+        "max": 5,
+        "min": 1,
+        "text": "Battlefield Medic — Healer; Veteran",
+      },
+      {
+        "max": 10,
+        "min": 6,
+        "text": "Delegate — Bannersworn; Diplomat",
+      },
+      {
+        "max": 15,
+        "min": 11,
+        "text": "Exobiologist — Lore Hunter; Naturalist",
+      },
+      {
+        "max": 20,
+        "min": 16,
+        "text": "Far Trader — Navigator; Trader",
+      },
+      {
+        "max": 25,
+        "min": 21,
+        "text": "Fugitive Hunter — Armored; Bounty Hunter",
+      },
+      {
+        "max": 30,
+        "min": 26,
+        "text": "Hacker — Infiltrator; Tech",
+      },
+      {
+        "max": 35,
+        "min": 31,
+        "text": "Hotshot Pilot — Ace; Navigator",
+      },
+      {
+        "max": 40,
+        "min": 36,
+        "text": "Interstellar Scout — Explorer; Voidborn",
+      },
+      {
+        "max": 45,
+        "min": 41,
+        "text": "Monster Hunter — Gunner; Slayer",
+      },
+      {
+        "max": 50,
+        "min": 46,
+        "text": "Occultist — Outcast; Shade",
+      },
+      {
+        "max": 55,
+        "min": 51,
+        "text": "Operative — Infiltrator; Blademaster",
+      },
+      {
+        "max": 60,
+        "min": 56,
+        "text": "Outlaw — Fugitive; Gunslinger",
+      },
+      {
+        "max": 65,
+        "min": 61,
+        "text": "Private Investigator — Brawler; Sleuth",
+      },
+      {
+        "max": 70,
+        "min": 66,
+        "text": "Prophet — [[ref:starforged/asset/starforged-assets-path-devotant-bf9577cf80aa|Devotant]]; Seer",
+      },
+      {
+        "max": 75,
+        "min": 71,
+        "text": "Psionicist — Kinetic; Vestige",
+      },
+      {
+        "max": 80,
+        "min": 76,
+        "text": "Smuggler — Courier; Scoundrel",
+      },
+      {
+        "max": 85,
+        "min": 81,
+        "text": "Spiritualist — Haunted; Empath",
+      },
+      {
+        "max": 90,
+        "min": 86,
+        "text": "Starship Engineer — Gearhead; Tech",
+      },
+      {
+        "max": 95,
+        "min": 91,
+        "text": "Supersoldier — [[ref:starforged/asset/starforged-assets-path-augmented-4563ec3b7384|Augmented]]; Mercenary",
+      },
+      {
+        "max": 100,
+        "min": 96,
+        "text": "Tomb Raider — Scavenger; Scoundrel",
+      },
+    ],
+  },
+  "id": "starforged/oracle/starforged-oracles-campaign-launch-background-a-3a2ca23fc357",
+  "name": "Background Assets",
+  "tags": [],
+  "typeId": "oracle",
+  "visibility": "public",
+}
+`;
+
+exports[`Starforged text importer > converts Cataclysm exactly 1`] = `
+{
+  "body": "## 1–33: The Sun Plague extinguished the stars in our home galaxy.
+
+The anomaly traveled at incredible speeds, many times faster than light itself, and snuffed out the stars around us before we realized it was coming. Few of us survived as we made our way to this new galaxy. Here in the Forge, the stars are still aflame. We cling to their warmth like weary travelers huddled around a fire.
+
+We suspect the sun plague was caused by:
+
+Roll [[r:1d100|1d100]].
+
+| Roll | Result |
+|---|---|
+| 1–25 | Temporal distortions from a supermassive black hole |
+| 26–50 | Sudden dark matter decay |
+| 51–75 | Superweapon run amok |
+| 76–100 | Scientific experiment gone awry |
+
+## Quest starter
+
+The galaxy your people left behind is a cold, lightless grave. But a solitary star still glows, a beacon in a vast darkness. How did this star survive the plague? Why do you vow to find the means to travel across the immeasurable gulf to this distant light?
+
+## 34–67: Interdimensional entities invaded our reality.
+
+Without warning, these implacable and enigmatic beings ravaged our homeworlds. We could not stand against them. With the last of our defenses destroyed, our hope gone, we cast our fate to the Forge. Here, we can hide. Survive.
+
+These entities took the form of:
+
+Roll [[r:1d100|1d100]].
+
+| Roll | Result |
+|---|---|
+| 1–15 | Corrupting biological scourges |
+| 16–30 | Swarming, animalistic creatures |
+| 31–44 | Monstrous humanoids |
+| 45–58 | Spirits of alluring, divine form |
+| 59–72 | Beings of chaotic energy |
+| 73–86 | Titanic creatures of horrific power |
+| 87–100 | World-eating abominations of unimaginable scale |
+
+## Quest starter
+
+Here in the Forge, a rogue faction holds an artifact of these interdimensional entities. What is the nature of this relic? What power or dark fate does the faction intend to unleash?
+
+## 68–100: We escaped the ravages of a catastrophic war.
+
+Over millennia, we consumed resources and shattered lives as we fueled the engines of industry, expansion, and war. In the end, a powerful foe took advantage of our rivalries in a violent bid for power. Fleeing the devastation, we assembled our fleets and traveled to the Forge. A new home. A fresh start.
+
+In this final war, we were set upon by:
+
+Roll [[r:1d100|1d100]].
+
+| Roll | Result |
+|---|---|
+| 1–20 | Artificial intelligence |
+| 21–40 | Religious zealots |
+| 41–60 | Genetically engineered soldiers |
+| 61–80 | Self-replicating nanomachines |
+| 81–100 | A tyrannical faction or leader |
+
+## Quest starter
+
+A delegation of your dreaded foe arrives in the Forge. They claim to represent a rebel force seeking sanctuary. In return, they offer vital information. What news do they carry?
+
+## Your character
+
+Do you possess a keepsake or artifact of pre-cataclysm society? What is it? Why is it important to you? If you are all that remains of a people or culture, you might be a Vestige.",
+  "fields": {
+    "options": [
+      {
+        "max": 33,
+        "min": 1,
+        "text": "The Sun Plague extinguished the stars in our home galaxy.",
+      },
+      {
+        "max": 67,
+        "min": 34,
+        "text": "Interdimensional entities invaded our reality.",
+      },
+      {
+        "max": 100,
+        "min": 68,
+        "text": "We escaped the ravages of a catastrophic war.",
+      },
+    ],
+  },
+  "id": "starforged/truth/starforged-truths-cataclysm-e81db7ea5033",
+  "name": "Cataclysm",
+  "tags": [],
+  "typeId": "truth",
+  "visibility": "public",
+}
+`;
+
+exports[`Starforged text importer > converts Chiton exactly 1`] = `
+{
+  "body": "Insectoid horde
+
+The chiton are not native to any single planet, and are adaptable to most environments. Some suggest they are an ancient precursor bioweapon seeded across the galaxy. The larva of the telepathic queen can lay dormant for thousands of years, emerging only when its sleep is disturbed by the mental energies of intelligent life. An awoken queen quickly metamorphoses into its adult form and lays its first clutch of eggs. Soon after, newly-hatched drones set out to expand the nest and feed their ravenous progenitor.
+
+## Quest starter
+
+At a remote facility, researchers are studying a newly-discovered chiton queen larva. The immature queen is held in frozen stasis, but something might have gone wrong. The return of a transport ship ferrying supplies to the researchers is weeks overdue. What is your connection to the facility or to the faction overseeing it?
+
+## Chiton drone pack
+
+Rank 3 · Monster
+
+Chiton drones rarely operate independently. Instead, they hunt and attack in packs under the telepathic control of their queen.
+
+## Chiton queen
+
+Rank 4 · Monster
+
+The chiton queen is a massive creature with segmented pincers, an armored carapace, and a bulging, egg-carrying abdomen. From the depths of the nest, it commands its drones telepathically. This psychic communication is so powerful it can even breach human consciousness—troubling dreams and waking hallucinations might be the harbinger of a chiton invasion.",
+  "fields": {
+    "drives": "Build and expand the nest
+Feed and protect the queen
+Snuff out intelligent life",
+    "features": "Arachnid monsters with blade-like limbs
+Plated exoskeleton
+Dripping mucus
+Ripping, tearing maw",
+    "nature": "Monster",
+    "rank": 2,
+    "tactics": "Attack with lightning reflexes
+Impale with bladed limbs
+Drag victims back to the nest",
+  },
+  "id": "starforged/npc/starforged-npcs-sample-npcs-chiton-023be4a7fe67",
+  "name": "Chiton",
+  "tags": [],
+  "typeId": "npc",
+  "visibility": "public",
+}
+`;
+
+exports[`Starforged text importer > converts Face Danger exactly 1`] = `
+{
+  "body": "**When you attempt something risky or react to an imminent threat**, envision your action and roll. If you act...
+
+- With speed, mobility, or agility: Roll +edge
+- With resolve, command, or sociability: Roll +heart
+- With strength, endurance, or aggression: Roll +iron
+- With deception, stealth, or trickery: Roll +shadow
+- With expertise, focus, or observation: Roll +wits
+
+On a **strong hit**, you are successful. Take +1 momentum.
+
+On a **weak hit**, you succeed, but not without a cost. Make a suffer move (-1).
+
+On a **miss**, you fail, or a momentary success is undermined by a dire turn of events. Pay the Price.",
+  "fields": {
+    "category": "Adventure",
+    "roll": "Action roll +edge, +heart, +iron, +shadow or +wits (choose)",
+    "trigger": "When you attempt something risky or react to an imminent threat...",
+  },
+  "id": "starforged/move/starforged-moves-adventure-face-danger-535e4b8e16df",
+  "name": "Face Danger",
+  "tags": [],
+  "typeId": "move",
+  "visibility": "public",
+}
+`;
+
+exports[`Starforged text importer > converts Starship exactly 1`] = `
+{
+  "body": "The **command vehicle** is your interstellar STARSHIP. It is a default asset for your character, taken when you begin your campaign. If you are playing with others, this is a shared asset; each of you may use the STARSHIP's abilities while aboard the craft.
+
+The command vehicle has an integrity meter and starts at 5 integrity. When your STARSHIP takes a hit, make the Withstand Damage move to see what happens.
+
+## Options
+
+- Name",
+  "fields": {
+    "abilities": [
+      {
+        "enabled": true,
+        "text": "Your armed, multipurpose starship is suited for interstellar and atmospheric flight. It can comfortably transport several people, has space for cargo, and can carry and launch support vehicles. When you Advance, you may spend experience to equip this vehicle with module assets.",
+      },
+      {
+        "enabled": false,
+        "text": "When you Finish an Expedition (dangerous or greater) in your starship and score a hit, this journey strengthened your ties to your ship and any fellow travelers. You and your allies may mark 1 tick on your bonds legacy track.",
+      },
+      {
+        "enabled": false,
+        "text": "When you Withstand Damage, you may roll +heart. If you do, Endure Stress (-1) on a weak hit or miss.",
+      },
+    ],
+    "category": "Command Vehicle",
+    "track": "Integrity 5 (0–5) (starts at 5); Battered; Cursed",
+  },
+  "id": "starforged/asset/starforged-assets-command-vehicle-starship-f366cad41c33",
+  "name": "Starship",
+  "tags": [],
+  "typeId": "asset",
+  "visibility": "public",
+}
+`;

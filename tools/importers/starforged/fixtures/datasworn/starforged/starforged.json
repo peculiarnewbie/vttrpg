@@ -1,0 +1,2256 @@
+{
+  "license": "https://creativecommons.org/licenses/by/4.0",
+  "moves": {
+    "session": {
+      "_id": "starforged/collections/moves/session",
+      "type": "move_category",
+      "name": "Session Moves",
+      "summary": "__Session moves__ provide methods for setting up content boundaries, adjusting content in the midst of play, and starting and ending your Starforged sessions.",
+      "description": "The __session moves__ fit into the flow of mechanics and fiction before, during, and after play. They provide methods for setting up content boundaries, adjusting content in the midst of play, and starting and ending your Starforged sessions. They are intended for solo, co-op, and guided modes.\n\nUnlike most other moves, these session moves function primarily from the perspective of the players instead of your characters. They are a tool to moderate and facilitate safe and enjoyable play.",
+      "_source": {
+        "title": "Ironsworn: Starforged Rulebook",
+        "page": 140,
+        "authors": [
+          {
+            "name": "Shawn Tomkin"
+          }
+        ],
+        "date": "2022-05-06",
+        "url": "https://ironswornrpg.com",
+        "license": "https://creativecommons.org/licenses/by/4.0"
+      },
+      "contents": {
+        "begin_a_session": {
+          "_id": "starforged/moves/session/begin_a_session",
+          "type": "move",
+          "name": "Begin a Session",
+          "roll_type": "no_roll",
+          "trigger": {
+            "conditions": null,
+            "text": "When you begin a significant session or chapter of play..."
+          },
+          "text": "__When you begin a significant session or chapter of play__, do all of the following.\n\n  * Identify or adjust flagged content and [Set a Flag](id:starforged/moves/session/set_a_flag).\n  * Review or recap what happened last session.\n  * Set the scene by envisioning your character\u2019s current situation and intent.\n\nIn addition, you may spotlight a new danger, opportunity, or insight. This can include a scene hidden from your character\u2019s perspective. If you do, envision a brief vignette (you may roll or choose on the table below for inspiration). Then, all players take +1 momentum as you return to play from the viewpoint of your characters.\n\n{{table:starforged/oracles/moves/begin_a_session}}",
+          "oracles": ["starforged/oracles/moves/begin_a_session"],
+          "_source": {
+            "title": "Ironsworn: Starforged Rulebook",
+            "page": 141,
+            "authors": [
+              {
+                "name": "Shawn Tomkin"
+              }
+            ],
+            "date": "2022-05-06",
+            "url": "https://ironswornrpg.com",
+            "license": "https://creativecommons.org/licenses/by/4.0"
+          }
+        },
+        "set_a_flag": {
+          "_id": "starforged/moves/session/set_a_flag",
+          "type": "move",
+          "name": "Set a Flag",
+          "roll_type": "no_roll",
+          "trigger": {
+            "conditions": null,
+            "text": "When you identify situations or topics you don\u2019t want to include, don\u2019t want to envision in detail, or otherwise may need mindfulness when approaching..."
+          },
+          "text": "__When you identify situations or topics you don\u2019t want to include, don\u2019t want to envision in detail, or otherwise may need mindfulness when approaching__, that content is now flagged.\n\nWhen you encounter content flagged as something to approach mindfully, pause to consider or discuss its role in your story. When you come across flagged content that you would rather adjust or omit, [Change Your Fate](id:starforged/moves/session/change_your_fate).",
+          "_source": {
+            "title": "Ironsworn: Starforged Rulebook",
+            "page": 142,
+            "authors": [
+              {
+                "name": "Shawn Tomkin"
+              }
+            ],
+            "date": "2022-05-06",
+            "url": "https://ironswornrpg.com",
+            "license": "https://creativecommons.org/licenses/by/4.0"
+          }
+        }
+      }
+    },
+    "adventure": {
+      "_id": "starforged/collections/moves/adventure",
+      "type": "move_category",
+      "name": "Adventure Moves",
+      "summary": "The __adventure moves__ encompass broadly useful actions to overcome obstacles, reinforce your position, conduct investigations, influence others, and support your fellow protagonists.",
+      "description": "The __adventure moves__ encompass broadly useful actions to overcome obstacles, reinforce your position, conduct investigations, influence others, and support your fellow protagonists. When you face a peril or try to gain leverage, and another move does not apply, you'll likely find your answer among these moves.",
+      "_source": {
+        "title": "Ironsworn: Starforged Rulebook",
+        "page": 146,
+        "authors": [
+          {
+            "name": "Shawn Tomkin"
+          }
+        ],
+        "date": "2022-05-06",
+        "url": "https://ironswornrpg.com",
+        "license": "https://creativecommons.org/licenses/by/4.0"
+      },
+      "contents": {
+        "face_danger": {
+          "_id": "starforged/moves/adventure/face_danger",
+          "type": "move",
+          "name": "Face Danger",
+          "roll_type": "action_roll",
+          "trigger": {
+            "conditions": [
+              {
+                "method": "player_choice",
+                "roll_options": [
+                  {
+                    "using": "stat",
+                    "stat": "edge"
+                  }
+                ],
+                "text": "With speed, mobility, or agility"
+              },
+              {
+                "method": "player_choice",
+                "roll_options": [
+                  {
+                    "using": "stat",
+                    "stat": "heart"
+                  }
+                ],
+                "text": "With resolve, command, or sociability"
+              },
+              {
+                "method": "player_choice",
+                "roll_options": [
+                  {
+                    "using": "stat",
+                    "stat": "iron"
+                  }
+                ],
+                "text": "With strength, endurance, or aggression"
+              },
+              {
+                "method": "player_choice",
+                "roll_options": [
+                  {
+                    "using": "stat",
+                    "stat": "shadow"
+                  }
+                ],
+                "text": "With deception, stealth, or trickery"
+              },
+              {
+                "method": "player_choice",
+                "roll_options": [
+                  {
+                    "using": "stat",
+                    "stat": "wits"
+                  }
+                ],
+                "text": "With expertise, focus, or observation"
+              }
+            ],
+            "text": "When you attempt something risky or react to an imminent threat..."
+          },
+          "text": "__When you attempt something risky or react to an imminent threat__, envision your action and roll. If you act...\n\n  * With speed, mobility, or agility: Roll +edge\n  * With resolve, command, or sociability: Roll +heart\n  * With strength, endurance, or aggression: Roll +iron\n  * With deception, stealth, or trickery: Roll +shadow\n  * With expertise, focus, or observation: Roll +wits\n\nOn a __strong hit__, you are successful. Take +1 momentum.\n\nOn a __weak hit__, you succeed, but not without a cost. Make a suffer move (-1).\n\nOn a __miss__, you fail, or a momentary success is undermined by a dire turn of events. [Pay the Price](id:starforged/moves/fate/pay_the_price).",
+          "_source": {
+            "title": "Ironsworn: Starforged Rulebook",
+            "page": 147,
+            "authors": [
+              {
+                "name": "Shawn Tomkin"
+              }
+            ],
+            "date": "2022-05-06",
+            "url": "https://ironswornrpg.com",
+            "license": "https://creativecommons.org/licenses/by/4.0"
+          }
+        }
+      }
+    },
+    "quest": {
+      "_id": "starforged/collections/moves/quest",
+      "type": "move_category",
+      "name": "Quest Moves",
+      "summary": "Make these __quest moves__ when you swear vows, make progress on your quests, and resolve vows.",
+      "description": "In the fiction of the *Starforged* setting, those who swear vows are the Ironsworn, and their promises are binding. Vows can be made to yourself, as a solemn representation of your personal commitment, or as a promise to someone else. Some vows might be made grudgingly\u2014out of duty, necessity, or tradition. Others will be made with your whole heart.\n\nMake these __quest moves__ when you swear vows, make progress on your quests, and resolve vows.",
+      "_source": {
+        "title": "Ironsworn: Starforged Rulebook",
+        "page": 154,
+        "authors": [
+          {
+            "name": "Shawn Tomkin"
+          }
+        ],
+        "date": "2022-05-06",
+        "url": "https://ironswornrpg.com",
+        "license": "https://creativecommons.org/licenses/by/4.0"
+      },
+      "contents": {
+        "fulfill_your_vow": {
+          "_id": "starforged/moves/quest/fulfill_your_vow",
+          "type": "move",
+          "name": "Fulfill Your Vow",
+          "roll_type": "progress_roll",
+          "tracks": {
+            "category": "Vow"
+          },
+          "trigger": {
+            "conditions": [
+              {
+                "method": "progress_roll",
+                "roll_options": [
+                  {
+                    "using": "progress_track"
+                  }
+                ]
+              }
+            ],
+            "text": "When you reach the end of your quest..."
+          },
+          "text": "__When you reach the end of your quest__, roll the challenge dice and compare to your progress.\n\nOn a __strong hit__, your vow is fulfilled. Mark a reward on your quests legacy track per the vow's rank: troublesome=1 tick; dangerous=2 ticks; formidable=1 box; extreme=2 boxes; epic=3 boxes. Any allies who shared this vow also mark the reward.\n\nOn a __weak hit__, as above, but there is more to be done or you realize the truth of your quest. If you [Swear an Iron Vow](id:starforged/moves/quest/swear_an_iron_vow) to set things right, take your full legacy reward. Otherwise, make the reward one rank lower.\n\nOn a __miss__, your vow is undone through an unexpected complication or realization. Envision what happens and choose one.\n\n  * Give up on the quest: [Forsake Your Vow](id:starforged/moves/quest/forsake_your_vow).\n  * Recommit to the quest: Roll both challenge dice, take the lowest value, and clear that number of progress boxes. Then, raise the vow's rank by one (if not already epic).",
+          "_source": {
+            "title": "Ironsworn: Starforged Rulebook",
+            "page": 158,
+            "authors": [
+              {
+                "name": "Shawn Tomkin"
+              }
+            ],
+            "date": "2022-05-06",
+            "url": "https://ironswornrpg.com",
+            "license": "https://creativecommons.org/licenses/by/4.0"
+          }
+        }
+      }
+    },
+    "connection": {
+      "_id": "starforged/collections/moves/connection",
+      "type": "move_category",
+      "name": "Connection Moves",
+      "summary": "Make these __connection moves__ when you introduce connections and as you build influence or understanding with them.",
+      "description": "__Connections__ are NPCs (non-player characters) who represent a deep, vital, or interesting relationship in your story. They are your tethers to the people and places of the Forge.\n\nMake these __connection moves__ when you introduce connections and as you build influence or understanding with them.",
+      "_source": {
+        "title": "Ironsworn: Starforged Rulebook",
+        "page": 162,
+        "authors": [
+          {
+            "name": "Shawn Tomkin"
+          }
+        ],
+        "date": "2022-05-06",
+        "url": "https://ironswornrpg.com",
+        "license": "https://creativecommons.org/licenses/by/4.0"
+      },
+      "contents": {
+        "develop_your_relationship": {
+          "_id": "starforged/moves/connection/develop_your_relationship",
+          "type": "move",
+          "name": "Develop Your Relationship",
+          "roll_type": "action_roll",
+          "trigger": {
+            "conditions": [
+              {
+                "method": "player_choice",
+                "roll_options": [
+                  {
+                    "label": "troublesome",
+                    "using": "custom",
+                    "value": 1
+                  },
+                  {
+                    "label": "dangerous",
+                    "using": "custom",
+                    "value": 2
+                  },
+                  {
+                    "label": "formidable",
+                    "using": "custom",
+                    "value": 3
+                  },
+                  {
+                    "label": "extreme",
+                    "using": "custom",
+                    "value": 4
+                  },
+                  {
+                    "label": "epic",
+                    "using": "custom",
+                    "value": 5
+                  }
+                ],
+                "text": "If you already share a bond with the connection"
+              }
+            ],
+            "text": "When you reinforce your relationship with a connection..."
+          },
+          "text": "__When you reinforce your relationship with a connection__ by doing any of the following...\n\n  * swearing a vow to undertake a perilous quest in their service\n  * completing a quest to their benefit\n  * leveraging their help in desperate circumstances\n  * giving them something of worth\n  * sharing a profound moment\n  * standing with them against hardship\n  * overcoming a test of your relationship\n\n...you may mark progress per the rank of the connection.\n\nIf you already share a bond with the connection, do not mark progress. Instead, roll +their rank to learn the impact on your legacy: troublesome=+1; dangerous=+2; formidable=+3; extreme=+4; epic=+5. On a __strong hit__, mark 2 ticks on your bonds legacy track. On a __strong hit with a match__, you may also envision how recent events bolstered your connection\u2019s standing and raise their rank by one (if not already epic). On a __weak hit__, take +2 momentum. On a __miss__, take no lasting benefit.",
+          "_source": {
+            "title": "Ironsworn: Starforged Rulebook",
+            "page": 164,
+            "authors": [
+              {
+                "name": "Shawn Tomkin"
+              }
+            ],
+            "date": "2022-05-06",
+            "url": "https://ironswornrpg.com",
+            "license": "https://creativecommons.org/licenses/by/4.0"
+          }
+        }
+      }
+    },
+    "suffer": {
+      "_id": "starforged/collections/moves/suffer",
+      "type": "move_category",
+      "name": "Suffer Moves",
+      "summary": "When you bear the brunt of a failed action or make a concession, the suffer moves help resolve the cost.",
+      "description": "When you bear the brunt of a failed action or make a concession, the suffer moves help resolve the cost. These moves are typically made when you must [Pay the Price](id:starforged/moves/fate/pay_the_price) and face a hardship that directly impacts your well-being and readiness, or as prompted by a move or asset.",
+      "_source": {
+        "title": "Ironsworn: Starforged Rulebook",
+        "page": 198,
+        "authors": [
+          {
+            "name": "Shawn Tomkin"
+          }
+        ],
+        "date": "2022-05-06",
+        "url": "https://ironswornrpg.com",
+        "license": "https://creativecommons.org/licenses/by/4.0"
+      },
+      "contents": {
+        "endure_harm": {
+          "_id": "starforged/moves/suffer/endure_harm",
+          "type": "move",
+          "name": "Endure Harm",
+          "roll_type": "action_roll",
+          "trigger": {
+            "conditions": [
+              {
+                "method": "highest",
+                "roll_options": [
+                  {
+                    "using": "stat",
+                    "stat": "iron"
+                  },
+                  {
+                    "using": "condition_meter",
+                    "condition_meter": "health"
+                  }
+                ]
+              }
+            ],
+            "text": "When you face physical injury, fatigue, or illness..."
+          },
+          "text": "__When you face physical injury, fatigue, or illness__, suffer -1 health for minor harm, -2 for serious harm, or -3 for major harm. If your health is 0, [Lose Momentum](id:starforged/moves/suffer/lose_momentum) equal to any remaining harm.\n\nThen, if your health is 0 or you choose to resist the harm, roll +health or +iron, whichever is higher.\n\nOn a __strong hit__, choose one.\n\n  * Shake it off: If you are not wounded, take +1 health\n  * Embrace the pain: Take +1 momentum\n\nOn a __weak hit__, if you are not wounded, you may [Lose Momentum](id:starforged/moves/suffer/lose_momentum) (-1) in exchange for +1 health. Otherwise, press on.\n\nOn a __miss__, it\u2019s worse than you thought. Suffer an additional -1 health or [Lose Momentum](id:starforged/moves/suffer/lose_momentum) (-2). If your health is 0, you must also mark wounded or permanently harmed, or roll on the table below.\n\n{{table:starforged/oracles/moves/endure_harm}}",
+          "oracles": ["starforged/oracles/moves/endure_harm"],
+          "_source": {
+            "title": "Ironsworn: Starforged Rulebook",
+            "page": 200,
+            "authors": [
+              {
+                "name": "Shawn Tomkin"
+              }
+            ],
+            "date": "2022-05-06",
+            "url": "https://ironswornrpg.com",
+            "license": "https://creativecommons.org/licenses/by/4.0"
+          }
+        }
+      }
+    },
+    "recover": {
+      "_id": "starforged/collections/moves/recover",
+      "type": "move_category",
+      "name": "Recover Moves",
+      "summary": "Make these __recover moves__ when you attempt to rest, recover, or refit.",
+      "description": "Life as an Ironsworn is not easy or comfortable. When your resources are strained, your health and spirit ebbing, your equipment and vehicles in disrepair, you'll need to find relief from the perils of the Forge and the burdens of your sworn oaths.\n\nMake these __recover moves__ when you attempt to rest, recover, or refit.",
+      "_source": {
+        "title": "Ironsworn: Starforged Rulebook",
+        "page": 208,
+        "authors": [
+          {
+            "name": "Shawn Tomkin"
+          }
+        ],
+        "date": "2022-05-06",
+        "url": "https://ironswornrpg.com",
+        "license": "https://creativecommons.org/licenses/by/4.0"
+      },
+      "contents": {
+        "heal": {
+          "_id": "starforged/moves/recover/heal",
+          "type": "move",
+          "name": "Heal",
+          "roll_type": "action_roll",
+          "trigger": {
+            "conditions": [
+              {
+                "method": "player_choice",
+                "roll_options": [
+                  {
+                    "using": "stat",
+                    "stat": "iron"
+                  }
+                ],
+                "text": "Receive treatment from someone (not an ally)"
+              },
+              {
+                "method": "lowest",
+                "roll_options": [
+                  {
+                    "using": "stat",
+                    "stat": "iron"
+                  },
+                  {
+                    "using": "stat",
+                    "stat": "wits"
+                  }
+                ],
+                "text": "Mend your own wounds"
+              },
+              {
+                "method": "player_choice",
+                "roll_options": [
+                  {
+                    "using": "stat",
+                    "stat": "heart"
+                  }
+                ],
+                "text": "Obtain treatment for a companion"
+              },
+              {
+                "method": "player_choice",
+                "roll_options": [
+                  {
+                    "using": "stat",
+                    "stat": "wits"
+                  }
+                ],
+                "text": "Provide care"
+              }
+            ],
+            "text": "When you receive medical care or provide treatment..."
+          },
+          "text": "__When you receive medical care or provide treatment__, envision the situation and roll. If you...\n\n  * Receive treatment from someone (not an ally): Roll +iron\n  * Mend your own wounds: Roll +iron or +wits, whichever is lower\n  * Obtain treatment for a companion: Roll +heart\n  * Provide care: Roll +wits\n\nOn a __strong hit__, the care is helpful. If you (or the ally under your care) are wounded, clear the impact and take or give +2 health. Otherwise, take or give +3 health.\n\nOn a __weak hit__, as above, but the recovery costs extra time or resources. Choose one: [Lose Momentum](id:starforged/moves/suffer/lose_momentum) (-2) or [Sacrifice Resources](id:starforged/moves/suffer/sacrifice_resources) (-2).\n\nOn a __miss__, the aid is ineffective and the situation worsens. [Pay the Price](id:starforged/moves/fate/pay_the_price).",
+          "_source": {
+            "title": "Ironsworn: Starforged Rulebook",
+            "page": 210,
+            "authors": [
+              {
+                "name": "Shawn Tomkin"
+              }
+            ],
+            "date": "2022-05-06",
+            "url": "https://ironswornrpg.com",
+            "license": "https://creativecommons.org/licenses/by/4.0"
+          }
+        }
+      }
+    },
+    "legacy": {
+      "_id": "starforged/collections/moves/legacy",
+      "type": "move_category",
+      "name": "Legacy Moves",
+      "summary": "Make these __legacy moves__ to gain and spend experience, and when you face a final test to learn how your accomplishments and failures will echo through time.",
+      "description": "The three __legacy tracks__\u2014quests, bonds, and discoveries\u2014are a special type of progress track to show the evolution of your character. As you fulfill vows, build relationships, and explore the Forge, you'll mark progress on these tracks and gain experience. This experience is then spent on character assets to represent your character's growing skills, influence, and resources.\nMake these __legacy moves__ to gain and spend experience, and when you face a final test to learn how your accomplishments and failures will echo through time.",
+      "_source": {
+        "title": "Ironsworn: Starforged Rulebook",
+        "page": 222,
+        "authors": [
+          {
+            "name": "Shawn Tomkin"
+          }
+        ],
+        "date": "2022-05-06",
+        "url": "https://ironswornrpg.com",
+        "license": "https://creativecommons.org/licenses/by/4.0"
+      },
+      "contents": {
+        "earn_experience": {
+          "_id": "starforged/moves/legacy/earn_experience",
+          "type": "move",
+          "name": "Earn Experience",
+          "roll_type": "no_roll",
+          "trigger": {
+            "conditions": null,
+            "text": "When you fill a box (four ticks) on any legacy track..."
+          },
+          "text": "__When you fill a box (four ticks) on any legacy track__, take 2 experience. This experience may be spent when you [Advance](id:starforged/moves/legacy/advance).\n\nOnce you completely fill the tenth box on any legacy track, clear that track. You may start again marking progress on the cleared track, but earn experience at a reduced rate of 1 experience (instead of 2) for each filled progress box. If you make a progress roll against this track, resolve the outcome as if at 10 progress.",
+          "_source": {
+            "title": "Ironsworn: Starforged Rulebook",
+            "page": 224,
+            "authors": [
+              {
+                "name": "Shawn Tomkin"
+              }
+            ],
+            "date": "2022-05-06",
+            "url": "https://ironswornrpg.com",
+            "license": "https://creativecommons.org/licenses/by/4.0"
+          }
+        },
+        "continue_a_legacy": {
+          "_id": "starforged/moves/legacy/continue_a_legacy",
+          "type": "move",
+          "name": "Continue a Legacy",
+          "roll_type": "special_track",
+          "trigger": {
+            "conditions": [
+              {
+                "method": "all",
+                "roll_options": [
+                  {
+                    "using": "quests_legacy"
+                  },
+                  {
+                    "using": "bonds_legacy"
+                  },
+                  {
+                    "using": "discoveries_legacy"
+                  }
+                ]
+              }
+            ],
+            "text": "When you retire from your life as Ironsworn, or succumb to death or desolation..."
+          },
+          "text": "__When you retire from your life as Ironsworn, or succumb to death or desolation__, you may create a new character in your established setting. If you do, roll the challenge dice and compare to each of the former character's legacy tracks: quests, bonds, and discoveries (one roll per track).\n\nFor each __strong hit__, choose one from below, or one from the weak hit or miss options.\n\n  * Follow their path: Take one path or companion asset from the former character (at no cost), including any marked abilities.\n  * Share a connection: Take one connection from the former character, including any accrued progress or bond benefits.\n  * Accept an inheritance: Take the former character's command vehicle and one module or support vehicle (at no cost), including any marked abilities.\n\nFor each __weak hit__, choose one from below, or one from the miss options.\n\n  * See it through: Choose one of the former character's unfinished quests, and [Swear an Iron Vow](id:starforged/moves/quest/swear_an_iron_vow) (with an automatic strong hit) to see it done. You may immediately mark up to half their earned progress (round down) on this quest.\n  * Rebuild a connection: Name one of the former character's connections, and envision how time or circumstances have changed them in a dramatic way. When you [Make a Connection](id:starforged/moves/connection/make_a_connection) with them, take an automatic strong hit and mark two ticks on your bonds legacy track.\n  * Explore familiar ground: Name a location that was meaningful to the former character. When you first visit that place, envision how it has changed or is endangered. Then, mark two ticks on your discoveries legacy track.\n\nFor each __miss__, choose one.\n\n  * Deal with the aftermath: Envision how one of your former character's foes has gained power or influence.\n  * Switch loyalties: Envision how you begin in opposition to your former character's beliefs, goals, or allegiances.\n  * Open Pandora's Box: Envision how an advancement or discovery has unleashed unexpectedly dire consequences.",
+          "_source": {
+            "title": "Ironsworn: Starforged Rulebook",
+            "page": 226,
+            "authors": [
+              {
+                "name": "Shawn Tomkin"
+              }
+            ],
+            "date": "2022-05-06",
+            "url": "https://ironswornrpg.com",
+            "license": "https://creativecommons.org/licenses/by/4.0"
+          }
+        }
+      }
+    },
+    "threshold": {
+      "_id": "starforged/collections/moves/threshold",
+      "type": "move_category",
+      "name": "Threshold Moves",
+      "summary": "Despite your best efforts to overcome the perils of the Forge, calamitous events may bring you to the precipice of life and death, redemption and desolation, perseverance and destruction.",
+      "description": "Despite your best efforts to overcome the perils of the Forge, calamitous events may bring you to the precipice of life and death, redemption and desolation, perseverance and destruction.\n\nIn these moments you face your greatest tests. What will become of you when all seems lost? Will you see your character undone, or find yourself on a path of renewed purpose? Make these __threshold moves__ to find out.",
+      "_source": {
+        "title": "Ironsworn: Starforged Rulebook",
+        "page": 216,
+        "authors": [
+          {
+            "name": "Shawn Tomkin"
+          }
+        ],
+        "date": "2022-05-06",
+        "url": "https://ironswornrpg.com",
+        "license": "https://creativecommons.org/licenses/by/4.0"
+      },
+      "contents": {
+        "overcome_destruction": {
+          "_id": "starforged/moves/threshold/overcome_destruction",
+          "type": "move",
+          "name": "Overcome Destruction",
+          "roll_type": "special_track",
+          "trigger": {
+            "conditions": [
+              {
+                "method": "player_choice",
+                "roll_options": [
+                  {
+                    "using": "bonds_legacy"
+                  }
+                ]
+              }
+            ],
+            "text": "When your command vehicle is destroyed or irrevocably lost..."
+          },
+          "text": "__When your command vehicle is destroyed or irrevocably lost__, you must discard the asset, along with any modules and docked support vehicles.\n\nIf you survive, you may use your connections to replace some of what was lost. To learn the cost, roll the challenge dice and compare to the progress on your bonds legacy track.\n\nOn a __strong hit__, you may call in a favor. This comes without conditions.\n\nOn a __weak hit__, you owe someone. You must mark __indebted__ and [Swear an Iron Vow](id:starforged/moves/quest/swear_an_iron_vow) to complete an extreme quest in their service. When you complete the duty-bound quest, clear the impact.\n\nOn a __miss__, as with the weak hit result, but this quest is against your nature, forces you to [Forsake Your Vow](id:starforged/moves/quest/forsake_your_vow) on another quest, or is in the service of an enemy.\n\nIf you accept the cost, take 1 experience for every marked ability on the discarded assets (minimum 3 experience). Spend this experience only on a new command vehicle, modules, and support vehicles.",
+          "_source": {
+            "title": "Ironsworn: Starforged Rulebook",
+            "page": 220,
+            "authors": [
+              {
+                "name": "Shawn Tomkin"
+              }
+            ],
+            "date": "2022-05-06",
+            "url": "https://ironswornrpg.com",
+            "license": "https://creativecommons.org/licenses/by/4.0"
+          }
+        }
+      }
+    }
+  },
+  "assets": {
+    "command_vehicle": {
+      "_id": "starforged/collections/assets/command_vehicle",
+      "type": "asset_collection",
+      "name": "Command Vehicle Assets",
+      "summary": "This is your interstellar spacecraft.",
+      "description": "The __command vehicle__ is your interstellar STARSHIP. It is a default asset for your character, taken when you begin your campaign. If you are playing with others, this is a shared asset; each of you may use the STARSHIP's abilities while aboard the craft.\n\nThe command vehicle has an integrity meter and starts at 5 integrity. When your STARSHIP takes a hit, make the [Withstand Damage](id:starforged/moves/suffer/withstand_damage) move to see what happens.",
+      "_source": {
+        "title": "Ironsworn: Starforged Rulebook",
+        "page": 55,
+        "authors": [
+          {
+            "name": "Shawn Tomkin"
+          }
+        ],
+        "date": "2022-05-06",
+        "url": "https://ironswornrpg.com",
+        "license": "https://creativecommons.org/licenses/by/4.0"
+      },
+      "contents": {
+        "starship": {
+          "_id": "starforged/assets/command_vehicle/starship",
+          "type": "asset",
+          "name": "Starship",
+          "category": "Command Vehicle",
+          "options": {
+            "name": {
+              "label": "name",
+              "field_type": "text",
+              "value": null
+            }
+          },
+          "count_as_impact": false,
+          "shared": true,
+          "attachments": {
+            "max": null,
+            "assets": ["*/assets/module/*"]
+          },
+          "abilities": [
+            {
+              "_id": "starforged/assets/command_vehicle/starship/abilities/0",
+              "enabled": true,
+              "text": "Your armed, multipurpose starship is suited for interstellar and atmospheric flight. It can comfortably transport several people, has space for cargo, and can carry and launch support vehicles. When you [Advance](id:starforged/moves/legacy/advance), you may spend experience to equip this vehicle with module assets."
+            },
+            {
+              "_id": "starforged/assets/command_vehicle/starship/abilities/1",
+              "enabled": false,
+              "text": "When you [Finish an Expedition](id:starforged/moves/exploration/finish_an_expedition) (dangerous or greater) in your starship and score a hit, this journey strengthened your ties to your ship and any fellow travelers. You and your allies may mark 1 tick on your bonds legacy track."
+            },
+            {
+              "_id": "starforged/assets/command_vehicle/starship/abilities/2",
+              "enabled": false,
+              "text": "When you [Withstand Damage](id:starforged/moves/suffer/withstand_damage), you may roll +heart. If you do, [Endure Stress](id:starforged/moves/suffer/endure_stress) (-1) on a weak hit or miss."
+            }
+          ],
+          "controls": {
+            "integrity": {
+              "label": "integrity",
+              "field_type": "condition_meter",
+              "rollable": true,
+              "min": 0,
+              "max": 5,
+              "value": 5,
+              "controls": {
+                "battered": {
+                  "label": "battered",
+                  "field_type": "checkbox",
+                  "value": false,
+                  "is_impact": true,
+                  "disables_asset": false
+                },
+                "cursed": {
+                  "label": "cursed",
+                  "field_type": "checkbox",
+                  "value": false,
+                  "is_impact": true,
+                  "disables_asset": false
+                }
+              },
+              "moves": {
+                "recover": ["starforged/moves/recover/repair"],
+                "suffer": ["starforged/moves/suffer/withstand_damage"]
+              }
+            }
+          },
+          "_source": {
+            "title": "Ironsworn: Starforged Assets",
+            "authors": [
+              {
+                "name": "Shawn Tomkin"
+              }
+            ],
+            "date": "2022-05-06",
+            "url": "https://ironswornrpg.com",
+            "license": "https://creativecommons.org/licenses/by/4.0"
+          }
+        }
+      }
+    },
+    "deed": {
+      "_id": "starforged/collections/assets/deed",
+      "type": "asset_collection",
+      "name": "Deed Assets",
+      "description": "__Deeds__ represent the notable achievement and situations of your story, and how those events change your character.\n\nDeeds have a requirement listed at the top of the card, phrased as \u201cOnce you \\[blank\\].\u201d You may not spend experience to acquire a deed until you fulfill the requirement, and you cannot choose a deed when creating your character.",
+      "_source": {
+        "title": "Ironsworn: Starforged Rulebook",
+        "page": 57,
+        "authors": [
+          {
+            "name": "Shawn Tomkin"
+          }
+        ],
+        "date": "2022-05-06",
+        "url": "https://ironswornrpg.com",
+        "license": "https://creativecommons.org/licenses/by/4.0"
+      },
+      "contents": {
+        "bonded": {
+          "_id": "starforged/assets/deed/bonded",
+          "type": "asset",
+          "name": "Bonded",
+          "category": "Deed",
+          "options": {
+            "bond_mate": {
+              "label": "bond-mate",
+              "field_type": "text",
+              "value": null
+            }
+          },
+          "count_as_impact": false,
+          "shared": false,
+          "requirement": "One time only, once you [Forge a Bond](id:starforged/moves/connection/forge_a_bond) with a special individual...",
+          "abilities": [
+            {
+              "_id": "starforged/assets/deed/bonded/abilities/0",
+              "enabled": true,
+              "text": "This person is your bond-mate. When you [Sojourn](id:starforged/moves/recover/sojourn) at their home, [Hearten](id:starforged/moves/recover/hearten) in their presence, or [Test Your Relationship](id:starforged/moves/connection/test_your_relationship) or [Develop Your Relationship](id:starforged/moves/connection/develop_your_relationship) with them, reroll any dice. On a strong hit, take +1 momentum."
+            },
+            {
+              "_id": "starforged/assets/deed/bonded/abilities/1",
+              "enabled": false,
+              "text": "When you [Set a Course](id:starforged/moves/exploration/set_a_course) back to your bond-mate's location, add +heart. On a strong hit with a match, envision a special reunion and mark two ticks on your bonds legacy track."
+            },
+            {
+              "_id": "starforged/assets/deed/bonded/abilities/2",
+              "enabled": false,
+              "text": "When you make a move in a crucial moment and score a miss, you may cling to thoughts of your bond-mate for support. If you do, reroll any dice. On another miss, in addition to the outcome of the move, you must mark shaken or traumatized. If both debilities are already marked, [Face Desolation](id:starforged/moves/threshold/face_desolation)."
+            }
+          ],
+          "_source": {
+            "title": "Ironsworn: Starforged Assets",
+            "authors": [
+              {
+                "name": "Shawn Tomkin"
+              }
+            ],
+            "date": "2022-05-06",
+            "url": "https://ironswornrpg.com",
+            "license": "https://creativecommons.org/licenses/by/4.0"
+          }
+        }
+      }
+    },
+    "path": {
+      "_id": "starforged/collections/assets/path",
+      "type": "asset_collection",
+      "name": "Path Assets",
+      "description": "__Paths__ are your background, interests, training, skills, powers, and key equipment. They provide mechanical and narrative advantages, but also reflect who you are and how you interact with the world. When you create your character in the next chapter, you'll select at least two paths to get started.\n\nSome paths represent your skill with a signature weapon style or piece of equipment. If you see a requirement at the top of the asset card, such as \u201cIf you wield a bladed weapon\u2026,\u201d the asset is only usable when taking action using that item.",
+      "_source": {
+        "title": "Ironsworn: Starforged Rulebook",
+        "page": 56,
+        "authors": [
+          {
+            "name": "Shawn Tomkin"
+          }
+        ],
+        "date": "2022-05-06",
+        "url": "https://ironswornrpg.com",
+        "license": "https://creativecommons.org/licenses/by/4.0"
+      },
+      "contents": {
+        "augmented": {
+          "_id": "starforged/assets/path/augmented",
+          "type": "asset",
+          "name": "Augmented",
+          "category": "Path",
+          "options": {
+            "one": {
+              "label": "one",
+              "field_type": "text",
+              "value": null
+            },
+            "two": {
+              "label": "two",
+              "field_type": "text",
+              "value": null
+            }
+          },
+          "count_as_impact": false,
+          "shared": false,
+          "abilities": [
+            {
+              "_id": "starforged/assets/path/augmented/abilities/0",
+              "enabled": true,
+              "text": "You are equipped with an advanced prosthetic, implant, or mechanical enhancement. When you make a move directly aided by the augment, envision how it gives you exceptional capabilities and add +1. On a strong hit with a match, your augment exceeds expectations; take +2 momentum. On a miss with a match, the augment is broken; you must [Repair](id:starforged/moves/recover/repair) and spend 3 repair points to bring it back to working condition."
+            },
+            {
+              "_id": "starforged/assets/path/augmented/abilities/1",
+              "enabled": false,
+              "text": "You are equipped with a second augment. It functions as above, but the benefits of the two augments do not stack."
+            },
+            {
+              "_id": "starforged/assets/path/augmented/abilities/2",
+              "enabled": false,
+              "text": "When you must [Endure Harm](id:starforged/moves/suffer/endure_harm) or [Face Death](id:starforged/moves/threshold/face_death), you may instead mark an augment as broken. [Repair](id:starforged/moves/recover/repair) it as detailed above."
+            }
+          ],
+          "_source": {
+            "title": "Ironsworn: Starforged Assets",
+            "authors": [
+              {
+                "name": "Shawn Tomkin"
+              }
+            ],
+            "date": "2022-05-06",
+            "url": "https://ironswornrpg.com",
+            "license": "https://creativecommons.org/licenses/by/4.0"
+          }
+        },
+        "devotant": {
+          "_id": "starforged/assets/path/devotant",
+          "type": "asset",
+          "name": "Devotant",
+          "category": "Path",
+          "options": {
+            "name": {
+              "label": "name",
+              "field_type": "text",
+              "value": null
+            },
+            "linked_stat": {
+              "label": "linked stat",
+              "field_type": "select_value",
+              "choices": {
+                "edge": {
+                  "label": "edge",
+                  "choice_type": "choice",
+                  "using": "stat",
+                  "stat": "edge"
+                },
+                "heart": {
+                  "label": "heart",
+                  "choice_type": "choice",
+                  "using": "stat",
+                  "stat": "heart"
+                },
+                "iron": {
+                  "label": "iron",
+                  "choice_type": "choice",
+                  "using": "stat",
+                  "stat": "iron"
+                },
+                "shadow": {
+                  "label": "shadow",
+                  "choice_type": "choice",
+                  "using": "stat",
+                  "stat": "shadow"
+                },
+                "wits": {
+                  "label": "wits",
+                  "choice_type": "choice",
+                  "using": "stat",
+                  "stat": "wits"
+                }
+              },
+              "value": null
+            }
+          },
+          "count_as_impact": false,
+          "shared": false,
+          "abilities": [
+            {
+              "_id": "starforged/assets/path/devotant/abilities/0",
+              "enabled": true,
+              "text": "You worship a god, power, or entity. Give it a name and choose one of your stats to represent its nature. When you [Secure an Advantage](id:starforged/moves/adventure/secure_an_advantage) or [Gain Ground](id:starforged/moves/combat/gain_ground) by calling on it for guidance or aid, roll +linked stat. On a hit, take +1 momentum or +1 spirit. On a strong hit with a match, a miracle or sign manifests; take another +1 momentum or +1 spirit."
+            },
+            {
+              "_id": "starforged/assets/path/devotant/abilities/1",
+              "enabled": false,
+              "text": "When you [Swear an Iron Vow](id:starforged/moves/quest/swear_an_iron_vow) in service to your faith, roll +linked stat and take +2 momentum or +2 spirit on a hit. When you [Fulfill Your Vow](id:starforged/moves/quest/fulfill_your_vow) on a divine quest (formidable or greater) and score a hit, also mark 2 ticks on your bonds legacy track."
+            },
+            {
+              "_id": "starforged/assets/path/devotant/abilities/2",
+              "enabled": false,
+              "text": "When you [Hearten](id:starforged/moves/recover/hearten) through contemplation or sharing of your faith, you may roll +linked stat. If you do, take +1 spirit or +1 momentum on a strong hit."
+            }
+          ],
+          "_source": {
+            "title": "Ironsworn: Starforged Assets",
+            "authors": [
+              {
+                "name": "Shawn Tomkin"
+              }
+            ],
+            "date": "2022-05-06",
+            "url": "https://ironswornrpg.com",
+            "license": "https://creativecommons.org/licenses/by/4.0"
+          }
+        }
+      }
+    }
+  },
+  "oracles": {
+    "moves": {
+      "_id": "starforged/collections/oracles/moves",
+      "type": "oracle_collection",
+      "name": "Move Oracles",
+      "oracle_type": "tables",
+      "_source": {
+        "title": "Ironsworn: Starforged Rulebook",
+        "page": 136,
+        "authors": [
+          {
+            "name": "Shawn Tomkin"
+          }
+        ],
+        "date": "2022-05-06",
+        "url": "https://ironswornrpg.com",
+        "license": "https://creativecommons.org/licenses/by/4.0"
+      },
+      "contents": {
+        "begin_a_session": {
+          "_id": "starforged/oracles/moves/begin_a_session",
+          "type": "oracle_rollable",
+          "name": "Begin a Session",
+          "oracle_type": "table_text",
+          "dice": "1d100",
+          "column_labels": {
+            "roll": "Roll",
+            "text": "Result"
+          },
+          "rows": [
+            {
+              "min": 1,
+              "max": 10,
+              "text": "Flashback reveals an aspect of your background or nature"
+            },
+            {
+              "min": 11,
+              "max": 20,
+              "text": "Flashback reveals an aspect of another character, place, or faction"
+            },
+            {
+              "min": 21,
+              "max": 30,
+              "text": "Influential character or faction is introduced or given new detail"
+            },
+            {
+              "min": 31,
+              "max": 40,
+              "text": "Seemingly unrelated situations are shown to be connected"
+            },
+            {
+              "min": 41,
+              "max": 50,
+              "text": "External factors create new danger, urgency, or importance for a quest"
+            },
+            {
+              "min": 51,
+              "max": 60,
+              "text": "Important character is put in danger or suffers a misadventure"
+            },
+            {
+              "min": 61,
+              "max": 70,
+              "text": "Key location is made unsafe or becomes mired in conflict"
+            },
+            {
+              "min": 71,
+              "max": 80,
+              "text": "Unexpected return of an enemy or threat"
+            },
+            {
+              "min": 81,
+              "max": 90,
+              "text": "Peril lies ahead or lurks just out of view"
+            },
+            {
+              "min": 91,
+              "max": 100,
+              "text": "Unforeseen aid is on the way or within reach"
+            }
+          ],
+          "_source": {
+            "title": "Ironsworn: Starforged Rulebook",
+            "page": 141,
+            "authors": [
+              {
+                "name": "Shawn Tomkin"
+              }
+            ],
+            "date": "2022-05-06",
+            "url": "https://ironswornrpg.com",
+            "license": "https://creativecommons.org/licenses/by/4.0"
+          }
+        },
+        "endure_harm": {
+          "_id": "starforged/oracles/moves/endure_harm",
+          "type": "oracle_rollable",
+          "name": "Endure Harm",
+          "oracle_type": "table_text",
+          "dice": "1d100",
+          "column_labels": {
+            "roll": "Roll",
+            "text": "Result"
+          },
+          "rows": [
+            {
+              "min": 1,
+              "max": 10,
+              "text": "You suffer mortal harm. [Face Death](id:starforged/moves/threshold/face_death)."
+            },
+            {
+              "min": 11,
+              "max": 20,
+              "text": "You are dying. Within an hour or two, you must [Heal](id:starforged/moves/recover/heal) and raise your health above 0, or [Face Death](id:starforged/moves/threshold/face_death)."
+            },
+            {
+              "min": 21,
+              "max": 35,
+              "text": "You are unconscious and out of action. If left alone, you come back to your senses in an hour or two. If you are vulnerable to ongoing harm, [Face Death](id:starforged/moves/threshold/face_death)."
+            },
+            {
+              "min": 36,
+              "max": 50,
+              "text": "You are reeling and fighting to stay conscious. If you engage in any vigorous activity before taking a breather for a few minutes, roll on this table again (before resolving the other move)."
+            },
+            {
+              "min": 51,
+              "max": 100,
+              "text": "You are still standing."
+            }
+          ],
+          "_source": {
+            "title": "Ironsworn: Starforged Rulebook",
+            "page": 200,
+            "authors": [
+              {
+                "name": "Shawn Tomkin"
+              }
+            ],
+            "date": "2022-05-06",
+            "url": "https://ironswornrpg.com",
+            "license": "https://creativecommons.org/licenses/by/4.0"
+          }
+        }
+      }
+    },
+    "campaign_launch": {
+      "_id": "starforged/collections/oracles/campaign_launch",
+      "type": "oracle_collection",
+      "name": "Campaign Launch Oracles",
+      "oracle_type": "tables",
+      "_source": {
+        "title": "Ironsworn: Starforged Rulebook",
+        "page": 74,
+        "authors": [
+          {
+            "name": "Shawn Tomkin"
+          }
+        ],
+        "date": "2022-05-06",
+        "url": "https://ironswornrpg.com",
+        "license": "https://creativecommons.org/licenses/by/4.0"
+      },
+      "contents": {
+        "background_assets": {
+          "_id": "starforged/oracles/campaign_launch/background_assets",
+          "type": "oracle_rollable",
+          "name": "Background Assets",
+          "oracle_type": "table_text2",
+          "dice": "1d100",
+          "summary": "If you want some direction for your starting paths, roll or pick from the table below and take the two paths associated with your selected background.",
+          "column_labels": {
+            "roll": "Roll",
+            "text": "Background",
+            "text2": "Assets"
+          },
+          "rows": [
+            {
+              "min": 1,
+              "max": 5,
+              "text": "Battlefield Medic",
+              "text2": "[Healer](id:starforged/assets/path/healer); [Veteran](id:starforged/assets/path/veteran)"
+            },
+            {
+              "min": 6,
+              "max": 10,
+              "text": "Delegate",
+              "text2": "[Bannersworn](id:starforged/assets/path/bannersworn); [Diplomat](id:starforged/assets/path/diplomat)"
+            },
+            {
+              "min": 11,
+              "max": 15,
+              "text": "Exobiologist",
+              "text2": "[Lore Hunter](id:starforged/assets/path/lore_hunter); [Naturalist](id:starforged/assets/path/naturalist)"
+            },
+            {
+              "min": 16,
+              "max": 20,
+              "text": "Far Trader",
+              "text2": "[Navigator](id:starforged/assets/path/navigator); [Trader](id:starforged/assets/path/trader)"
+            },
+            {
+              "min": 21,
+              "max": 25,
+              "text": "Fugitive Hunter",
+              "text2": "[Armored](id:starforged/assets/path/armored); [Bounty Hunter](id:starforged/assets/path/bounty_hunter)"
+            },
+            {
+              "min": 26,
+              "max": 30,
+              "text": "Hacker",
+              "text2": "[Infiltrator](id:starforged/assets/path/infiltrator); [Tech](id:starforged/assets/path/tech)"
+            },
+            {
+              "min": 31,
+              "max": 35,
+              "text": "Hotshot Pilot",
+              "text2": "[Ace](id:starforged/assets/path/ace); [Navigator](id:starforged/assets/path/navigator)"
+            },
+            {
+              "min": 36,
+              "max": 40,
+              "text": "Interstellar Scout",
+              "text2": "[Explorer](id:starforged/assets/path/explorer); [Voidborn](id:starforged/assets/path/voidborn)"
+            },
+            {
+              "min": 41,
+              "max": 45,
+              "text": "Monster Hunter",
+              "text2": "[Gunner](id:starforged/assets/path/gunner); [Slayer](id:starforged/assets/path/slayer)"
+            },
+            {
+              "min": 46,
+              "max": 50,
+              "text": "Occultist",
+              "text2": "[Outcast](id:starforged/assets/path/outcast); [Shade](id:starforged/assets/path/shade)"
+            },
+            {
+              "min": 51,
+              "max": 55,
+              "text": "Operative",
+              "text2": "[Infiltrator](id:starforged/assets/path/infiltrator); [Blademaster](id:starforged/assets/path/blademaster)"
+            },
+            {
+              "min": 56,
+              "max": 60,
+              "text": "Outlaw",
+              "text2": "[Fugitive](id:starforged/assets/path/fugitive); [Gunslinger](id:starforged/assets/path/gunslinger)"
+            },
+            {
+              "min": 61,
+              "max": 65,
+              "text": "Private Investigator",
+              "text2": "[Brawler](id:starforged/assets/path/brawler); [Sleuth](id:starforged/assets/path/sleuth)"
+            },
+            {
+              "min": 66,
+              "max": 70,
+              "text": "Prophet",
+              "text2": "[Devotant](id:starforged/assets/path/devotant); [Seer](id:starforged/assets/path/seer)"
+            },
+            {
+              "min": 71,
+              "max": 75,
+              "text": "Psionicist",
+              "text2": "[Kinetic](id:starforged/assets/path/kinetic); [Vestige](id:starforged/assets/path/vestige)"
+            },
+            {
+              "min": 76,
+              "max": 80,
+              "text": "Smuggler",
+              "text2": "[Courier](id:starforged/assets/path/courier); [Scoundrel](id:starforged/assets/path/scoundrel)"
+            },
+            {
+              "min": 81,
+              "max": 85,
+              "text": "Spiritualist",
+              "text2": "[Haunted](id:starforged/assets/path/haunted); [Empath](id:starforged/assets/path/empath)"
+            },
+            {
+              "min": 86,
+              "max": 90,
+              "text": "Starship Engineer",
+              "text2": "[Gearhead](id:starforged/assets/path/gearhead); [Tech](id:starforged/assets/path/tech)"
+            },
+            {
+              "min": 91,
+              "max": 95,
+              "text": "Supersoldier",
+              "text2": "[Augmented](id:starforged/assets/path/augmented); [Mercenary](id:starforged/assets/path/mercenary)"
+            },
+            {
+              "min": 96,
+              "max": 100,
+              "text": "Tomb Raider",
+              "text2": "[Scavenger](id:starforged/assets/path/scavenger); [Scoundrel](id:starforged/assets/path/scoundrel)"
+            }
+          ],
+          "_source": {
+            "title": "Ironsworn: Starforged Rulebook",
+            "page": 105,
+            "authors": [
+              {
+                "name": "Shawn Tomkin"
+              }
+            ],
+            "date": "2022-05-06",
+            "url": "https://ironswornrpg.com",
+            "license": "https://creativecommons.org/licenses/by/4.0"
+          }
+        }
+      }
+    },
+    "characters": {
+      "_id": "starforged/collections/oracles/characters",
+      "type": "oracle_collection",
+      "name": "Character Oracles",
+      "canonical_name": "Characters",
+      "oracle_type": "tables",
+      "summary": "Don\u2019t try to build a fully formed understanding character when you first encounter them; instead, focus on what your character learns or perceives as a first impression using oracles such as [First Look](id:starforged/oracles/characters/first_look) and [Initial Disposition](id:starforged/oracles/characters/initial_disposition). Then envision or generate additional details over time.",
+      "_source": {
+        "title": "Ironsworn: Starforged Rulebook",
+        "page": 330,
+        "authors": [
+          {
+            "name": "Shawn Tomkin"
+          }
+        ],
+        "date": "2022-05-06",
+        "url": "https://ironswornrpg.com",
+        "license": "https://creativecommons.org/licenses/by/4.0"
+      },
+      "contents": {
+        "first_look": {
+          "_id": "starforged/oracles/characters/first_look",
+          "type": "oracle_rollable",
+          "name": "First Look",
+          "oracle_type": "table_text",
+          "dice": "1d100",
+          "recommended_rolls": {
+            "min": 1,
+            "max": 2
+          },
+          "column_labels": {
+            "roll": "Roll",
+            "text": "Result"
+          },
+          "rows": [
+            {
+              "min": 1,
+              "max": 3,
+              "text": "Accented"
+            },
+            {
+              "min": 4,
+              "max": 6,
+              "text": "Accompanied"
+            },
+            {
+              "min": 7,
+              "max": 8,
+              "text": "Adorned"
+            },
+            {
+              "min": 9,
+              "max": 11,
+              "text": "Aged"
+            },
+            {
+              "min": 12,
+              "max": 13,
+              "text": "Alluring"
+            },
+            {
+              "min": 14,
+              "max": 15,
+              "text": "Armed"
+            },
+            {
+              "min": 16,
+              "max": 17,
+              "text": "Armored"
+            },
+            {
+              "min": 18,
+              "max": 20,
+              "text": "Athletic"
+            },
+            {
+              "min": 21,
+              "max": 23,
+              "text": "Attractive"
+            },
+            {
+              "min": 24,
+              "max": 25,
+              "text": "Augmented"
+            },
+            {
+              "min": 26,
+              "max": 27,
+              "text": "Concealed"
+            },
+            {
+              "min": 28,
+              "max": 30,
+              "text": "Distracted"
+            },
+            {
+              "min": 31,
+              "max": 33,
+              "text": "Eccentric"
+            },
+            {
+              "min": 34,
+              "max": 35,
+              "text": "Energetic"
+            },
+            {
+              "min": 36,
+              "max": 37,
+              "text": "Flashy"
+            },
+            {
+              "min": 38,
+              "max": 40,
+              "text": "Graceful"
+            },
+            {
+              "min": 41,
+              "max": 43,
+              "text": "Grim"
+            },
+            {
+              "min": 44,
+              "max": 46,
+              "text": "Haggard"
+            },
+            {
+              "min": 47,
+              "max": 49,
+              "text": "Ill-equipped"
+            },
+            {
+              "min": 50,
+              "max": 52,
+              "text": "Imposing"
+            },
+            {
+              "min": 53,
+              "max": 55,
+              "text": "Large"
+            },
+            {
+              "min": 56,
+              "max": 57,
+              "text": "Mutated"
+            },
+            {
+              "min": 58,
+              "max": 60,
+              "text": "Plain"
+            },
+            {
+              "min": 61,
+              "max": 62,
+              "text": "Poised"
+            },
+            {
+              "min": 63,
+              "max": 65,
+              "text": "Scarred"
+            },
+            {
+              "min": 66,
+              "max": 68,
+              "text": "Scruffy"
+            },
+            {
+              "min": 69,
+              "max": 71,
+              "text": "Shifty"
+            },
+            {
+              "min": 72,
+              "max": 73,
+              "text": "Sickly"
+            },
+            {
+              "min": 74,
+              "max": 76,
+              "text": "Slight"
+            },
+            {
+              "min": 77,
+              "max": 78,
+              "text": "Swaggering"
+            },
+            {
+              "min": 79,
+              "max": 81,
+              "text": "Tattooed"
+            },
+            {
+              "min": 82,
+              "max": 83,
+              "text": "Threatened"
+            },
+            {
+              "min": 84,
+              "max": 85,
+              "text": "Uncanny"
+            },
+            {
+              "min": 86,
+              "max": 87,
+              "text": "Visibly disabled"
+            },
+            {
+              "min": 88,
+              "max": 90,
+              "text": "Weathered"
+            },
+            {
+              "min": 91,
+              "max": 92,
+              "text": "Well-equipped"
+            },
+            {
+              "min": 93,
+              "max": 95,
+              "text": "Wiry"
+            },
+            {
+              "min": 96,
+              "max": 97,
+              "text": "Wounded"
+            },
+            {
+              "min": 98,
+              "max": 100,
+              "text": "Youthful"
+            }
+          ],
+          "_source": {
+            "title": "Ironsworn: Starforged Rulebook",
+            "page": 330,
+            "authors": [
+              {
+                "name": "Shawn Tomkin"
+              }
+            ],
+            "date": "2022-05-06",
+            "url": "https://ironswornrpg.com",
+            "license": "https://creativecommons.org/licenses/by/4.0"
+          }
+        },
+        "role": {
+          "_id": "starforged/oracles/characters/role",
+          "type": "oracle_rollable",
+          "name": "Character Role",
+          "oracle_type": "table_text",
+          "dice": "1d100",
+          "column_labels": {
+            "roll": "Roll",
+            "text": "Result"
+          },
+          "rows": [
+            {
+              "min": 1,
+              "max": 2,
+              "text": "Agent"
+            },
+            {
+              "min": 3,
+              "max": 4,
+              "text": "AI"
+            },
+            {
+              "min": 5,
+              "max": 6,
+              "text": "Artisan"
+            },
+            {
+              "min": 7,
+              "max": 8,
+              "text": "Assassin"
+            },
+            {
+              "min": 9,
+              "max": 10,
+              "text": "Bounty Hunter"
+            },
+            {
+              "min": 11,
+              "max": 12,
+              "text": "Courier"
+            },
+            {
+              "min": 13,
+              "max": 14,
+              "text": "Crew"
+            },
+            {
+              "min": 15,
+              "max": 16,
+              "text": "Criminal"
+            },
+            {
+              "min": 17,
+              "max": 18,
+              "text": "Cultist"
+            },
+            {
+              "min": 19,
+              "max": 20,
+              "text": "Diplomat"
+            },
+            {
+              "min": 21,
+              "max": 22,
+              "text": "Engineer"
+            },
+            {
+              "min": 23,
+              "max": 24,
+              "text": "Entertainer"
+            },
+            {
+              "min": 25,
+              "max": 26,
+              "text": "Explorer"
+            },
+            {
+              "min": 27,
+              "max": 28,
+              "text": "Farmer"
+            },
+            {
+              "min": 29,
+              "max": 30,
+              "text": "Fugitive"
+            },
+            {
+              "min": 31,
+              "max": 32,
+              "text": "Guard"
+            },
+            {
+              "min": 33,
+              "max": 34,
+              "text": "Guide"
+            },
+            {
+              "min": 35,
+              "max": 36,
+              "text": "Healer"
+            },
+            {
+              "min": 37,
+              "max": 38,
+              "text": "Historian"
+            },
+            {
+              "min": 39,
+              "max": 40,
+              "text": "Hunter"
+            },
+            {
+              "min": 41,
+              "max": 42,
+              "text": "Investigator"
+            },
+            {
+              "min": 43,
+              "max": 44,
+              "text": "Laborer"
+            },
+            {
+              "min": 45,
+              "max": 46,
+              "text": "Lawkeeper"
+            },
+            {
+              "min": 47,
+              "max": 48,
+              "text": "Leader"
+            },
+            {
+              "min": 49,
+              "max": 50,
+              "text": "Mercenary"
+            },
+            {
+              "min": 51,
+              "max": 52,
+              "text": "Merchant"
+            },
+            {
+              "min": 53,
+              "max": 54,
+              "text": "Miner"
+            },
+            {
+              "min": 55,
+              "max": 56,
+              "text": "Mystic"
+            },
+            {
+              "min": 57,
+              "max": 58,
+              "text": "Navigator"
+            },
+            {
+              "min": 59,
+              "max": 60,
+              "text": "Outcast"
+            },
+            {
+              "min": 61,
+              "max": 62,
+              "text": "Pilgrim"
+            },
+            {
+              "min": 63,
+              "max": 64,
+              "text": "Pilot"
+            },
+            {
+              "min": 65,
+              "max": 66,
+              "text": "Pirate"
+            },
+            {
+              "min": 67,
+              "max": 68,
+              "text": "Preacher"
+            },
+            {
+              "min": 69,
+              "max": 70,
+              "text": "Prophet"
+            },
+            {
+              "min": 71,
+              "max": 72,
+              "text": "Raider"
+            },
+            {
+              "min": 73,
+              "max": 74,
+              "text": "Researcher"
+            },
+            {
+              "min": 75,
+              "max": 76,
+              "text": "Scavenger"
+            },
+            {
+              "min": 77,
+              "max": 78,
+              "text": "Scholar"
+            },
+            {
+              "min": 79,
+              "max": 80,
+              "text": "Scout"
+            },
+            {
+              "min": 81,
+              "max": 82,
+              "text": "Shipwright"
+            },
+            {
+              "min": 83,
+              "max": 84,
+              "text": "Smuggler"
+            },
+            {
+              "min": 85,
+              "max": 86,
+              "text": "Soldier"
+            },
+            {
+              "min": 87,
+              "max": 88,
+              "text": "Spacer"
+            },
+            {
+              "min": 89,
+              "max": 90,
+              "text": "Technician"
+            },
+            {
+              "min": 91,
+              "max": 92,
+              "text": "Thief"
+            },
+            {
+              "min": 93,
+              "max": 95,
+              "text": "[Action](id:starforged/oracles/core/action) + [Theme](id:starforged/oracles/core/theme)"
+            },
+            {
+              "min": 96,
+              "max": 100,
+              "text": "Roll twice"
+            }
+          ],
+          "_source": {
+            "title": "Ironsworn: Starforged Rulebook",
+            "page": 331,
+            "authors": [
+              {
+                "name": "Shawn Tomkin"
+              }
+            ],
+            "date": "2022-05-06",
+            "url": "https://ironswornrpg.com",
+            "license": "https://creativecommons.org/licenses/by/4.0"
+          }
+        }
+      }
+    },
+    "planets": {
+      "_id": "starforged/collections/oracles/planets",
+      "type": "oracle_collection",
+      "name": "Planet Oracles",
+      "canonical_name": "Planets",
+      "oracle_type": "tables",
+      "_source": {
+        "title": "Ironsworn: Starforged Rulebook",
+        "page": 306,
+        "authors": [
+          {
+            "name": "Shawn Tomkin"
+          }
+        ],
+        "date": "2022-05-06",
+        "url": "https://ironswornrpg.com",
+        "license": "https://creativecommons.org/licenses/by/4.0"
+      },
+      "contents": {},
+      "collections": {
+        "desert": {
+          "_id": "starforged/collections/oracles/planets/desert",
+          "type": "oracle_collection",
+          "name": "Desert World",
+          "oracle_type": "tables",
+          "summary": "A pitiless planet of searing heat, blowing sand, and sunbaked rock.",
+          "_source": {
+            "title": "Ironsworn: Starforged Rulebook",
+            "page": 308,
+            "authors": [
+              {
+                "name": "Shawn Tomkin"
+              }
+            ],
+            "date": "2022-05-06",
+            "url": "https://ironswornrpg.com",
+            "license": "https://creativecommons.org/licenses/by/4.0"
+          },
+          "contents": {
+            "name": {
+              "_id": "starforged/oracles/planets/desert/name",
+              "type": "oracle_rollable",
+              "name": "Sample Names",
+              "oracle_type": "table_text",
+              "dice": "1d20",
+              "column_labels": {
+                "roll": "Roll",
+                "text": "Result"
+              },
+              "rows": [
+                {
+                  "min": 1,
+                  "max": 1,
+                  "text": "Abalos"
+                },
+                {
+                  "min": 2,
+                  "max": 2,
+                  "text": "Audun"
+                },
+                {
+                  "min": 3,
+                  "max": 3,
+                  "text": "Bishop"
+                },
+                {
+                  "min": 4,
+                  "max": 4,
+                  "text": "Desolation"
+                },
+                {
+                  "min": 5,
+                  "max": 5,
+                  "text": "Dykuma"
+                },
+                {
+                  "min": 6,
+                  "max": 6,
+                  "text": "Fallow"
+                },
+                {
+                  "min": 7,
+                  "max": 7,
+                  "text": "Helios"
+                },
+                {
+                  "min": 8,
+                  "max": 8,
+                  "text": "Mirage"
+                },
+                {
+                  "min": 9,
+                  "max": 9,
+                  "text": "Morricone"
+                },
+                {
+                  "min": 10,
+                  "max": 10,
+                  "text": "Nux"
+                },
+                {
+                  "min": 11,
+                  "max": 11,
+                  "text": "Ordos"
+                },
+                {
+                  "min": 12,
+                  "max": 12,
+                  "text": "Petra"
+                },
+                {
+                  "min": 13,
+                  "max": 13,
+                  "text": "Pyla"
+                },
+                {
+                  "min": 14,
+                  "max": 14,
+                  "text": "Sabulo"
+                },
+                {
+                  "min": 15,
+                  "max": 15,
+                  "text": "Saffron"
+                },
+                {
+                  "min": 16,
+                  "max": 16,
+                  "text": "Sirocco"
+                },
+                {
+                  "min": 17,
+                  "max": 17,
+                  "text": "Sulis"
+                },
+                {
+                  "min": 18,
+                  "max": 18,
+                  "text": "Torrid"
+                },
+                {
+                  "min": 19,
+                  "max": 19,
+                  "text": "Umber"
+                },
+                {
+                  "min": 20,
+                  "max": 20,
+                  "text": "Vermillion"
+                }
+              ],
+              "_source": {
+                "title": "Ironsworn: Starforged Rulebook",
+                "page": 308,
+                "authors": [
+                  {
+                    "name": "Shawn Tomkin"
+                  }
+                ],
+                "date": "2022-05-06",
+                "url": "https://ironswornrpg.com",
+                "license": "https://creativecommons.org/licenses/by/4.0"
+              }
+            },
+            "atmosphere": {
+              "_id": "starforged/oracles/planets/desert/atmosphere",
+              "type": "oracle_rollable",
+              "name": "Atmosphere",
+              "oracle_type": "table_text",
+              "dice": "1d100",
+              "column_labels": {
+                "roll": "Roll",
+                "text": "Result"
+              },
+              "rows": [
+                {
+                  "min": 1,
+                  "max": 10,
+                  "text": "None / thin"
+                },
+                {
+                  "min": 11,
+                  "max": 25,
+                  "text": "Toxic"
+                },
+                {
+                  "min": 26,
+                  "max": 40,
+                  "text": "Corrosive"
+                },
+                {
+                  "min": 41,
+                  "max": 70,
+                  "text": "Marginal"
+                },
+                {
+                  "min": 71,
+                  "max": 95,
+                  "text": "Breathable"
+                },
+                {
+                  "min": 96,
+                  "max": 100,
+                  "text": "Ideal"
+                }
+              ],
+              "_source": {
+                "title": "Ironsworn: Starforged Rulebook",
+                "page": 308,
+                "authors": [
+                  {
+                    "name": "Shawn Tomkin"
+                  }
+                ],
+                "date": "2022-05-06",
+                "url": "https://ironswornrpg.com",
+                "license": "https://creativecommons.org/licenses/by/4.0"
+              }
+            }
+          }
+        }
+      }
+    },
+    "derelicts": {
+      "_id": "starforged/collections/oracles/derelicts",
+      "type": "oracle_collection",
+      "name": "Derelicts",
+      "canonical_name": "Derelicts",
+      "oracle_type": "tables",
+      "summary": "Derelicts are the forsaken relics of human endeavors.",
+      "description": "Derelicts are the forsaken relics of human endeavors. Use these First Look tables for your initial survey of the derelict. To reveal more about the look and original function or nature of the site, roll on appropriate tables in the [Starship](id:starforged/collections/oracles/starships) or [Settlement](id:starforged/collections/oracles/settlements) oracles. If you explore the depths of a derelict, you may use the zone oracles on the following pages to help envision what you find.",
+      "_source": {
+        "title": "Ironsworn: Starforged Rulebook",
+        "page": 348,
+        "authors": [
+          {
+            "name": "Shawn Tomkin"
+          }
+        ],
+        "date": "2022-05-06",
+        "url": "https://ironswornrpg.com",
+        "license": "https://creativecommons.org/licenses/by/4.0"
+      },
+      "contents": {},
+      "collections": {
+        "zones": {
+          "_id": "starforged/collections/oracles/derelicts/zones",
+          "type": "oracle_collection",
+          "name": "Derelict Zones",
+          "oracle_type": "table_shared_text",
+          "summary": "If you explore the depths of a derelict, you may use the zone oracles to help envision what you find.",
+          "column_labels": {
+            "text": "Result"
+          },
+          "_source": {
+            "title": "Ironsworn: Starforged Rulebook",
+            "page": 351,
+            "authors": [
+              {
+                "name": "Shawn Tomkin"
+              }
+            ],
+            "date": "2022-05-06",
+            "url": "https://ironswornrpg.com",
+            "license": "https://creativecommons.org/licenses/by/4.0"
+          },
+          "contents": {
+            "starship": {
+              "_id": "starforged/oracles/derelicts/zones/starship",
+              "type": "oracle_rollable",
+              "name": "Starship",
+              "oracle_type": "column_text",
+              "dice": "1d100",
+              "summary": "If you explore the depths of a derelict, you may use the zone oracles to help envision what you find.",
+              "rows": [
+                {
+                  "min": null,
+                  "max": null,
+                  "text": "[Access](id:starforged/collections/oracles/derelicts/access)"
+                },
+                {
+                  "min": 1,
+                  "max": 5,
+                  "text": "[Community](id:starforged/collections/oracles/derelicts/community)"
+                },
+                {
+                  "min": 6,
+                  "max": 30,
+                  "text": "[Engineering](id:starforged/collections/oracles/derelicts/engineering)"
+                },
+                {
+                  "min": 31,
+                  "max": 55,
+                  "text": "[Living](id:starforged/collections/oracles/derelicts/living)"
+                },
+                {
+                  "min": 56,
+                  "max": 65,
+                  "text": "[Medical](id:starforged/collections/oracles/derelicts/medical)"
+                },
+                {
+                  "min": 66,
+                  "max": 85,
+                  "text": "[Operations](id:starforged/collections/oracles/derelicts/operations)"
+                },
+                {
+                  "min": 86,
+                  "max": 90,
+                  "text": "[Production](id:starforged/collections/oracles/derelicts/production)"
+                },
+                {
+                  "min": 91,
+                  "max": 100,
+                  "text": "[Research](id:starforged/collections/oracles/derelicts/research)"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "npcs": {
+    "sample_npcs": {
+      "_id": "starforged/collections/npcs/sample_npcs",
+      "type": "npc_collection",
+      "name": "Sample NPCs",
+      "_source": {
+        "title": "Ironsworn: Starforged Rulebook",
+        "authors": [
+          {
+            "name": "Shawn Tomkin"
+          }
+        ],
+        "date": "2022-05-06",
+        "url": "https://ironswornrpg.com",
+        "license": "https://creativecommons.org/licenses/by/4.0"
+      },
+      "contents": {
+        "chiton": {
+          "_id": "starforged/npcs/sample_npcs/chiton",
+          "type": "npc",
+          "name": "Chiton",
+          "rank": 2,
+          "nature": "Monster",
+          "summary": "Insectoid horde",
+          "features": [
+            "Arachnid monsters with blade-like limbs",
+            "Plated exoskeleton",
+            "Dripping mucus",
+            "Ripping, tearing maw"
+          ],
+          "drives": [
+            "Build and expand the nest",
+            "Feed and protect the queen",
+            "Snuff out intelligent life"
+          ],
+          "tactics": [
+            "Attack with lightning reflexes",
+            "Impale with bladed limbs",
+            "Drag victims back to the nest"
+          ],
+          "variants": {
+            "chiton_drone_pack": {
+              "_id": "starforged/npcs/sample_npcs/chiton/variants/chiton_drone_pack",
+              "name": "Chiton drone pack",
+              "rank": 3,
+              "nature": "Monster",
+              "description": "Chiton drones rarely operate independently. Instead, they hunt and attack in packs under the telepathic control of their queen."
+            },
+            "chiton_queen": {
+              "_id": "starforged/npcs/sample_npcs/chiton/variants/chiton_queen",
+              "name": "Chiton queen",
+              "rank": 4,
+              "nature": "Monster",
+              "description": "The chiton queen is a massive creature with segmented pincers, an armored carapace, and a bulging, egg-carrying abdomen. From the depths of the nest, it commands its drones telepathically. This psychic communication is so powerful it can even breach human consciousness\u2014troubling dreams and waking hallucinations might be the harbinger of a chiton invasion."
+            }
+          },
+          "description": "The chiton are not native to any single planet, and are adaptable to most environments. Some suggest they are an ancient precursor bioweapon seeded across the galaxy. The larva of the telepathic queen can lay dormant for thousands of years, emerging only when its sleep is disturbed by the mental energies of intelligent life. An awoken queen quickly metamorphoses into its adult form and lays its first clutch of eggs. Soon after, newly-hatched drones set out to expand the nest and feed their ravenous progenitor.",
+          "quest_starter": "At a remote facility, researchers are studying a newly-discovered chiton queen larva. The immature queen is held in frozen stasis, but something might have gone wrong. The return of a transport ship ferrying supplies to the researchers is weeks overdue. What is your connection to the facility or to the faction overseeing it?",
+          "_source": {
+            "title": "Ironsworn: Starforged Rulebook",
+            "page": 259,
+            "authors": [
+              {
+                "name": "Shawn Tomkin"
+              }
+            ],
+            "date": "2022-05-06",
+            "url": "https://ironswornrpg.com",
+            "license": "https://creativecommons.org/licenses/by/4.0"
+          }
+        }
+      }
+    }
+  },
+  "truths": {
+    "cataclysm": {
+      "_id": "starforged/truths/cataclysm",
+      "name": "Cataclysm",
+      "dice": "1d100",
+      "options": [
+        {
+          "min": 1,
+          "max": 33,
+          "summary": "The Sun Plague extinguished the stars in our home galaxy.",
+          "description": "The anomaly traveled at incredible speeds, many times faster than light itself, and snuffed out the stars around us before we realized it was coming. Few of us survived as we made our way to this new galaxy. Here in the Forge, the stars are still aflame. We cling to their warmth like weary travelers huddled around a fire.\n\nWe suspect the sun plague was caused by:\n\n{{table:starforged/truths/cataclysm/0}}",
+          "quest_starter": "The galaxy your people left behind is a cold, lightless grave. But a solitary star still glows, a beacon in a vast darkness. How did this star survive the plague? Why do you vow to find the means to travel across the immeasurable gulf to this distant light?",
+          "table": {
+            "oracle_type": "table_text",
+            "dice": "1d100",
+            "rows": [
+              {
+                "min": 1,
+                "max": 25,
+                "text": "Temporal distortions from a supermassive black hole"
+              },
+              {
+                "min": 26,
+                "max": 50,
+                "text": "Sudden dark matter decay"
+              },
+              {
+                "min": 51,
+                "max": 75,
+                "text": "Superweapon run amok"
+              },
+              {
+                "min": 76,
+                "max": 100,
+                "text": "Scientific experiment gone awry"
+              }
+            ]
+          }
+        },
+        {
+          "min": 34,
+          "max": 67,
+          "summary": "Interdimensional entities invaded our reality.",
+          "description": "Without warning, these implacable and enigmatic beings ravaged our homeworlds. We could not stand against them. With the last of our defenses destroyed, our hope gone, we cast our fate to the Forge. Here, we can hide. Survive.\n\nThese entities took the form of:\n\n{{table:starforged/truths/cataclysm/1}}",
+          "quest_starter": "Here in the Forge, a rogue faction holds an artifact of these interdimensional entities. What is the nature of this relic? What power or dark fate does the faction intend to unleash?",
+          "table": {
+            "oracle_type": "table_text",
+            "dice": "1d100",
+            "rows": [
+              {
+                "min": 1,
+                "max": 15,
+                "text": "Corrupting biological scourges"
+              },
+              {
+                "min": 16,
+                "max": 30,
+                "text": "Swarming, animalistic creatures"
+              },
+              {
+                "min": 31,
+                "max": 44,
+                "text": "Monstrous humanoids"
+              },
+              {
+                "min": 45,
+                "max": 58,
+                "text": "Spirits of alluring, divine form"
+              },
+              {
+                "min": 59,
+                "max": 72,
+                "text": "Beings of chaotic energy"
+              },
+              {
+                "min": 73,
+                "max": 86,
+                "text": "Titanic creatures of horrific power"
+              },
+              {
+                "min": 87,
+                "max": 100,
+                "text": "World-eating abominations of unimaginable scale"
+              }
+            ]
+          }
+        },
+        {
+          "min": 68,
+          "max": 100,
+          "summary": "We escaped the ravages of a catastrophic war.",
+          "description": "Over millennia, we consumed resources and shattered lives as we fueled the engines of industry, expansion, and war. In the end, a powerful foe took advantage of our rivalries in a violent bid for power. Fleeing the devastation, we assembled our fleets and traveled to the Forge. A new home. A fresh start.\n\nIn this final war, we were set upon by:\n\n{{table:starforged/truths/cataclysm/2}}",
+          "quest_starter": "A delegation of your dreaded foe arrives in the Forge. They claim to represent a rebel force seeking sanctuary. In return, they offer vital information. What news do they carry?",
+          "table": {
+            "oracle_type": "table_text",
+            "dice": "1d100",
+            "rows": [
+              {
+                "min": 1,
+                "max": 20,
+                "text": "Artificial intelligence"
+              },
+              {
+                "min": 21,
+                "max": 40,
+                "text": "Religious zealots"
+              },
+              {
+                "min": 41,
+                "max": 60,
+                "text": "Genetically engineered soldiers"
+              },
+              {
+                "min": 61,
+                "max": 80,
+                "text": "Self-replicating nanomachines"
+              },
+              {
+                "min": 81,
+                "max": 100,
+                "text": "A tyrannical faction or leader"
+              }
+            ]
+          }
+        }
+      ],
+      "your_character": "Do you possess a keepsake or artifact of pre-cataclysm society? What is it? Why is it important to you? If you are all that remains of a people or culture, you might be a [Vestige](id:starforged/assets/path/vestige).",
+      "_source": {
+        "title": "Ironsworn: Starforged Rulebook",
+        "page": 84,
+        "authors": [
+          {
+            "name": "Shawn Tomkin"
+          }
+        ],
+        "date": "2022-05-06",
+        "url": "https://ironswornrpg.com",
+        "license": "https://creativecommons.org/licenses/by/4.0"
+      }
+    }
+  }
+}
