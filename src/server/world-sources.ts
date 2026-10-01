@@ -1,9 +1,21 @@
+import * as Effect from "effect/Effect";
+import * as Context from "effect/Context";
+import * as Cache from "effect/Cache";
+import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
+import * as Semaphore from "effect/Semaphore";
+import {
+  CorpusForbidden,
+  CorpusNotFound,
+  CorpusInvalid,
+  CorpusConflict,
+  CorpusUnavailable,
+  type CorpusError,
+} from "../domain/corpus-errors";
+import { CorpusClient, corpusIO } from "./corpus-env";
 import * as Schema from "effect/Schema";
 import {
-  CORPUS_API_VERSION,
   EnableSourceInput,
-  type CorpusApi,
-  type WorldLibraries,
   type WorldSource,
   type SourceUpdateSummary,
 } from "../domain/corpus-rpc";
@@ -16,14 +28,14 @@ import {
 } from "../domain/compendium";
 import { entryError } from "../domain/compendium-rules";
 import { entryFacets } from "../domain/entry-facets";
-import { parseEntryId, WORLD_SOURCE } from "../domain/entry-id";
+import { librarySource, parseEntryId, LibrarySourceId } from "../domain/entry-id";
 import {
   EntryOverride,
   SaveOverrideInput,
   applyOverride,
   overrideError,
 } from "../domain/overrides";
-import { inheritLicence, licenceError } from "../domain/licence";
+import { inheritLicence } from "../domain/licence";
 import {
   decodeIndex,
   decodeBodies,
@@ -31,23 +43,58 @@ import {
   validateManifest,
   type SnapshotManifest,
   type SnapshotFile,
+  type BodyChunk,
 } from "../domain/snapshot";
-import {
-  CompendiumImportError,
-  type WorldCompendium,
-  type CompendiumSources,
-  type PreparedSourceImport,
-} from "./world-compendium";
+import { compatibleType, type WorldCompendium } from "./world-compendium";
 import { nowIso } from "./crypto";
 
-type Options = {
-  sql: SqlStorage;
-  transactionSync: <T>(f: () => T) => T;
-  compendium: WorldCompendium;
-  corpus?: CorpusApi;
-  bucket?: R2Bucket;
-  accountId: () => string;
-};
+export class SourceStorage extends Context.Service<
+  SourceStorage,
+  {
+    sql: SqlStorage;
+    transactionSync: DurableObjectStorage["transactionSync"];
+  }
+>()("ttrpg/SourceStorage") {}
+export class CorpusBucket extends Context.Service<CorpusBucket, R2Bucket | undefined>()(
+  "ttrpg/CorpusBucket",
+) {}
+export class CorpusAccountId extends Context.Service<CorpusAccountId, () => string>()(
+  "ttrpg/CorpusAccountId",
+) {}
+const EnableInput = Schema.Struct({
+  ...EnableSourceInput.fields,
+  version: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
+});
+const OverrideInput = Schema.Struct({
+  ...SaveOverrideInput.fields,
+  baseRev: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+});
+const unavailable = (message: string) => new CorpusUnavailable({ message });
+const verified = <T>(operation: () => T) =>
+  Effect.try({ try: operation, catch: (error) => error }).pipe(
+    Effect.catch((error) =>
+      Effect.logError(error).pipe(
+        Effect.andThen(Effect.fail(unavailable("Invalid library snapshot"))),
+      ),
+    ),
+  );
+const storageIO = <T>(operation: () => T) =>
+  Effect.try({ try: operation, catch: (error) => error }).pipe(
+    Effect.catch((error) =>
+      Effect.logError(error).pipe(
+        Effect.andThen(Effect.fail(unavailable("Library storage is temporarily unavailable"))),
+      ),
+    ),
+  );
+const storageFailure = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.catchDefect((error) =>
+      Effect.logError(error).pipe(
+        Effect.andThen(Effect.fail(unavailable("Library storage is temporarily unavailable"))),
+      ),
+    ),
+  );
+type VerifiedVersion = { manifest: SnapshotManifest; rows: readonly IndexRow[] };
 type SourceRow = {
   source_id: string;
   version: number;
@@ -57,80 +104,138 @@ type SourceRow = {
   update_json: string | null;
 };
 type RawRow = { id: string; source_id: string; row_json: string };
-class SourceError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-const json = (value: unknown, status = 200) => Response.json(value, { status });
-const compatibleType = (a: EntryType, b: EntryType) =>
-  JSON.stringify(a.fields) === JSON.stringify(b.fields) &&
-  JSON.stringify(a.filters ?? []) === JSON.stringify(b.filters ?? []);
-
+const decodeId = (id: string) =>
+  Effect.try({
+    try: () => decodeURIComponent(id),
+    catch: () => new CorpusInvalid({ message: "Invalid encoded entry id" }),
+  });
 /** World enablement never leaves this DO. Only manifests and compact indexes are stored here. */
-export class WorldSources implements CompendiumSources {
-  private readonly sql: SqlStorage;
-  private readonly transactionSync: Options["transactionSync"];
-  private readonly compendium: WorldCompendium;
-  private readonly corpus?: CorpusApi;
-  private readonly bucket?: R2Bucket;
-  private readonly accountId: Options["accountId"];
-  private pending: Promise<unknown> = Promise.resolve();
+export class WorldSources {
+  private readonly manifests = new Map<
+    string,
+    { manifest: SnapshotManifest; chunks: ReadonlyMap<string, BodyChunk> }
+  >();
+  private readonly chunkMetadata = new Map<
+    string,
+    { manifest: SnapshotManifest; chunk: BodyChunk }
+  >();
+  private readonly mutations = Semaphore.makeUnsafe(1);
+  private readonly decodedChunks: Cache.Cache<
+    string,
+    ReadonlyMap<string, CompendiumEntry>,
+    CorpusError
+  >;
 
-  constructor(options: Options) {
-    this.sql = options.sql;
-    this.transactionSync = options.transactionSync;
-    this.compendium = options.compendium;
-    this.corpus = options.corpus;
-    this.bucket = options.bucket;
-    this.accountId = options.accountId;
+  private constructor(
+    private readonly storage: typeof SourceStorage.Service,
+    private readonly compendium: WorldCompendium,
+    private readonly corpus: typeof CorpusClient.Service,
+    private readonly bucket: typeof CorpusBucket.Service,
+    private readonly accountId: typeof CorpusAccountId.Service,
+    decodedChunks: Cache.Cache<string, ReadonlyMap<string, CompendiumEntry>, CorpusError>,
+    private readonly verifiedVersions: Cache.Cache<string, VerifiedVersion, CorpusUnavailable>,
+  ) {
+    this.decodedChunks = decodedChunks;
+  }
+  static make(compendium: WorldCompendium) {
+    return Effect.gen(function* () {
+      const storage = yield* SourceStorage;
+      const corpus = yield* CorpusClient;
+      const bucket = yield* CorpusBucket;
+      const accountId = yield* CorpusAccountId;
+      let sources: WorldSources;
+      const chunks = yield* Cache.makeWith<
+        string,
+        ReadonlyMap<string, CompendiumEntry>,
+        CorpusError
+      >((key) => sources.loadChunk(key), {
+        capacity: 32,
+        timeToLive: (exit) => (Exit.isSuccess(exit) ? Infinity : 0),
+      });
+      const versions = yield* Cache.makeWith<string, VerifiedVersion, CorpusUnavailable>(
+        () => Effect.fail(unavailable("Library version has not been verified")),
+        { capacity: 2 },
+      );
+      sources = new WorldSources(storage, compendium, corpus, bucket, accountId, chunks, versions);
+      return sources;
+    });
+  }
+  private get sql() {
+    return this.storage.sql;
+  }
+  private transactionSync<T>(operation: () => T) {
+    return storageIO(() => this.storage.transactionSync(operation));
   }
   get available(): boolean {
-    return Boolean(this.corpus && this.bucket);
+    return this.corpus.available && !!this.bucket;
   }
   get enabled(): boolean {
     return this.available;
   }
-  migrate(): void {
-    this.sql.exec(`CREATE TABLE IF NOT EXISTS world_sources (
+  migrate = () =>
+    storageIO(() => {
+      this.sql.exec(`CREATE TABLE IF NOT EXISTS world_sources (
       source_id TEXT PRIMARY KEY, version INTEGER NOT NULL, mode TEXT NOT NULL,
       manifest TEXT NOT NULL, latest_version INTEGER, update_json TEXT
     )`);
-    this.sql.exec(
-      "CREATE TABLE IF NOT EXISTS source_index (id TEXT PRIMARY KEY, source_id TEXT NOT NULL, row_json TEXT NOT NULL)",
-    );
-    this.sql.exec("CREATE INDEX IF NOT EXISTS source_index_source ON source_index(source_id)");
-    this.sql.exec(
-      "CREATE TABLE IF NOT EXISTS entry_overrides (entry_id TEXT PRIMARY KEY, override_json TEXT NOT NULL)",
-    );
-    this.sql.exec("CREATE TABLE IF NOT EXISTS entry_blocked (entry_id TEXT PRIMARY KEY)");
+      this.sql.exec(
+        "CREATE TABLE IF NOT EXISTS source_index (id TEXT PRIMARY KEY, source_id TEXT NOT NULL, row_json TEXT NOT NULL)",
+      );
+      this.sql.exec("CREATE INDEX IF NOT EXISTS source_index_source ON source_index(source_id)");
+      this.sql.exec(
+        "CREATE TABLE IF NOT EXISTS entry_overrides (entry_id TEXT PRIMARY KEY, override_json TEXT NOT NULL)",
+      );
+      this.sql.exec("CREATE TABLE IF NOT EXISTS entry_blocked (entry_id TEXT PRIMARY KEY)");
+    });
+  private requireAvailable = () =>
+    this.available && this.accountId()
+      ? Effect.void
+      : Effect.fail(unavailable("Libraries are unavailable"));
+  private call<T>(action: Parameters<typeof this.corpus.call<T>>[0]) {
+    return this.corpus.call(action, this.accountId());
   }
-  private requireAvailable(): void {
-    if (!this.available || !this.accountId())
-      throw new SourceError(503, "Libraries are unavailable");
-  }
-  private call() {
-    this.requireAvailable();
-    return { apiVersion: CORPUS_API_VERSION, accountId: this.accountId() };
-  }
-  private serial<T>(operation: () => Promise<T>): Promise<T> {
-    const next = this.pending.then(operation, operation);
-    this.pending = next.catch(() => undefined);
-    return next;
+  private serial<A, E>(operation: Effect.Effect<A, E>): Effect.Effect<A, E> {
+    return this.mutations.withPermit(operation);
   }
   private source(sourceId: string): SourceRow | undefined {
     return this.sql
       .exec<SourceRow>("SELECT * FROM world_sources WHERE source_id = ?", sourceId)
       .toArray()[0];
   }
+  private sourceVersion(sourceId: string): number | undefined {
+    return this.sql
+      .exec<{ version: number }>("SELECT version FROM world_sources WHERE source_id = ?", sourceId)
+      .toArray()[0]?.version;
+  }
   private sources(): SourceRow[] {
     return this.sql.exec<SourceRow>("SELECT * FROM world_sources ORDER BY source_id").toArray();
   }
+  private remember(manifest: SnapshotManifest): void {
+    const key = `${manifest.sourceId}/${manifest.version}`;
+    this.manifests.set(key, {
+      manifest,
+      chunks: new Map(
+        manifest.bodyChunks.flatMap((chunk) => chunk.ids.map((id) => [id, chunk] as const)),
+      ),
+    });
+    for (const chunk of manifest.bodyChunks)
+      this.chunkMetadata.set(chunk.file.key, { manifest, chunk });
+  }
+  private forget(sourceId: string): void {
+    for (const [key, value] of this.manifests) {
+      if (value.manifest.sourceId !== sourceId) continue;
+      this.manifests.delete(key);
+      for (const chunk of value.manifest.bodyChunks) this.chunkMetadata.delete(chunk.file.key);
+    }
+  }
   private manifest(row: SourceRow): SnapshotManifest {
-    return validateManifest(JSON.parse(row.manifest));
+    const key = `${row.source_id}/${row.version}`;
+    const cached = this.manifests.get(key);
+    if (cached) return cached.manifest;
+    // Stored JSON was verified at ingest; hibernation only rebuilds the lookup maps.
+    const manifest = JSON.parse(row.manifest) as SnapshotManifest;
+    this.remember(manifest);
+    return manifest;
   }
   private status(row: SourceRow): WorldSource {
     const manifest = this.manifest(row);
@@ -146,13 +251,13 @@ export class WorldSources implements CompendiumSources {
         : { update: JSON.parse(row.update_json) as SourceUpdateSummary }),
     };
   }
-  async list(): Promise<WorldLibraries> {
-    const available = await this.corpus!.listSources(this.call());
+  list = Effect.fn("WorldSources.list")(function* (this: WorldSources) {
+    const available = yield* this.call((api, context) => api.listSources(context));
     return {
       available: available.filter((source) => source.latestVersion !== undefined),
       enabled: this.sources().map((row) => this.status(row)),
     };
-  }
+  }, storageFailure);
   ownsType(id: string): boolean {
     return this.sources().some((row) => this.manifest(row).types.some((type) => type.id === id));
   }
@@ -173,7 +278,7 @@ export class WorldSources implements CompendiumSources {
         id,
       )
       .toArray()[0];
-    return row ? Schema.decodeUnknownSync(EntryOverride)(JSON.parse(row.override_json)) : undefined;
+    return row ? (JSON.parse(row.override_json) as EntryOverride) : undefined;
   }
   private blocked(id: string): boolean {
     return (
@@ -182,63 +287,72 @@ export class WorldSources implements CompendiumSources {
     );
   }
 
-  private async bytes(file: SnapshotFile): Promise<Uint8Array> {
-    this.requireAvailable();
-    // Never cache a resolved/overridden entry. Every read rechecks world permissions.
+  private bytes = Effect.fn("WorldSources.bytes")(function* (
+    this: WorldSources,
+    file: SnapshotFile,
+  ) {
+    yield* this.requireAvailable();
     const key = new Request(`https://corpus-cache.invalid/${file.key}?sha256=${file.sha256}`);
     const cache =
       typeof caches === "undefined"
         ? undefined
-        : (caches as CacheStorage & { default: Cache }).default;
-    let cached: Response | undefined;
-    try {
-      cached = await cache?.match(key);
-    } catch {
-      /* Cache unavailable: use R2. */
-    }
+        : (caches as CacheStorage & { default: globalThis.Cache }).default;
+    const bestEffort = <T>(action: () => Promise<T>) =>
+      Effect.tryPromise({ try: action, catch: () => undefined }).pipe(
+        Effect.catch(() => Effect.succeed(undefined)),
+      );
+    const cached = cache ? yield* bestEffort(() => cache.match(key)) : undefined;
     if (cached?.status === 404)
-      throw new SourceError(503, "Library content is temporarily unavailable");
+      return yield* Effect.fail(unavailable("Library content is temporarily unavailable"));
     let bytes: Uint8Array;
-    if (cached?.ok) bytes = new Uint8Array(await cached.arrayBuffer());
+    if (cached?.ok) bytes = new Uint8Array(yield* corpusIO(() => cached.arrayBuffer()));
     else {
-      const object = await this.bucket!.get(file.key);
+      const bucket = this.bucket;
+      if (!bucket) return yield* Effect.fail(unavailable("Libraries are unavailable"));
+      const object = yield* corpusIO(() => bucket.get(file.key));
       if (!object) {
-        try {
-          await cache?.put(
-            key,
-            new Response(null, { status: 404, headers: { "cache-control": "max-age=60" } }),
+        if (cache)
+          yield* bestEffort(() =>
+            cache.put(
+              key,
+              new Response(null, { status: 404, headers: { "cache-control": "max-age=60" } }),
+            ),
           );
-        } catch {
-          /* Best effort. */
-        }
-        throw new SourceError(503, "Library content is temporarily unavailable");
+        return yield* Effect.fail(unavailable("Library content is temporarily unavailable"));
       }
       if (object.size !== file.bytes)
-        throw new SourceError(503, "Library snapshot integrity check failed");
-      bytes = new Uint8Array(await object.arrayBuffer());
+        return yield* Effect.fail(unavailable("Library snapshot integrity check failed"));
+      bytes = new Uint8Array(yield* corpusIO(() => object.arrayBuffer()));
     }
-    const actual = await snapshotFile(file.key, bytes);
+    const actual = yield* corpusIO(() => snapshotFile(file.key, bytes));
     if (actual.bytes !== file.bytes || actual.sha256 !== file.sha256)
-      throw new SourceError(503, "Library snapshot integrity check failed");
-    if (!cached?.ok) {
-      try {
-        await cache?.put(
+      return yield* Effect.fail(unavailable("Library snapshot integrity check failed"));
+    if (!cached?.ok && cache)
+      yield* bestEffort(() =>
+        cache.put(
           key,
           new Response(bytes.slice().buffer, {
             headers: { "cache-control": "public, max-age=31536000, immutable" },
           }),
-        );
-      } catch {
-        /* Best effort. */
-      }
-    }
+        ),
+      );
     return bytes;
-  }
-  private async indexes(manifest: SnapshotManifest): Promise<IndexRow[]> {
-    const [publicRows, dmRows] = await Promise.all([
-      this.bytes(manifest.publicIndex).then((bytes) => decodeIndex(bytes, "public")),
-      this.bytes(manifest.dmIndex).then((bytes) => decodeIndex(bytes, "dm")),
-    ]);
+  }, storageFailure);
+  private indexes = Effect.fn("WorldSources.indexes")(function* (
+    this: WorldSources,
+    manifest: SnapshotManifest,
+  ) {
+    const [publicRows, dmRows] = yield* Effect.all(
+      [
+        this.bytes(manifest.publicIndex).pipe(
+          Effect.flatMap((bytes) => corpusIO(() => decodeIndex(bytes, "public"))),
+        ),
+        this.bytes(manifest.dmIndex).pipe(
+          Effect.flatMap((bytes) => corpusIO(() => decodeIndex(bytes, "dm"))),
+        ),
+      ],
+      { concurrency: 2 },
+    );
     const chunks = new Map(
       manifest.bodyChunks.flatMap((chunk) => chunk.ids.map((id) => [id, chunk] as const)),
     );
@@ -257,10 +371,12 @@ export class WorldSources implements CompendiumSources {
         chunk.visibility !== row.visibility ||
         ids.has(row.id)
       )
-        throw new SourceError(503, "Invalid library snapshot index");
+        return yield* Effect.fail(
+          new CorpusUnavailable({ message: "Invalid library snapshot index" }),
+        );
       ids.add(row.id);
       const filters = new Map(
-        types.get(row.typeId)!.filters?.map((filter) => [filter.key, filter.kind]),
+        types.get(row.typeId)?.filters?.map((filter) => [filter.key, filter.kind]),
       );
       for (const [key, value] of Object.entries(row.facets ?? {})) {
         const kind = filters.get(key);
@@ -272,14 +388,37 @@ export class WorldSources implements CompendiumSources {
             typeof value !== "string" &&
             (!Array.isArray(value) || value.some((item) => typeof item !== "string")))
         )
-          throw new SourceError(503, "Invalid library snapshot facets");
+          return yield* Effect.fail(
+            new CorpusUnavailable({ message: "Invalid library snapshot facets" }),
+          );
       }
     }
     if (ids.size !== manifest.entryCount)
-      throw new SourceError(503, "Invalid library snapshot entry count");
+      return yield* Effect.fail(
+        new CorpusUnavailable({ message: "Invalid library snapshot entry count" }),
+      );
     return rows;
-  }
-  private validateTypes(manifest: SnapshotManifest): void {
+  }, storageFailure);
+  private verifyVersion = Effect.fn("WorldSources.verifyVersion")(function* (
+    this: WorldSources,
+    value: SnapshotManifest,
+    sourceId: string,
+    systemId: string,
+  ) {
+    if (value.sourceId !== sourceId || value.systemId !== systemId)
+      return yield* Effect.fail(unavailable("Library snapshot identity check failed"));
+    const key = `${sourceId}/${value.version}`;
+    const cached = yield* Cache.getOption(this.verifiedVersions, key);
+    if (Option.isSome(cached)) return cached.value;
+    const manifest = yield* verified(() => validateManifest(value));
+    const version = { manifest, rows: yield* this.indexes(manifest) };
+    yield* Cache.set(this.verifiedVersions, key, version);
+    return version;
+  }, storageFailure);
+  private validateTypes = Effect.fn("WorldSources.validateTypes")(function* (
+    this: WorldSources,
+    manifest: SnapshotManifest,
+  ) {
     const others = this.sources()
       .filter((source) => source.source_id !== manifest.sourceId)
       .flatMap((source) => this.manifest(source).types);
@@ -295,7 +434,7 @@ export class WorldSources implements CompendiumSources {
             others.some((other) => other.id === type.id) ||
             this.sql
               .exec(
-                "SELECT id FROM compendium_entries WHERE type_id = ? AND (id GLOB 'world/*' OR id NOT LIKE '%/%') LIMIT 1",
+                "SELECT id FROM compendium_entries WHERE type_id = ? AND source_id IS NULL LIMIT 1",
                 type.id,
               )
               .toArray().length > 0,
@@ -306,16 +445,19 @@ export class WorldSources implements CompendiumSources {
       if (
         existing.some((candidate) => candidate.id === type.id && !compatibleType(candidate, type))
       )
-        throw new SourceError(
-          409,
-          `Library entry type conflicts with the world's ${type.id} definition`,
+        return yield* Effect.fail(
+          new CorpusConflict({
+            message: `Library entry type conflicts with the world's ${type.id} definition`,
+          }),
         );
     }
     if (
       new Set([...existing, ...manifest.types].map((type) => type.id)).size > compendiumLimits.types
     )
-      throw new SourceError(409, "A world can have at most 50 entry types");
-  }
+      return yield* Effect.fail(
+        new CorpusConflict({ message: "A world can have at most 50 entry types" }),
+      );
+  }, storageFailure);
   private effective(row: IndexRow, type: EntryType, override?: EntryOverride): IndexRow {
     if (!override) return row;
     const patch = override.patch;
@@ -345,36 +487,25 @@ export class WorldSources implements CompendiumSources {
       facets,
     };
   }
-  private refresh(sourceId: string, types: readonly EntryType[]): number {
+  private effectiveRows(rows: readonly IndexRow[], types: readonly EntryType[]): IndexRow[] {
     const byType = new Map(types.map((type) => [type.id, type]));
-    const blocked = new Set(
-      this.sql
-        .exec<{ entry_id: string }>("SELECT entry_id FROM entry_blocked")
-        .toArray()
-        .map((row) => row.entry_id),
-    );
-    const overrides = new Map(
-      this.sql
-        .exec<{ override_json: string }>("SELECT override_json FROM entry_overrides")
-        .toArray()
-        .map((row) => {
-          const override = Schema.decodeUnknownSync(EntryOverride)(JSON.parse(row.override_json));
-          return [override.entryId, override] as const;
-        }),
-    );
-    const rows = this.rawRows(sourceId)
-      .filter((row) => !blocked.has(row.id))
-      .map((row) => this.effective(row, byType.get(row.typeId)!, overrides.get(row.id)));
-    return this.compendium.replaceSourceRows(sourceId, rows, types);
+    return rows.flatMap((row) => {
+      const type = byType.get(row.typeId);
+      return type && !this.blocked(row.id)
+        ? [this.effective(row, type, this.override(row.id))]
+        : [];
+    });
   }
-  private ingest(
+  private ingest = Effect.fn("WorldSources.ingest")(function* (
+    this: WorldSources,
     manifest: SnapshotManifest,
     rows: readonly IndexRow[],
     mode: "pinned" | "follow",
     latestVersion: number,
-  ): WorldSource {
-    this.validateTypes(manifest);
-    const rev = this.transactionSync(() => {
+  ) {
+    yield* this.validateTypes(manifest);
+    const effective = this.effectiveRows(rows, manifest.types);
+    const rev = yield* this.transactionSync(() => {
       this.sql.exec(
         `INSERT INTO world_sources (source_id, version, mode, manifest, latest_version, update_json) VALUES (?, ?, ?, ?, ?, NULL)
         ON CONFLICT(source_id) DO UPDATE SET version=excluded.version, mode=excluded.mode, manifest=excluded.manifest, latest_version=excluded.latest_version, update_json=NULL`,
@@ -393,238 +524,327 @@ export class WorldSources implements CompendiumSources {
           ...batch.flatMap((row) => [row.id, manifest.sourceId, JSON.stringify(row)]),
         );
       }
-      return this.refresh(manifest.sourceId, manifest.types);
+      return this.compendium.replaceSourceRows(manifest.sourceId, effective, manifest.types);
     });
+    this.forget(manifest.sourceId);
+    this.remember(manifest);
     this.compendium.notifySources(rev);
-    return this.status(this.source(manifest.sourceId)!);
-  }
-  async enable(sourceId: string, input: EnableSourceInput): Promise<WorldSource> {
-    return this.serial(async () => {
-      const decoded = Schema.decodeUnknownResult(EnableSourceInput, { onExcessProperty: "error" })(
-        input,
-      );
-      if (
-        decoded._tag === "Failure" ||
-        (input.version !== undefined && (!Number.isSafeInteger(input.version) || input.version < 1))
-      )
-        throw new SourceError(400, "Invalid library version or mode");
-      const call = { ...this.call(), sourceId };
-      const source = await this.corpus!.getSource(call);
-      if (!source) throw new SourceError(404, "Library not found");
-      const value =
-        input.version === undefined
-          ? await this.corpus!.getLatest(call)
-          : await this.corpus!.getManifest({ ...call, version: input.version });
-      if (!value) throw new SourceError(404, "Published library version not found");
-      const manifest = validateManifest(value);
-      if (
-        manifest.sourceId !== sourceId ||
-        manifest.systemId !== source.systemId ||
-        (input.version !== undefined && manifest.version !== input.version)
-      )
-        throw new SourceError(503, "Library snapshot identity check failed");
-      return this.ingest(
-        manifest,
-        await this.indexes(manifest),
-        input.mode ?? "pinned",
-        source.latestVersion ?? manifest.version,
-      );
-    });
-  }
-  async disable(sourceId: string): Promise<void> {
-    return this.serial(async () => {
-      this.requireAvailable();
-      if (!/^[a-z0-9][a-z0-9_-]{0,59}$/.test(sourceId) || sourceId === WORLD_SOURCE)
-        throw new SourceError(400, "Invalid library id");
-      const rev = this.transactionSync(() => {
-        this.sql.exec("DELETE FROM world_sources WHERE source_id = ?", sourceId);
-        this.sql.exec("DELETE FROM source_index WHERE source_id = ?", sourceId);
-        return this.compendium.replaceSourceRows(sourceId, [], []);
-      });
-      this.compendium.notifySources(rev);
-    });
-  }
-  async check(): Promise<void> {
-    return this.serial(async () => {
-      this.requireAvailable();
-      for (const source of this.sources()) {
-        const latestValue = await this.corpus!.getLatest({
-          ...this.call(),
-          sourceId: source.source_id,
-        });
-        if (!latestValue) {
-          const rev = this.transactionSync(() => {
-            this.sql.exec("DELETE FROM world_sources WHERE source_id = ?", source.source_id);
-            this.sql.exec("DELETE FROM source_index WHERE source_id = ?", source.source_id);
-            return this.compendium.replaceSourceRows(source.source_id, [], []);
-          });
-          this.compendium.notifySources(rev);
-          continue;
-        }
-        const latest = validateManifest(latestValue);
-        if (
-          latest.sourceId !== source.source_id ||
-          latest.systemId !== this.manifest(source).systemId
-        )
-          throw new SourceError(503, "Library snapshot identity check failed");
-        if (latest.version <= source.version) continue;
-        if (
-          source.mode === "pinned" &&
-          latest.version === source.latest_version &&
-          source.update_json !== null
-        )
-          continue;
-        const rows = await this.indexes(latest);
-        if (source.mode === "follow") this.ingest(latest, rows, "follow", latest.version);
-        else {
-          const before = new Map(this.rawRows(source.source_id).map((row) => [row.id, row]));
-          const after = new Map(rows.map((row) => [row.id, row]));
-          const update: SourceUpdateSummary = {
-            fromVersion: source.version,
-            toVersion: latest.version,
-            added: rows.filter((row) => !before.has(row.id)).map((row) => row.id),
-            changed: rows
-              .filter(
-                (row) =>
-                  before.has(row.id) && JSON.stringify(before.get(row.id)) !== JSON.stringify(row),
-              )
-              .map((row) => row.id),
-            removed: [...before.keys()].filter((id) => !after.has(id)),
-          };
-          this.sql.exec(
-            "UPDATE world_sources SET latest_version = ?, update_json = ? WHERE source_id = ?",
-            latest.version,
-            JSON.stringify(update),
-            source.source_id,
+    return {
+      sourceId: manifest.sourceId,
+      name: manifest.sourceName,
+      version: manifest.version,
+      mode,
+      licence: manifest.licence,
+      latestVersion,
+    };
+  }, storageFailure);
+  enable = Effect.fn("WorldSources.enable")(function* (
+    this: WorldSources,
+    sourceId: string,
+    input: EnableSourceInput,
+  ) {
+    return yield* this.serial(
+      Effect.gen({ self: this }, function* () {
+        if (!Schema.is(LibrarySourceId)(sourceId))
+          return yield* Effect.fail(new CorpusInvalid({ message: "Invalid library id" }));
+        const decoded = Schema.decodeUnknownResult(EnableInput, { onExcessProperty: "error" })(
+          input,
+        );
+        if (decoded._tag === "Failure")
+          return yield* Effect.fail(
+            new CorpusInvalid({ message: "Invalid library version or mode" }),
           );
+        const source = yield* this.call((api, context) => api.getSource({ ...context, sourceId }));
+        if (!source)
+          return yield* Effect.fail(new CorpusNotFound({ message: "Library not found" }));
+        const value =
+          input.version === undefined
+            ? yield* this.call((api, context) => api.getLatest({ ...context, sourceId }))
+            : yield* this.call((api, context) =>
+                api.getManifest({ ...context, sourceId, version: decoded.success.version ?? 1 }),
+              );
+        if (!value)
+          return yield* Effect.fail(
+            new CorpusNotFound({ message: "Published library version not found" }),
+          );
+        if (input.version !== undefined && value.version !== input.version)
+          return yield* Effect.fail(unavailable("Library snapshot identity check failed"));
+        const previous = this.source(sourceId);
+        if (previous?.version === value.version) {
+          yield* storageIO(() =>
+            this.sql.exec(
+              "UPDATE world_sources SET mode = ? WHERE source_id = ?",
+              input.mode ?? "pinned",
+              sourceId,
+            ),
+          );
+          return this.status({ ...previous, mode: input.mode ?? "pinned" });
         }
-      }
-    });
-  }
-  private async base(id: string): Promise<CompendiumEntry | undefined> {
-    const parsed = parseEntryId(id);
-    if (!parsed || parsed.source === WORLD_SOURCE) return undefined;
-    const source = this.source(parsed.source);
-    const row = this.raw(id);
-    if (!source || !row) return undefined;
-    const manifest = this.manifest(source);
-    const chunk = manifest.bodyChunks.find((chunk) => chunk.ids.includes(id));
-    if (!chunk) return undefined;
-    const entries: CompendiumEntry[] = await decodeBodies(await this.bytes(chunk.file));
+        const { manifest, rows } = yield* this.verifyVersion(value, sourceId, source.systemId);
+        return yield* this.ingest(
+          manifest,
+          rows,
+          input.mode ?? "pinned",
+          source.latestVersion ?? manifest.version,
+        );
+      }),
+    );
+  }, storageFailure);
+  disable = Effect.fn("WorldSources.disable")(function* (this: WorldSources, sourceId: string) {
+    return yield* this.serial(
+      Effect.gen({ self: this }, function* () {
+        yield* this.requireAvailable();
+        if (!Schema.is(LibrarySourceId)(sourceId))
+          return yield* Effect.fail(new CorpusInvalid({ message: "Invalid library id" }));
+        const rev = yield* this.transactionSync(() => {
+          this.sql.exec("DELETE FROM world_sources WHERE source_id = ?", sourceId);
+          this.sql.exec("DELETE FROM source_index WHERE source_id = ?", sourceId);
+          return this.compendium.replaceSourceRows(sourceId, [], []);
+        });
+        this.forget(sourceId);
+        this.compendium.notifySources(rev);
+      }),
+    );
+  }, storageFailure);
+  check = Effect.fn("WorldSources.check")(function* (this: WorldSources) {
+    return yield* this.serial(
+      Effect.gen({ self: this }, function* () {
+        yield* this.requireAvailable();
+        for (const source of this.sources()) {
+          const latestValue = yield* this.call((api, context) =>
+            api.getLatest({ ...context, sourceId: source.source_id }),
+          );
+          if (!latestValue) {
+            const rev = yield* this.transactionSync(() => {
+              this.sql.exec("DELETE FROM world_sources WHERE source_id = ?", source.source_id);
+              this.sql.exec("DELETE FROM source_index WHERE source_id = ?", source.source_id);
+              return this.compendium.replaceSourceRows(source.source_id, [], []);
+            });
+            this.forget(source.source_id);
+            this.compendium.notifySources(rev);
+            continue;
+          }
+          if (
+            latestValue.version <= source.version ||
+            (source.mode === "pinned" &&
+              latestValue.version === source.latest_version &&
+              source.update_json !== null)
+          )
+            continue;
+          const { manifest: latest, rows } = yield* this.verifyVersion(
+            latestValue,
+            source.source_id,
+            this.manifest(source).systemId,
+          );
+          if (source.mode === "follow") yield* this.ingest(latest, rows, "follow", latest.version);
+          else {
+            const before = new Map(this.rawRows(source.source_id).map((row) => [row.id, row]));
+            const after = new Map(rows.map((row) => [row.id, row]));
+            const update: SourceUpdateSummary = {
+              fromVersion: source.version,
+              toVersion: latest.version,
+              added: rows.filter((row) => !before.has(row.id)).map((row) => row.id),
+              changed: rows
+                .filter(
+                  (row) =>
+                    before.has(row.id) &&
+                    JSON.stringify(before.get(row.id)) !== JSON.stringify(row),
+                )
+                .map((row) => row.id),
+              removed: [...before.keys()].filter((id) => !after.has(id)),
+            };
+            this.sql.exec(
+              "UPDATE world_sources SET latest_version = ?, update_json = ? WHERE source_id = ?",
+              latest.version,
+              JSON.stringify(update),
+              source.source_id,
+            );
+          }
+        }
+        this.sql.exec(
+          "INSERT INTO settings (key, value) VALUES ('corpus_last_check', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+          String(Date.now()),
+        );
+      }),
+    );
+  }, storageFailure);
+  private loadChunk = Effect.fn("WorldSources.loadChunk")(function* (
+    this: WorldSources,
+    key: string,
+  ) {
+    const metadata = this.chunkMetadata.get(key);
+    if (!metadata) return yield* Effect.fail(unavailable("Library chunk is unavailable"));
+    const { manifest, chunk } = metadata;
+    const indexed = new Map(chunk.ids.map((id) => [id, this.raw(id)]));
+    const entries = yield* this.bytes(chunk.file).pipe(
+      Effect.flatMap((bytes) => corpusIO(() => decodeBodies(bytes))),
+    );
     if (entries.length !== chunk.ids.length)
-      throw new SourceError(503, "Invalid library body chunk");
-    const ids = new Set<string>();
+      return yield* Effect.fail(unavailable("Invalid library body chunk"));
+    const byId = new Map<string, CompendiumEntry>();
+    const types = new Map(manifest.types.map((type) => [type.id, type]));
     for (const entry of entries) {
-      const indexed = this.raw(entry.id);
-      const type = manifest.types.find((type) => type.id === entry.typeId);
+      const row = indexed.get(entry.id);
+      const type = types.get(entry.typeId);
       if (
-        !chunk.ids.includes(entry.id) ||
-        ids.has(entry.id) ||
-        !indexed ||
+        !row ||
         !type ||
+        byId.has(entry.id) ||
         entry.typeId !== chunk.typeId ||
         entry.visibility !== chunk.visibility ||
-        entry.rev !== indexed.rev ||
-        entry.name !== indexed.name ||
-        entry.updatedAt !== indexed.updatedAt ||
-        JSON.stringify(entry.tags) !== JSON.stringify(indexed.tags) ||
+        entry.rev !== row.rev ||
+        entry.name !== row.name ||
+        entry.updatedAt !== row.updatedAt ||
+        JSON.stringify(entry.tags) !== JSON.stringify(row.tags) ||
         entryError({ ...entry, id: undefined }, type)
       )
-        throw new SourceError(503, "Invalid library body entry");
-      ids.add(entry.id);
+        return yield* Effect.fail(unavailable("Invalid library body entry"));
+      byId.set(entry.id, {
+        ...entry,
+        licence: inheritLicence(manifest.licence, entry.licence),
+        sourceRev: row.rev,
+        sourceVersion: manifest.version,
+      });
     }
-    if (this.source(parsed.source)?.version !== source.version) return undefined;
-    const entry = entries.find((entry) => entry.id === id);
-    return entry
-      ? {
-          ...entry,
-          licence: inheritLicence(manifest.licence, entry.licence),
-          sourceRev: row.rev,
-          sourceVersion: source.version,
-        }
-      : undefined;
+    return byId as ReadonlyMap<string, CompendiumEntry>;
+  }, storageFailure);
+
+  private chunk(source: SourceRow, id: string): BodyChunk | undefined {
+    this.manifest(source);
+    return this.manifests.get(`${source.source_id}/${source.version}`)?.chunks.get(id);
   }
-  async resolve(id: string, role: string): Promise<CompendiumEntry | undefined> {
-    this.requireAvailable();
-    const visible = () =>
+  private base = Effect.fn("WorldSources.base")(function* (this: WorldSources, id: string) {
+    const sourceId = librarySource(id);
+    if (!sourceId) return undefined;
+    const source = this.source(sourceId);
+    if (!source || !this.raw(id)) return undefined;
+    const chunk = this.chunk(source, id);
+    if (!chunk) return undefined;
+    const entries = yield* Cache.get(this.decodedChunks, chunk.file.key);
+    return this.sourceVersion(sourceId) === source.version ? entries.get(id) : undefined;
+  }, storageFailure);
+
+  bodies = Effect.fn("WorldSources.bodies")(function* (
+    this: WorldSources,
+    ids: readonly string[],
+    role: string,
+  ) {
+    yield* this.requireAvailable();
+    const visible = (id: string) =>
       this.sql
         .exec<{ rev: number; visibility: string }>(
           "SELECT rev, visibility FROM compendium_entries WHERE id = ?",
           id,
         )
         .toArray()[0];
-    const before = visible();
-    if (!before || this.blocked(id) || (role !== "dm" && before.visibility !== "public"))
-      return undefined;
-    const entry = await this.base(id);
-    const after = visible();
-    if (
-      !entry ||
-      !after ||
-      before.rev !== after.rev ||
-      this.blocked(id) ||
-      (role !== "dm" && after.visibility !== "public")
-    )
-      return undefined;
-    const override = this.override(id);
-    const resolved = override ? applyOverride(entry, override) : entry;
-    if (role !== "dm" && resolved.visibility !== "public") return undefined;
-    return { ...resolved, rev: after.rev };
-  }
-  async exportEntries(): Promise<CompendiumEntry[]> {
+    const groups = new Map<
+      string,
+      { id: string; rev: number; sourceId: string; version: number }[]
+    >();
+    const sources = new Map<string, SourceRow | undefined>();
+    for (const id of new Set(ids)) {
+      const sourceId = librarySource(id);
+      if (sourceId && !sources.has(sourceId)) sources.set(sourceId, this.source(sourceId));
+      const source = sourceId ? sources.get(sourceId) : undefined;
+      const before = visible(id);
+      if (!source || !before || (role !== "dm" && before.visibility !== "public")) continue;
+      const chunk = this.chunk(source, id);
+      if (!chunk) continue;
+      const group = groups.get(chunk.file.key) ?? [];
+      group.push({ id, rev: before.rev, sourceId: source.source_id, version: source.version });
+      groups.set(chunk.file.key, group);
+    }
+    const loaded = new Map<string, CompendiumEntry>();
+    for (const [key, group] of groups) {
+      const entries = yield* Cache.get(this.decodedChunks, key);
+      for (const item of group) {
+        const entry = entries.get(item.id);
+        if (entry) loaded.set(item.id, entry);
+      }
+    }
+    // Outgoing R2/cache awaits release the input gate: version, override or block changes can interleave.
+    const versions = new Map(
+      [...sources.keys()].map((sourceId) => [sourceId, this.sourceVersion(sourceId)]),
+    );
+    const resolved = new Map<string, CompendiumEntry>();
+    for (const group of groups.values()) {
+      for (const before of group) {
+        const after = visible(before.id);
+        const entry = loaded.get(before.id);
+        if (
+          !entry ||
+          !after ||
+          after.rev !== before.rev ||
+          versions.get(before.sourceId) !== before.version ||
+          (role !== "dm" && after.visibility !== "public")
+        )
+          continue;
+        const override = this.override(before.id);
+        resolved.set(before.id, {
+          ...(override ? applyOverride(entry, override) : entry),
+          rev: after.rev,
+        });
+      }
+    }
+    return resolved as ReadonlyMap<string, CompendiumEntry>;
+  }, storageFailure);
+  resolve = Effect.fn("WorldSources.resolve")(function* (
+    this: WorldSources,
+    id: string,
+    role: string,
+  ) {
+    return (yield* this.bodies([id], role)).get(id);
+  }, storageFailure);
+  exportEntries = Effect.fn("WorldSources.exportEntries")(function* (this: WorldSources) {
     const rows = this.sql
       .exec<{ entry_id: string }>("SELECT entry_id FROM entry_overrides ORDER BY entry_id")
       .toArray();
     const entries: CompendiumEntry[] = [];
     for (const row of rows) {
-      const entry = await this.resolve(row.entry_id, "dm");
+      const entry = yield* this.resolve(row.entry_id, "dm");
       if (entry) entries.push(entry);
     }
     return entries;
-  }
+  }, storageFailure);
   /** Fetch and validate without mutations; apply runs inside the caller's SQLite transaction. */
-  async prepareImport(entries: readonly PackEntry[]): Promise<PreparedSourceImport> {
-    this.requireAvailable();
+  prepareImport = Effect.fn("WorldSources.prepareImport")(function* (
+    this: WorldSources,
+    entries: readonly PackEntry[],
+  ) {
+    yield* this.requireAvailable();
     const prepared: {
       sourceId: string;
-      sourceVersion: number;
-      sourceRev: number;
       override: EntryOverride;
+      row?: IndexRow;
     }[] = [];
     for (const item of entries) {
-      const id = parseEntryId(item.id);
-      if (!id || id.source === WORLD_SOURCE || id.typeId !== item.typeId)
-        throw new CompendiumImportError(400, "Invalid library entry identity in pack");
-      if (
-        !Number.isSafeInteger(item.sourceVersion) ||
-        !Number.isSafeInteger(item.sourceRev) ||
-        (item.sourceVersion ?? 0) < 1 ||
-        (item.sourceRev ?? 0) < 1
-      )
-        throw new CompendiumImportError(
-          400,
-          "Library pack entries require sourceVersion and sourceRev",
+      const sourceId = librarySource(item.id);
+      if (!sourceId)
+        return yield* Effect.fail(
+          new CorpusInvalid({ message: "Invalid library entry identity in pack" }),
         );
-      const source = this.source(id.source);
+      const source = this.source(sourceId);
       const row = this.raw(item.id);
       if (!source || !row || source.version !== item.sourceVersion || row.rev !== item.sourceRev)
-        throw new CompendiumImportError(
-          409,
-          "Enable the pack's library version and review changed entries before importing",
+        return yield* Effect.fail(
+          new CorpusConflict({
+            message:
+              "Enable the pack's library version and review changed entries before importing",
+          }),
         );
-      const base = await this.base(item.id);
+      const base = yield* this.base(item.id);
       if (!base || base.sourceVersion !== item.sourceVersion || base.sourceRev !== item.sourceRev)
-        throw new CompendiumImportError(
-          409,
-          "Library changed while importing; retry after reviewing its version",
+        return yield* Effect.fail(
+          new CorpusConflict({
+            message: "Library changed while importing; retry after reviewing its version",
+          }),
         );
       const licence = item.licence;
-      if (licence) {
-        const issue = licenceError(licence);
-        if (issue) throw new CompendiumImportError(400, issue);
-      }
       const previous = this.override(item.id);
-      const rights = inheritLicence(base.licence!, previous?.licence);
+      const rights = base.licence
+        ? inheritLicence(base.licence, previous?.licence)
+        : previous?.licence;
+      if (!rights) return yield* Effect.fail(unavailable("Library licence is unavailable"));
       if (
         !licence ||
         licence.id !== rights.id ||
@@ -633,12 +853,15 @@ export class WorldSources implements CompendiumSources {
         (rights.shareAlike && !licence.shareAlike) ||
         !licence.attribution.includes(rights.attribution)
       )
-        throw new CompendiumImportError(
-          400,
-          "Import must preserve the library licence, share-alike and source attribution",
+        return yield* Effect.fail(
+          new CorpusInvalid({
+            message: "Import must preserve the library licence, share-alike and source attribution",
+          }),
         );
       if (base.visibility === "dm" && item.visibility === "public")
-        throw new CompendiumImportError(400, "Import cannot reveal a DM-only library entry");
+        return yield* Effect.fail(
+          new CorpusInvalid({ message: "Import cannot reveal a DM-only library entry" }),
+        );
       const fields = Object.fromEntries(
         Object.entries(item.fields).filter(
           ([key, value]) => JSON.stringify(base.fields[key]) !== JSON.stringify(value),
@@ -649,7 +872,7 @@ export class WorldSources implements CompendiumSources {
       );
       const override: EntryOverride = {
         entryId: item.id,
-        baseRev: item.sourceRev!,
+        baseRev: row.rev,
         updatedAt: nowIso(),
         licence: inheritLicence(rights, licence),
         patch: {
@@ -662,138 +885,159 @@ export class WorldSources implements CompendiumSources {
         },
       };
       const issue = overrideError(override.patch);
-      if (issue) throw new CompendiumImportError(400, issue);
-      const type = this.manifest(source).types.find((type) => type.id === item.typeId)!;
-      const error = entryError({ ...applyOverride(base, override), id: undefined }, type);
-      if (error) throw new CompendiumImportError(400, error);
+      if (issue) return yield* Effect.fail(new CorpusInvalid({ message: issue }));
+      const type = this.manifest(source).types.find((type) => type.id === item.typeId);
+      if (!type) return yield* Effect.fail(unavailable("Library entry type is unavailable"));
+      const applied = yield* Effect.try({
+        try: () => applyOverride(base, override),
+        catch: () => new CorpusInvalid({ message: "Invalid resolved override" }),
+      });
+      const error = entryError({ ...applied, id: undefined }, type);
+      if (error) return yield* Effect.fail(new CorpusInvalid({ message: error }));
       prepared.push({
-        sourceId: id.source,
-        sourceVersion: item.sourceVersion!,
-        sourceRev: item.sourceRev!,
+        sourceId,
         override,
+        row: this.blocked(item.id) ? undefined : this.effective(row, type, override),
       });
     }
     return {
-      apply: () => {
-        // Check every source before writing any override; the enclosing transaction also rolls back locals.
-        for (const item of prepared) {
-          if (
-            this.source(item.sourceId)?.version !== item.sourceVersion ||
-            this.raw(item.override.entryId)?.rev !== item.sourceRev
-          )
-            throw new CompendiumImportError(
-              409,
-              "Library changed while importing; retry after reviewing its version",
-            );
-        }
+      apply: (rev: number) => {
         for (const item of prepared)
           this.sql.exec(
             "INSERT INTO entry_overrides (entry_id, override_json) VALUES (?, ?) ON CONFLICT(entry_id) DO UPDATE SET override_json=excluded.override_json",
             item.override.entryId,
             JSON.stringify(item.override),
           );
-        for (const sourceId of new Set(prepared.map((item) => item.sourceId)))
-          this.refresh(sourceId, this.manifest(this.source(sourceId)!).types);
+        for (const item of prepared)
+          this.compendium.updateSourceEntry(item.sourceId, item.override.entryId, item.row, rev);
       },
     };
-  }
-  private async saveOverride(id: string, body: unknown): Promise<EntryOverride> {
-    const decoded = Schema.decodeUnknownResult(SaveOverrideInput, { onExcessProperty: "error" })(
-      body,
-    );
-    if (decoded._tag === "Failure") throw new SourceError(400, "Invalid entry override");
+  }, storageFailure);
+  private saveOverride = Effect.fn("WorldSources.saveOverride")(function* (
+    this: WorldSources,
+    id: string,
+    body: unknown,
+  ) {
+    const decoded = Schema.decodeUnknownResult(OverrideInput, { onExcessProperty: "error" })(body);
+    if (decoded._tag === "Failure")
+      return yield* Effect.fail(new CorpusInvalid({ message: "Invalid entry override" }));
     const input = decoded.success;
     const issue = overrideError(input.patch);
-    if (issue || !Number.isSafeInteger(input.baseRev) || input.baseRev < 1)
-      throw new SourceError(400, issue ?? "Invalid base revision");
-    const base = await this.base(id);
-    if (!base) throw new SourceError(404, "Library entry not found");
+    if (issue) return yield* Effect.fail(new CorpusInvalid({ message: issue }));
+    const base = yield* this.base(id);
+    if (!base)
+      return yield* Effect.fail(new CorpusNotFound({ message: "Library entry not found" }));
     if (base.sourceRev !== input.baseRev)
-      throw new SourceError(409, "Library entry changed; review its current version before saving");
+      return yield* Effect.fail(
+        new CorpusConflict({
+          message: "Library entry changed; review its current version before saving",
+        }),
+      );
     if (base.visibility === "dm" && input.patch.visibility === "public")
-      throw new SourceError(400, "A DM-only library entry cannot be revealed by an override");
+      return yield* Effect.fail(
+        new CorpusInvalid({ message: "A DM-only library entry cannot be revealed by an override" }),
+      );
+    const sourceId = librarySource(id);
+    const source = sourceId ? this.source(sourceId) : undefined;
+    const type = source && this.manifest(source).types.find((type) => type.id === base.typeId);
+    if (!source || !type || !base.licence)
+      return yield* Effect.fail(unavailable("Library entry is unavailable"));
     const override: EntryOverride = {
       entryId: id,
       baseRev: input.baseRev,
       patch: input.patch,
-      licence: base.licence!,
+      licence: base.licence,
       updatedAt: nowIso(),
     };
-    const source = this.source(parseEntryId(id)!.source)!;
-    const type = this.manifest(source).types.find((type) => type.id === base.typeId)!;
-    const error = entryError({ ...applyOverride(base, override), id: undefined }, type);
-    if (error) throw new SourceError(400, error);
-    const rev = this.transactionSync(() => {
+    const applied = yield* Effect.try({
+      try: () => applyOverride(base, override),
+      catch: () => new CorpusInvalid({ message: "Invalid resolved override" }),
+    });
+    const error = entryError({ ...applied, id: undefined }, type);
+    if (error) return yield* Effect.fail(new CorpusInvalid({ message: error }));
+    const raw = this.raw(id);
+    const effective = raw && !this.blocked(id) ? this.effective(raw, type, override) : undefined;
+    const rev = yield* this.transactionSync(() => {
       this.sql.exec(
         "INSERT INTO entry_overrides (entry_id, override_json) VALUES (?, ?) ON CONFLICT(entry_id) DO UPDATE SET override_json=excluded.override_json",
         id,
         JSON.stringify(override),
       );
-      return this.refresh(source.source_id, this.manifest(source).types);
+      return this.compendium.updateSourceEntry(source.source_id, id, effective);
     });
     this.compendium.notifySources(rev);
     return override;
-  }
-  async handle(method: string, path: string, body: unknown, role: string): Promise<Response> {
-    if (role !== "dm") return json({ error: "Only the DM can manage libraries" }, 403);
-    try {
-      this.requireAvailable();
-      if (method === "GET" && path === "libraries") return json(await this.list());
-      if (method === "POST" && path === "libraries/check") {
-        await this.check();
-        return json(await this.list());
-      }
-      if (method === "GET" && path === "libraries/blocked")
-        return json({
-          ids: this.sql
-            .exec<{ entry_id: string }>("SELECT entry_id FROM entry_blocked ORDER BY entry_id")
-            .toArray()
-            .map((row) => row.entry_id),
-        });
-      const library = /^libraries\/([^/]+)$/.exec(path);
-      if (library && (method === "PUT" || method === "DELETE")) {
-        const id = decodeURIComponent(library[1]);
-        if (!/^[a-z0-9][a-z0-9_-]{0,59}$/.test(id) || id === WORLD_SOURCE)
-          throw new SourceError(400, "Invalid library id");
-        if (method === "PUT") return json(await this.enable(id, body as EnableSourceInput));
-        await this.disable(id);
-        return new Response(null, { status: 204 });
-      }
-      const entry = /^compendium\/(overrides|blocked)\/(.+)$/.exec(path);
-      if (entry) {
-        const id = decodeURIComponent(entry[2]);
-        const parsed = parseEntryId(id);
-        if (!parsed || parsed.source === WORLD_SOURCE)
-          throw new SourceError(400, "Expected a library entry id");
-        if (entry[1] === "overrides" && method === "GET") return json(this.override(id) ?? null);
-        if (entry[1] === "overrides" && method === "PUT")
-          return json(await this.serial(() => this.saveOverride(id, body)));
-        if (method === "PUT" || method === "DELETE") {
-          await this.serial(async () => {
-            const source = this.source(parsed.source);
+  }, storageFailure);
+  handle = Effect.fn("WorldSources.handle")(function* (
+    this: WorldSources,
+    method: string,
+    path: string,
+    body: unknown,
+    role: string,
+  ) {
+    if (role !== "dm")
+      return yield* Effect.fail(
+        new CorpusForbidden({ message: "Only the DM can manage libraries" }),
+      );
+    yield* this.requireAvailable();
+    const json = (value: unknown) => Response.json(value);
+    if (method === "GET" && path === "libraries") return json(yield* this.list());
+    if (method === "POST" && path === "libraries/check") {
+      yield* this.check();
+      return json(yield* this.list());
+    }
+    if (method === "GET" && path === "libraries/blocked")
+      return json({
+        ids: this.sql
+          .exec<{ entry_id: string }>("SELECT entry_id FROM entry_blocked ORDER BY entry_id")
+          .toArray()
+          .map((row) => row.entry_id),
+      });
+    const library = /^libraries\/([^/]+)$/.exec(path);
+    if (library && (method === "PUT" || method === "DELETE")) {
+      const id = yield* decodeId(library[1]);
+      if (method === "PUT") return json(yield* this.enable(id, body as EnableSourceInput));
+      yield* this.disable(id);
+      return new Response(null, { status: 204 });
+    }
+    const entry = /^compendium\/(overrides|blocked)\/(.+)$/.exec(path);
+    if (entry) {
+      const id = yield* decodeId(entry[2]);
+      const sourceId = librarySource(id);
+      if (!sourceId)
+        return yield* Effect.fail(new CorpusInvalid({ message: "Expected a library entry id" }));
+      if (entry[1] === "overrides" && method === "GET") return json(this.override(id) ?? null);
+      if (entry[1] === "overrides" && method === "PUT")
+        return json(yield* this.serial(this.saveOverride(id, body)));
+      if (method === "PUT" || method === "DELETE") {
+        yield* this.serial(
+          Effect.gen({ self: this }, function* () {
+            const source = this.source(sourceId);
             if (method === "PUT" && (!source || !this.raw(id)))
-              throw new SourceError(404, "Library entry not found");
-            const rev = this.transactionSync(() => {
+              return yield* Effect.fail(new CorpusNotFound({ message: "Library entry not found" }));
+            const raw = this.raw(id);
+            const type =
+              source && this.manifest(source).types.find((type) => type.id === raw?.typeId);
+            const override = entry[1] === "overrides" ? undefined : this.override(id);
+            const blocked = entry[1] === "blocked" ? method === "PUT" : this.blocked(id);
+            const effective =
+              raw && type && !blocked ? this.effective(raw, type, override) : undefined;
+            const rev = yield* this.transactionSync(() => {
               if (entry[1] === "overrides")
                 this.sql.exec("DELETE FROM entry_overrides WHERE entry_id = ?", id);
               else if (method === "PUT")
                 this.sql.exec("INSERT OR IGNORE INTO entry_blocked (entry_id) VALUES (?)", id);
               else this.sql.exec("DELETE FROM entry_blocked WHERE entry_id = ?", id);
               return source
-                ? this.refresh(source.source_id, this.manifest(source).types)
+                ? this.compendium.updateSourceEntry(source.source_id, id, effective)
                 : undefined;
             });
             if (rev !== undefined) this.compendium.notifySources(rev);
-          });
-          return new Response(null, { status: 204 });
-        }
+          }),
+        );
+        return new Response(null, { status: 204 });
       }
-      return json({ error: "Not found" }, 404);
-    } catch (error) {
-      if (error instanceof SourceError) return json({ error: error.message }, error.status);
-      if (error instanceof URIError) return json({ error: "Invalid encoded entry id" }, 400);
-      // RPC, malformed manifests and storage errors must not disclose source internals.
-      return json({ error: "Library operation is temporarily unavailable" }, 503);
     }
-  }
+    return yield* Effect.fail(new CorpusNotFound({ message: "Not found" }));
+  }, storageFailure);
 }

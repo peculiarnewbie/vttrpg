@@ -10,7 +10,7 @@ import type {
   SaveEntryInput,
 } from "../domain/compendium";
 import { entryError } from "../domain/compendium-rules";
-import { parseEntryId, WORLD_SOURCE } from "../domain/entry-id";
+import { librarySource } from "../domain/entry-id";
 import { indexEntries, searchIndex } from "../domain/compendium-search";
 import type { CompendiumStore } from "../client/compendium-store";
 import { createSearch, type SearchRequest } from "../client/search";
@@ -36,10 +36,7 @@ import { Badge, Button, EmptyState, ErrorBanner, Field, Input, Textarea } from "
 
 export type { CompendiumStore };
 
-const libraryEntry = (entry: CompendiumEntry) => {
-  const id = parseEntryId(entry.id);
-  return !!id && id.source !== WORLD_SOURCE;
-};
+const libraryEntry = (entry: CompendiumEntry) => librarySource(entry.id) !== undefined;
 
 /** Only changed values become patches; untouched source values keep following the library. */
 const saveTableOverride = async (
