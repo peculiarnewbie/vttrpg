@@ -205,7 +205,9 @@ cairn2e,blades}.ts` (layouts, entry types, filters — orchestrator-written);
 - Presets (layouts + entry types, no rules text) for Mothership and Stonetop
   (steading as a shared sheet); `docs/buildability.md` maps each scope demand to
   the feature and the Playwright spec that proves it.
-- Release checklist: flags removed/defaulted on; migrations in production and
+- Release checklist: real Google sign-in replaces the dev email stub (which
+  stays live until then so the deployed site is easy to test); flags
+  removed/defaulted on (`corpus-admin` stays off in production); migrations in production and
   preview; legal page and "based on" wording reviewed; search latency at 10k
   entries and index size budgets; backup/export tested; dashboard steps done;
   AGENTS.md, corpus.md, v1-scope.md updated; grep finds no "success"/"hit"
