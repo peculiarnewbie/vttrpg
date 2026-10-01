@@ -1,4 +1,5 @@
 // @vitest-environment node
+import type { WorldDO } from "./world-do";
 import * as Schema from "effect/Schema";
 import { startTabletop, type Tabletop, type CallOptions } from "../test/miniflare";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -894,7 +895,8 @@ it("uses shared permissions for avatar uploads and deletion, including the DO bo
     ).json(),
   );
   const namespace = await mf.getDurableObjectNamespace("WORLDS");
-  const stub = namespace.get(namespace.idFromName(`world:${worldId}`));
+  const rawStub = namespace.get(namespace.idFromName(`world:${worldId}`));
+  const stub = rawStub as typeof rawStub & Pick<WorldDO, "setAvatar">;
   const player = await create(playerCookie);
   const privateSheet = await create();
   const avatarPath = `/worlds/${worldId}/characters/${shared.id}/avatar`;
@@ -918,18 +920,11 @@ it("uses shared permissions for avatar uploads and deletion, including the DO bo
     expect((await call(avatarPath, { method: "DELETE", cookie: playerCookie })).status).toBe(403);
     for (const characterId of [shared.id, privateSheet.id]) {
       expect(
-        (
-          await stub.fetch("https://world/internal/character/avatar", {
-            method: "POST",
-            headers: {
-              "x-ttrpg-member-id": player.memberId,
-              "x-ttrpg-role": "player",
-              "content-type": "application/json",
-            },
-            body: JSON.stringify({ characterId, avatarKey: "forged-key" }),
-          })
-        ).status,
-      ).toBe(403);
+        await stub.setAvatar(
+          { memberId: player.memberId, role: "player", displayName: "Player" },
+          { characterId, avatarKey: "forged-key" },
+        ),
+      ).toMatchObject({ ok: false, error: { _tag: "Forbidden" } });
     }
     expect((await upload(cookie)).status).toBe(200);
     expect((await call(avatarPath, { method: "DELETE" })).status).toBe(200);

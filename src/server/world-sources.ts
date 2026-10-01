@@ -1,3 +1,4 @@
+import { WorldStorage } from "./world-rpc";
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
 import * as Cache from "effect/Cache";
@@ -49,13 +50,8 @@ import {
 import { compatibleType, type WorldCompendium } from "./world-compendium";
 import { nowIso } from "./crypto";
 
-export class SourceStorage extends Context.Service<
-  SourceStorage,
-  {
-    sql: SqlStorage;
-    transactionSync: DurableObjectStorage["transactionSync"];
-  }
->()("ttrpg/SourceStorage") {}
+// Kept as an alias for callers migrating to the shared world storage layer.
+export { WorldStorage as SourceStorage } from "./world-rpc";
 export class CorpusBucket extends Context.Service<CorpusBucket, R2Bucket | undefined>()(
   "ttrpg/CorpusBucket",
 ) {}
@@ -128,8 +124,11 @@ export class WorldSources {
   >;
 
   private constructor(
-    private readonly storage: typeof SourceStorage.Service,
-    private readonly compendium: WorldCompendium,
+    private readonly storage: typeof WorldStorage.Service,
+    private readonly compendium: Pick<
+      WorldCompendium,
+      "notifySources" | "replaceSourceRows" | "updateSourceEntry" | "sourceTypes"
+    >,
     private readonly corpus: typeof CorpusClient.Service,
     private readonly bucket: typeof CorpusBucket.Service,
     private readonly accountId: typeof CorpusAccountId.Service,
@@ -138,9 +137,14 @@ export class WorldSources {
   ) {
     this.decodedChunks = decodedChunks;
   }
-  static make(compendium: WorldCompendium) {
+  static make(
+    compendium: Pick<
+      WorldCompendium,
+      "notifySources" | "replaceSourceRows" | "updateSourceEntry" | "sourceTypes"
+    >,
+  ) {
     return Effect.gen(function* () {
-      const storage = yield* SourceStorage;
+      const storage = yield* WorldStorage;
       const corpus = yield* CorpusClient;
       const bucket = yield* CorpusBucket;
       const accountId = yield* CorpusAccountId;
@@ -981,25 +985,24 @@ export class WorldSources {
         new CorpusForbidden({ message: "Only the DM can manage libraries" }),
       );
     yield* this.requireAvailable();
-    const json = (value: unknown) => Response.json(value);
-    if (method === "GET" && path === "libraries") return json(yield* this.list());
+    if (method === "GET" && path === "libraries") return yield* this.list();
     if (method === "POST" && path === "libraries/check") {
       yield* this.check();
-      return json(yield* this.list());
+      return yield* this.list();
     }
     if (method === "GET" && path === "libraries/blocked")
-      return json({
+      return {
         ids: this.sql
           .exec<{ entry_id: string }>("SELECT entry_id FROM entry_blocked ORDER BY entry_id")
           .toArray()
           .map((row) => row.entry_id),
-      });
+      };
     const library = /^libraries\/([^/]+)$/.exec(path);
     if (library && (method === "PUT" || method === "DELETE")) {
       const id = yield* decodeId(library[1]);
-      if (method === "PUT") return json(yield* this.enable(id, body as EnableSourceInput));
+      if (method === "PUT") return yield* this.enable(id, body as EnableSourceInput);
       yield* this.disable(id);
-      return new Response(null, { status: 204 });
+      return undefined;
     }
     const entry = /^compendium\/(overrides|blocked)\/(.+)$/.exec(path);
     if (entry) {
@@ -1007,9 +1010,9 @@ export class WorldSources {
       const sourceId = librarySource(id);
       if (!sourceId)
         return yield* Effect.fail(new CorpusInvalid({ message: "Expected a library entry id" }));
-      if (entry[1] === "overrides" && method === "GET") return json(this.override(id) ?? null);
+      if (entry[1] === "overrides" && method === "GET") return this.override(id) ?? null;
       if (entry[1] === "overrides" && method === "PUT")
-        return json(yield* this.serial(this.saveOverride(id, body)));
+        return yield* this.serial(this.saveOverride(id, body));
       if (method === "PUT" || method === "DELETE") {
         yield* this.serial(
           Effect.gen({ self: this }, function* () {
@@ -1036,7 +1039,7 @@ export class WorldSources {
             if (rev !== undefined) this.compendium.notifySources(rev);
           }),
         );
-        return new Response(null, { status: 204 });
+        return undefined;
       }
     }
     return yield* Effect.fail(new CorpusNotFound({ message: "Not found" }));

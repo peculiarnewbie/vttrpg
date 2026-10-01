@@ -3,7 +3,8 @@ import * as Schema from "effect/Schema";
 import { startTabletop, type Tabletop } from "../test/miniflare";
 import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { SheetTemplate } from "../domain/schemas";
+import type { WorldDO } from "./world-do";
+import { SaveTemplateInput, SheetTemplate } from "../domain/schemas";
 import { presetTemplates } from "../domain/preset-templates";
 
 let tabletop: Tabletop;
@@ -22,9 +23,10 @@ beforeAll(async () => {
             return {
               loader: "ts",
               contents: source.replace(
-                "      this.ensureSchema();",
+                "      yield* worldSync(() => this.ensureSchema());",
                 `
-                const sql = this.ctx.storage.sql;
+                yield* worldSync(() => {
+                const sql = this.storage.sql;
                 sql.exec("CREATE TABLE templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, fields TEXT NOT NULL, stats TEXT NOT NULL, tickers TEXT NOT NULL, rolls TEXT NOT NULL, updated_at TEXT NOT NULL)");
                 sql.exec("INSERT INTO templates (id, name, description, fields, stats, tickers, rolls, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                   "old-template", "Old sheet", "Keep this", '[{"id":"bio","label":"Biography","kind":"longtext"}]', '[]', '[]', '[]', "2026-01-01T00:00:00Z");
@@ -32,6 +34,7 @@ beforeAll(async () => {
                 this.ensureSchema();
                 if (this.worldId === "invalid-json") sql.exec("UPDATE templates SET layout = ?", "{broken");
                 if (this.worldId === "invalid-schema") sql.exec("UPDATE templates SET layout = ?", '{"system":"Bad","name":"Bad","pages":[{}]}');
+                });
                 `,
               ),
             };
@@ -48,12 +51,16 @@ afterAll(async () => {
 
 const request = async (worldId: string, path: string, body?: unknown) => {
   const namespace = await mf.getDurableObjectNamespace("WORLDS");
-  const stub = namespace.get(namespace.idFromName(`world:${worldId}`));
-  return stub.fetch(`https://world/internal/${path}`, {
-    method: body === undefined ? "GET" : "POST",
-    headers: { "x-ttrpg-role": "dm", "content-type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  const rawStub = namespace.get(namespace.idFromName(`world:${worldId}`));
+  const stub = rawStub as typeof rawStub & Pick<WorldDO, "state" | "saveTemplate">;
+  const caller = { memberId: "dm", displayName: "DM", role: "dm" } as const;
+  const reply =
+    path === "state"
+      ? await stub.state(caller)
+      : await stub.saveTemplate(caller, Schema.decodeUnknownSync(SaveTemplateInput)(body));
+  return reply.ok
+    ? Response.json(reply.value)
+    : Response.json({ error: reply.error.message }, { status: 400 });
 };
 const templates = async (worldId: string) =>
   Schema.decodeUnknownSync(Schema.Struct({ templates: Schema.Array(SheetTemplate) }))(
