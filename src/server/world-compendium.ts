@@ -591,33 +591,6 @@ export class WorldCompendium {
     }
   }, storageFailure);
 
-  checkRequest = Effect.fn("WorldCompendium.checkRequest")(function* (
-    this: WorldCompendium,
-    request: Request,
-    url: URL,
-  ) {
-    const read =
-      (request.method === "GET" &&
-        ["/internal/compendium", "/internal/compendium/index"].includes(url.pathname)) ||
-      (request.method === "POST" && url.pathname === "/internal/compendium/bodies");
-    if (
-      url.pathname.startsWith("/internal/compendium") &&
-      !read &&
-      request.headers.get("x-ttrpg-role") !== "dm"
-    )
-      return yield* Effect.fail(
-        new Forbidden({ message: "Only the DM can manage the compendium" }),
-      );
-    if (url.pathname === "/internal/compendium/import" && request.method === "POST") {
-      const text = yield* Effect.tryPromise({
-        try: () => request.clone().text(),
-        catch: () => new BadRequest({ message: "Invalid compendium pack" }),
-      });
-      // Raw bytes include whitespace discarded by JSON decoding.
-      if (new TextEncoder().encode(text).byteLength > compendiumLimits.packBytes)
-        return yield* Effect.fail(new BadRequest({ message: "Pack JSON must be at most 4 MB" }));
-    }
-  });
   private types(): EntryType[] {
     return this.sql
       .exec<CompendiumTypeRow>("SELECT * FROM compendium_types ORDER BY position, id")

@@ -499,6 +499,7 @@ const sourceFixture = async (
           Layer.succeed(SourceStorage, {
             sql: fixture.sql,
             transactionSync: fixture.transactionSync,
+            storage: { sql: fixture.sql } as DurableObjectStorage,
           }),
           Layer.succeed(CorpusClient, client),
           Layer.succeed(CorpusBucket, bucket),
@@ -680,16 +681,6 @@ it("returns typed failures for invalid input and DM-only requests", async () => 
     );
     expect(invalid._tag).toBe("Failure");
     if (invalid._tag === "Failure") expect(invalid.failure).toBeInstanceOf(BadRequest);
-    const request = new Request("https://do/internal/compendium/import", {
-      method: "POST",
-      headers: { "x-ttrpg-role": "player" },
-      body: "{}",
-    });
-    const denied = await Effect.runPromise(
-      fixture.compendium.checkRequest(request, new URL(request.url)).pipe(Effect.result),
-    );
-    expect(denied._tag).toBe("Failure");
-    if (denied._tag === "Failure") expect(denied.failure).toBeInstanceOf(Forbidden);
   } finally {
     fixture.db.close();
   }

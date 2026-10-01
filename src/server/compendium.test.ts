@@ -1,6 +1,9 @@
 // @vitest-environment node
 import * as Schema from "effect/Schema";
 import { startTabletop, type Tabletop, type CallOptions } from "../test/miniflare";
+import type { Caller } from "./world-rpc";
+import type { Reply } from "./reply";
+import type { CompendiumRequest } from "./world-do";
 import { Character } from "../domain/schemas";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -126,17 +129,23 @@ describe("compendium through real Worker, D1 and SQLite DO", () => {
       expect((await compendiumCall(suffix, { method, body, cookie: playerCookie })).status).toBe(
         403,
       );
+      // The DO enforces the rule itself, not only the HTTP route.
       const namespace = await mf.getDurableObjectNamespace("WORLDS");
-      const stub = namespace.get(namespace.idFromName(`world:${worldId}`));
-      expect(
-        (
-          await stub.fetch(`https://world/internal/compendium${suffix}`, {
-            method,
-            headers: { "x-ttrpg-role": "player", "content-type": "application/json" },
-            body: body === undefined ? undefined : JSON.stringify(body),
-          })
-        ).status,
-      ).toBe(403);
+      const stub = namespace.get(namespace.idFromName(`world:${worldId}`)) as unknown as {
+        compendium: (caller: Caller, request: CompendiumRequest) => Promise<Reply<unknown>>;
+      };
+      const reply = await stub.compendium(
+        { memberId: "player", role: "player", displayName: "Player" },
+        {
+          method,
+          path: `compendium${suffix}`,
+          query: {},
+          body,
+          worldName: "World",
+          accountId: "account",
+        },
+      );
+      expect(reply).toMatchObject({ ok: false, error: { _tag: "Forbidden" } });
     }
   });
 

@@ -317,10 +317,7 @@ const worldSync = <T>(operation: () => T) =>
 const requireDm = (caller: Caller, message: string) =>
   caller.role === "dm" ? Effect.void : Effect.fail(new Forbidden({ message }));
 
-type WorldContent = Omit<
-  WorldCompendium,
-  "ensureMigrated" | "lookup" | "setSources" | "handle" | "checkRequest"
-> & {
+type WorldContent = Omit<WorldCompendium, "ensureMigrated" | "lookup" | "setSources" | "handle"> & {
   ensureMigrated(): Effect.Effect<void, ApiError>;
   lookup(
     id: string,
@@ -337,7 +334,6 @@ type WorldContent = Omit<
     exportEntries(): Effect.Effect<CompendiumEntry[], ApiError>;
     prepareImport(entries: readonly PackEntry[]): Effect.Effect<PreparedSourceImport, ApiError>;
   }): void;
-  checkRequest(method: string, path: string, role: string): Effect.Effect<void, ApiError>;
   handle(
     method: string,
     path: string,
@@ -361,15 +357,8 @@ class WorldOperations {
     const storage = yield* WorldStorage;
     const bucket = yield* WorldBucket;
     const worldId = yield* WorldId;
-    const broadcast = yield* Broadcast;
     const events = yield* WorldEvents;
-    const compendium: WorldContent = new WorldCompendium({
-      sql: storage.sql,
-      transactionSync: storage.transactionSync,
-      bucket,
-      worldId,
-      broadcast,
-    });
+    const compendium: WorldContent = yield* WorldCompendium.make;
     const sources = yield* WorldSources.make(compendium);
     compendium.setSources({
       available: sources.available,
@@ -385,6 +374,7 @@ class WorldOperations {
   initialize = () =>
     Effect.gen({ self: this }, function* () {
       yield* worldSync(() => this.ensureSchema());
+      yield* this.compendium.migrate();
       yield* this.sources.migrate().pipe(Effect.mapError(corpusApiError));
       yield* this.compendium.ensureMigrated();
     });
@@ -537,7 +527,6 @@ class WorldOperations {
       r2_key TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )`);
-    this.compendium.migrate();
     // Additive columns for instances created before the feature existed.
     this.ensureColumn("templates", "layout", "layout TEXT");
     this.ensureColumn("notes", "editable_by_all", "editable_by_all INTEGER NOT NULL DEFAULT 0");
@@ -1478,8 +1467,12 @@ class WorldOperations {
     });
   compendiumRequest = (caller: Caller, request: CompendiumRequest) =>
     Effect.gen({ self: this }, function* () {
+      // Members read the compendium (sync, bodies); everything else is the DM's.
+      const read =
+        (request.method === "GET" && ["compendium", "compendium/index"].includes(request.path)) ||
+        (request.method === "POST" && request.path === "compendium/bodies");
+      if (!read) yield* requireDm(caller, "Only the DM can manage the compendium");
       yield* this.setCorpusAccount(request.accountId);
-      yield* this.compendium.checkRequest(request.method, request.path, caller.role);
       return yield* this.compendium.handle(
         request.method,
         request.path,
