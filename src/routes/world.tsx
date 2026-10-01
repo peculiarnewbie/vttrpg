@@ -84,7 +84,7 @@ export default function WorldPage() {
     setCursorsEnabled(enabled);
     saveLiveCursors(enabled);
     setCursors([]);
-    controller?.send({ type: "cursors.subscribe", enabled });
+    send({ type: "cursors.subscribe", enabled });
   };
   const togglePanel = (panel: "chat" | "tools") => {
     const next = { ...panels(), [panel]: !panels()[panel] };
@@ -131,6 +131,17 @@ export default function WorldPage() {
   const [status, setStatus] = createSignal<RealtimeStatus>("connecting");
 
   let controller: RealtimeController | undefined;
+  // Rolls, chat and searches made while the world is still loading (the
+  // compendium shows before it) go out once it connects, not into the void.
+  const early: ((controller: RealtimeController) => void)[] = [];
+  const send: RealtimeController["send"] = (frame) =>
+    controller ? controller.send(frame) : void early.push((ready) => ready.send(frame));
+  const search: RealtimeController["search"] = (query) =>
+    controller
+      ? controller.search(query)
+      : new Promise((resolve, reject) =>
+          early.push((ready) => ready.search(query).then(resolve, reject)),
+        );
   const characterUpdates = createCharacterUpdates();
   const resetCharacterUpdates = () => {
     for (const character of characterUpdates.reset())
@@ -184,7 +195,7 @@ export default function WorldPage() {
           if (next !== "open") resetCharacterUpdates();
           setCursors([]);
           if (next === "open") {
-            controller?.send({ type: "cursors.subscribe", enabled: cursorsEnabled() });
+            send({ type: "cursors.subscribe", enabled: cursorsEnabled() });
             void refreshNotes();
             void compendium.refresh();
           }
@@ -247,6 +258,7 @@ export default function WorldPage() {
           }
         },
       });
+      for (const use of early.splice(0)) use(controller);
     })();
   });
 
@@ -281,16 +293,16 @@ export default function WorldPage() {
     recipientMemberIds: string[];
   }) => {
     if (status() !== "open") return;
-    controller?.send({ type: "chat", ...input });
+    send({ type: "chat", ...input });
   };
 
   const rollDice = (notation: string, visibility: Visibility, recipientMemberIds: string[]) => {
     if (status() !== "open") return;
-    controller?.send({ type: "roll.dice", notation, visibility, recipientMemberIds });
+    send({ type: "roll.dice", notation, visibility, recipientMemberIds });
   };
 
   const roll = (characterId: string, rollId: string, visibility: Visibility) => {
-    controller?.send({ type: "roll", characterId, rollId, visibility, recipientMemberIds: [] });
+    send({ type: "roll", characterId, rollId, visibility, recipientMemberIds: [] });
   };
 
   const ticker = (characterId: string, tickerId: string, value: number) => {
@@ -362,8 +374,7 @@ export default function WorldPage() {
     });
   /** Roll an entry's oracle table; the server finds the row the dice land on. */
   const rollTable = (entryId: string, field: string) => {
-    if (status() === "open")
-      controller?.send({ type: "roll.table", entryId, field, visibility: "public" });
+    if (status() === "open") send({ type: "roll.table", entryId, field, visibility: "public" });
   };
 
   /**
@@ -372,7 +383,7 @@ export default function WorldPage() {
    */
   const rollLabelled = (notation: string, label: string, sheet?: SheetRoll) => {
     if (status() === "open")
-      controller?.send({ type: "roll.dice", notation, label, visibility: "public", ...sheet });
+      send({ type: "roll.dice", notation, label, visibility: "public", ...sheet });
   };
 
   return (
@@ -489,13 +500,11 @@ export default function WorldPage() {
                     sceneList={sceneList()}
                     onSceneList={setSceneList}
                     focus={boardFocus()}
-                    onFocus={(rect, sceneId) =>
-                      controller?.send({ type: "board.focus", sceneId, rect })
-                    }
+                    onFocus={(rect, sceneId) => send({ type: "board.focus", sceneId, rect })}
                     onPublished={acceptBoard}
                     cursors={cursors()}
                     cursorsEnabled={cursorsEnabled() && status() === "open"}
-                    onCursor={(position) => controller?.send({ type: "cursor", position })}
+                    onCursor={(position) => send({ type: "cursor", position })}
                   />
                 </Show>
                 <Show when={browsing()}>
@@ -506,9 +515,7 @@ export default function WorldPage() {
                     compendium={compendium}
                     characters={characters()}
                     templates={templates()}
-                    search={(query) =>
-                      controller ? controller.search(query) : Promise.resolve([])
-                    }
+                    search={search}
                     onRoll={(label, dice) => rollLabelled(dice, label)}
                     onRollTable={rollTable}
                     onShare={shareEntry}
@@ -631,7 +638,7 @@ export default function WorldPage() {
                         onLayoutPref={setLayoutPref}
                         onRollDice={rollLabelled}
                         onLock={(characterId, locked) =>
-                          controller?.send({ type: "character.lock", characterId, locked })
+                          send({ type: "character.lock", characterId, locked })
                         }
                         compendium={compendium}
                         onOpenEntry={setOpenEntry}
@@ -660,9 +667,7 @@ export default function WorldPage() {
                         onRoll={(label, dice) => rollLabelled(dice, label)}
                         onRollTable={rollTable}
                         onSetup={() => navigate(`/worlds/${params.id}/settings?section=compendium`)}
-                        search={(query) =>
-                          controller ? controller.search(query) : Promise.resolve([])
-                        }
+                        search={search}
                         onShare={shareEntry}
                         onBrowse={() => navigate(`/worlds/${params.id}/compendium`)}
                       />
