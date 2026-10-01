@@ -36,6 +36,9 @@ manage those. Content at scale follows [docs/corpus.md](docs/corpus.md).
   `HttpRouter`, upgrades `/api/worlds/:id/ws` to the world Durable Object, and falls
   back to static assets. Also re-exports `WorldDO`.
 - `src/server/` — Effect services, D1 repo, auth, HTTP routes, the `WorldDO`, dice engine
+- `workers/corpus/` — the corpus Worker (published libraries: D1 registry, `SourceDO`
+  drafts, immutable R2 snapshots), reached only through the table's `CORPUS` service
+  binding; see [docs/corpus.md](docs/corpus.md) and [docs/v1-plan.md](docs/v1-plan.md)
 - `src/domain/` — all shared types as **Effect Schema** (client ↔ server ↔ storage)
 - `src/client/` — fetch API client, WebSocket realtime client, session provider
 - `src/components/` + `src/routes/` — Solid UI (StyleX)
@@ -51,12 +54,61 @@ manage those. Content at scale follows [docs/corpus.md](docs/corpus.md).
 
 - Model domain types with **Effect Schema**; validate all HTTP/WS input with it
 - Use **Effect** idioms (`Effect.gen`, `Context.Service`, `Effect.catchTag`) in `src/server`
-- Raw Cloudflare bindings are wrapped in `Effect.promise` (the template pattern)
+  and `workers/` — see "Effect, fully" below
+- Raw Cloudflare bindings are wrapped in `Effect.tryPromise` with a typed error
 - Style with StyleX: tokens live in `src/theme/tokens.stylex.ts`, themes in `src/theme/themes.ts`;
   spread `sx(...)` onto Solid elements
 - Solid 2 notes: use `onSettled` (not `onMount`), `<Context value={...}>` (not `Context.Provider`),
   and `createEffect(compute, effect)` (two arguments)
 - Keep tests next to source as `*.test.ts`; use plain `vitest` + `Effect.runPromise`
+
+## Effect, fully — not in name only
+
+Server code (`src/server`, `workers/`, Durable Objects included) is Effect code.
+Wrapping imperative code in `Effect.gen` buys nothing; the point is typed
+failures and injected dependencies.
+
+- Failures are values: `Data.TaggedError` per failure kind, returned with
+  `Effect.fail`. No `throw` inside `Effect.gen`, and no `Effect.promise` around
+  work that can fail — that turns errors into untyped defects.
+- An error's type says what happened (`NotFound`, `Forbidden`, `Invalid`,
+  `Unavailable`); map it to HTTP status or a WebSocket error frame in one place
+  at the edge, never by matching message strings. Errors crossing RPC are
+  encoded with a Schema and decoded back into the same tags.
+- Dependencies are `Context.Service`s provided by `Layer`s (bindings, storage,
+  clocks, other services), not constructor arguments threaded by hand.
+- Run effects once, at the edge (the fetch/RPC/WebSocket handler). A
+  `Effect.runPromise` in the middle of a method is a smell.
+- Unexpected failures are logged (`Effect.logError`) before they're hidden
+  behind a generic message.
+
+## Check once, at the boundary
+
+Validation belongs where untrusted data enters: HTTP/WS input, RPC arguments,
+bytes read from storage written by another version. After that, trust the type.
+
+- Put constraints in the Schema (lengths, patterns, finite numbers, limits) so
+  decoding _is_ the validation; don't re-check the same rule by hand after.
+- Define each rule once in `src/domain` (an id pattern, a size limit, an
+  equality) and reuse it. A second copy of a regex or a limit will drift.
+- Don't re-validate data you produced yourself or already verified. Verify
+  immutable content (a published snapshot) once, then cache the verified form.
+- Defensive checks cost CPU on every request and code on every change. Add one
+  only for a real trust boundary or a real race, and say which in a comment.
+
+## Derive, don't sync
+
+Prefer state that is computed from a single source of truth over copies that
+must be kept in step.
+
+- Store a fact once. If something can be computed from stored data (a facet,
+  "is this a library entry", a count), compute it — or store it as a column
+  derived on write in the same transaction — instead of re-deriving it from
+  string patterns in many places.
+- When something changes, update what depends on _it_, not everything: a change
+  to one entry touches that entry's derived rows, not the whole table.
+- On the client, use `createMemo`/derived accessors over signals mirrored by
+  effects.
 
 ## Commands
 
