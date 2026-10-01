@@ -154,7 +154,8 @@ const monsterFields = (context: MarkdownContext): Record<string, CharacterValue>
       : "",
     alignment: text(at(system, "details.alignment")),
     cr,
-    cr_label: { "0.125": "1/8", "0.25": "1/4", "0.5": "1/2" }[String(cr)] ?? String(cr),
+    // Only fractions need a label ("1/8"); whole CRs read fine as the number.
+    cr_label: { "0.125": "1/8", "0.25": "1/4", "0.5": "1/2" }[String(cr)] ?? "",
     hp: `${text(at(attributes, "hp.max"))}${at(attributes, "hp.formula") ? ` (${text(at(attributes, "hp.formula"))})` : ""}`,
     speed: movement(attributes.movement),
     initiative: signed(

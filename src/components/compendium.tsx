@@ -23,7 +23,7 @@ import type {
   SheetLayout,
   SheetValues,
 } from "../domain/sheet-layout";
-import { colors, fonts, radii, skin } from "../theme/tokens.stylex";
+import { colors, fontSize, fonts, radii, skin, space } from "../theme/tokens.stylex";
 import { sx } from "../theme/sx";
 import { ListEditor, SheetBlocks } from "./sheet-blocks";
 import { styles } from "./styles.stylex";
@@ -102,7 +102,8 @@ const entryLayout = (type: EntryType, entry: CompendiumEntry): SheetLayout => {
   for (const field of fields) {
     if (field.kind === "longtext")
       blocks.push({ id: field.key, type: "text", key: field.key, label: field.label });
-    if (field.kind === "list" || field.kind === "actions" || field.kind === "progression")
+    // Actions read as a stat block (ActionList), not a table.
+    if (field.kind === "list" || field.kind === "progression")
       blocks.push({
         id: field.key,
         type: "list",
@@ -210,6 +211,10 @@ export function EntryCard(props: {
     props.type.fields.filter(
       (field) => field.kind === "reference" && ids(props.entry.fields[field.key]).length,
     );
+  const actionFields = () =>
+    props.type.fields.filter(
+      (field) => field.kind === "actions" && rowsOf(props.entry.fields[field.key]).length,
+    );
   const oracles = () =>
     props.type.fields.filter(
       (field) => field.kind === "oracle" && rowsOf(props.entry.fields[field.key]).length,
@@ -248,6 +253,43 @@ export function EntryCard(props: {
               )}
             </For>
           </div>
+        )}
+      </For>
+      <For each={actionFields()}>
+        {(field) => (
+          <section {...sx(c.actions)} aria-label={field.label} onClick={open}>
+            <span {...sx(c.actionsTitle)}>{field.label}</span>
+            <For each={rowsOf(props.entry.fields[field.key])}>
+              {(row) => (
+                <div {...sx(c.action)}>
+                  <strong>{String(row.name ?? "")}.</strong>{" "}
+                  <Show
+                    when={typeof row.roll === "string" && row.roll ? String(row.roll) : undefined}
+                  >
+                    {(roll) => (
+                      <button
+                        type="button"
+                        class="ttrpg-inline-roll"
+                        title={`Roll ${row.name ?? ""}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          props.onRoll?.(String(row.name ?? props.entry.name), roll());
+                        }}
+                      >
+                        {roll()}
+                      </button>
+                    )}
+                  </Show>{" "}
+                  <Show when={typeof row.text === "string" && row.text.trim()}>
+                    <div
+                      class="ttrpg-note-markdown ttrpg-action-text"
+                      innerHTML={renderNoteMarkdown(String(row.text), link)}
+                    />
+                  </Show>
+                </div>
+              )}
+            </For>
+          </section>
         )}
       </For>
       <For each={oracles()}>
@@ -919,6 +961,17 @@ export function CompendiumPanel(props: {
 const hair = { borderWidth: "1px", borderStyle: "solid", borderColor: colors.border } as const;
 
 const c = stylex.create({
+  actions: { display: "flex", flexDirection: "column", gap: space.x1 },
+  actionsTitle: {
+    fontFamily: fonts.display,
+    color: colors.accent,
+    fontSize: fontSize.caption,
+    borderBottomWidth: 1,
+    borderBottomStyle: "solid",
+    borderBottomColor: colors.border,
+  },
+  action: { fontSize: fontSize.body, lineHeight: 1.4 },
+
   refs: { display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "6px" },
   refMissing: { color: colors.textFaint, fontStyle: "italic" },
   chosen: {

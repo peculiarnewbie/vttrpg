@@ -105,8 +105,9 @@ export function CompendiumBrowser(props: {
       byType.set(row.typeId, (byType.get(row.typeId) ?? 0) + 1);
     return byType;
   });
+  // The first two filters as columns (a spell's level and school); every filter stays in the sidebar.
   const facetColumns = () =>
-    (type()?.filters ?? []).map((filter) => ({
+    (type()?.filters ?? []).slice(0, 2).map((filter) => ({
       key: filter.key,
       label: type()!.fields.find((field) => field.key === filter.key)?.label ?? filter.key,
     }));
@@ -694,10 +695,12 @@ const c = stylex.create({
     fontSize: fontSize.caption,
     cursor: "pointer",
     whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
   },
-  nameCell: { flex: 2, minWidth: 0 },
+  nameCell: { flex: 2, minWidth: "8em" },
   typeCell: { flex: 1, minWidth: 0 },
-  facetCell: { flex: 1, minWidth: "4.5em" },
+  facetCell: { flex: 1, minWidth: 0 },
   cellText: {
     paddingInline: space.x2,
     overflow: "hidden",
