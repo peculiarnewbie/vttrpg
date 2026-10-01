@@ -1,3 +1,5 @@
+import * as Schema from "effect/Schema";
+
 /*
  * Entry ids: `<source>/<type>/<slug>`, e.g. `world/knight/the-rust-knight` or
  * (from phase 4, libraries) `srd52/spell/fireball`. Fixed when the entry is
@@ -64,3 +66,14 @@ export const uniqueSlug = (base: string, taken: (slug: string) => boolean): stri
     if (!taken(candidate)) return candidate;
   }
 };
+
+/** The source of a library entry; world and legacy ids have no library source. */
+export const librarySource = (id: string): string | undefined => {
+  const source = parseEntryId(id)?.source;
+  return source === WORLD_SOURCE ? undefined : source;
+};
+
+/** Reuse the entry-id part rule at library management boundaries. */
+export const LibrarySourceId = Schema.String.check(
+  Schema.makeFilter((source) => validPart(source) && source !== WORLD_SOURCE),
+);

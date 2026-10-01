@@ -12,6 +12,7 @@ import {
 } from "../domain/compendium";
 import { WorldLibraries, WorldSource, CORPUS_API_VERSION } from "../domain/corpus-rpc";
 import { EntryOverride } from "../domain/overrides";
+import { CorpusError, type CorpusReply } from "../domain/corpus-errors";
 import type { SnapshotManifest } from "../domain/snapshot";
 
 let tabletop: Tabletop;
@@ -41,8 +42,15 @@ const input = (name: string, visibility: "public" | "dm" = "public"): SaveEntryI
   fields: { cost: 5 },
   visibility,
 });
-const rpc = <T>(method: string, extra: Record<string, unknown> = {}) =>
-  tabletop.corpusCall<T>(method, { apiVersion: CORPUS_API_VERSION, accountId, ...extra });
+const rpc = async <T>(method: string, extra: Record<string, unknown> = {}) => {
+  const reply = await tabletop.corpusCall<CorpusReply<T>>(method, {
+    apiVersion: CORPUS_API_VERSION,
+    accountId,
+    ...extra,
+  });
+  if (!reply.ok) throw Schema.decodeUnknownSync(CorpusError)(reply.error);
+  return reply.value;
+};
 const worldCall = (suffix: string, options: CallOptions = {}) =>
   tabletop.call(`/worlds/${worldId}/${suffix}`, options);
 const enable = (body: unknown = {}) => worldCall(`libraries/${sourceId}`, { method: "PUT", body });
@@ -156,8 +164,8 @@ it("ingests only indexes, includes sources in bounded search, and keeps source b
   });
   const db = await storage();
   const rows = await db.exec<{ body: string; fields: string }>(
-    "SELECT body, fields FROM compendium_entries WHERE id GLOB ?",
-    `${sourceId}/*`,
+    "SELECT body, fields FROM compendium_entries WHERE source_id = ?",
+    sourceId,
   );
   expect(rows.every((row) => row.body === "" && row.fields === "{}")).toBe(true);
   const delta = await index(playerIndex.rev);
@@ -629,3 +637,98 @@ it("rolls back prepared overrides and index revisions when writing a local entry
     await db.exec("DROP TRIGGER reject_import_fixture");
   }
 });
+
+it("changes only the edited entry's revision for overrides, blocks and restores", async () => {
+  const [sword, shield] = await save([input("Sword"), input("Shield")]);
+  await publish();
+  await enable();
+  let before = await index(0, cookie);
+  const shieldRev = before.upserts.find((row) => row.id === shield.id)?.rev;
+  for (const action of [
+    () =>
+      worldCall(overridePath(sword.id), {
+        method: "PUT",
+        body: { baseRev: sword.rev, patch: { body: "Table text" } },
+      }),
+    () => worldCall(overridePath(sword.id), { method: "DELETE" }),
+    () => worldCall(blockPath(sword.id), { method: "PUT" }),
+    () => worldCall(blockPath(sword.id), { method: "DELETE" }),
+  ]) {
+    expect((await action()).ok).toBe(true);
+    const delta = await index(before.rev, cookie);
+    expect(delta.rev).toBe(before.rev + 1);
+    expect([...delta.upserts.map((row) => row.id), ...delta.deletes]).toEqual([sword.id]);
+    before = await index(0, cookie);
+    expect(before.upserts.find((row) => row.id === shield.id)?.rev).toBe(shieldRev);
+  }
+});
+
+it("resolves a hundred ids in one chunk and filters hidden or blocked entries on cache hits", async () => {
+  const entries = await save(Array.from({ length: 100 }, (_, n) => input(`Gear ${n}`)));
+  const manifest = await publish();
+  expect(manifest.bodyChunks).toHaveLength(1);
+  await enable();
+  const ids = entries.map((entry) => entry.id);
+  expect((await bodies(ids)).entries).toHaveLength(100);
+  await worldCall(overridePath(ids[0]), {
+    method: "PUT",
+    body: { baseRev: entries[0].rev, patch: { visibility: "dm" } },
+  });
+  await worldCall(blockPath(ids[1]), { method: "PUT" });
+  const fetched = await bodies(ids);
+  expect(fetched.entries).toHaveLength(98);
+  expect(fetched.missing).toEqual(ids.slice(0, 2));
+  expect((await bodies(ids, cookie)).entries).toHaveLength(99);
+});
+
+it("opens a socket without starting a corpus check", async () => {
+  let session = "";
+  const isolated = await startTabletop({
+    cookie: () => session,
+    unsafeInspectDurableObjects: true,
+    workers: [
+      {
+        name: "slow-corpus",
+        modules: true,
+        compatibilityDate: "2026-03-22",
+        script: `
+      import { WorkerEntrypoint } from "cloudflare:workers";
+      let checks = 0;
+      export class SlowCorpus extends WorkerEntrypoint {
+        getLatest() { checks++; return new Promise(resolve => setTimeout(() => resolve({ ok: true, value: null }), 10000)); }
+      }
+      export default { fetch() { return Response.json({ checks }); } };
+    `,
+      },
+    ],
+    workerOptions: {
+      bindings: { FLAGS: "corpus" },
+      r2Buckets: { BUCKET: "BUCKET", CORPUS_BUCKET: "socket-test-snapshots" },
+      serviceBindings: { CORPUS: { name: "slow-corpus", entrypoint: "SlowCorpus" } },
+    },
+  });
+  try {
+    session = await isolated.signin("socket-dm@example.test", "DM");
+    const world = (await (
+      await isolated.call("/worlds", { method: "POST", body: { name: "Socket" } })
+    ).json()) as { id: string };
+    await isolated.call(`/worlds/${world.id}/compendium/index`);
+    const db = await isolated.mf.unsafeGetDurableObjectStorage("tabletop", "WorldDO", {
+      name: `world:${world.id}`,
+    });
+    await db.exec(
+      "INSERT INTO world_sources (source_id, version, mode, manifest) VALUES ('slow', 1, 'pinned', '{}')",
+    );
+    await db.exec(
+      "INSERT INTO settings (key, value) VALUES ('corpus_last_check', ?)",
+      String(Date.now()),
+    );
+    const peer = await isolated.connect({ worldId: world.id, cookie: session });
+    const slow = await isolated.mf.getWorker("slow-corpus");
+    expect(await (await slow.fetch("https://slow.test/")).json()).toEqual({ checks: 0 });
+    expect(peer.response.status).toBe(101);
+    peer.socket.close();
+  } finally {
+    await isolated.dispose();
+  }
+}, 30000);

@@ -1,13 +1,24 @@
 import { canSeeNote, canSaveNote } from "../domain/note-permissions";
 import { DurableObject } from "cloudflare:workers";
 import * as Schema from "effect/Schema";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as ManagedRuntime from "effect/ManagedRuntime";
 import { SheetLayout, type ListRow } from "../domain/sheet-layout";
 import { notationRefs, parseNotation, rollText, type Parsed } from "../domain/dice-notation";
 import { refValues, sheetRefLookup } from "../domain/sheet-refs";
 import { layoutLimitsError } from "../domain/template-io";
 import { WorldCompendium } from "./world-compendium";
-import { WorldSources } from "./world-sources";
-import { corpusEnabled, type CorpusBindings } from "./corpus-env";
+import { WorldSources, SourceStorage, CorpusBucket, CorpusAccountId } from "./world-sources";
+import {
+  CorpusClient,
+  corpusClient,
+  corpusIO,
+  corpusEdge,
+  corpusStatus,
+  corpusEnabled,
+  type CorpusBindings,
+} from "./corpus-env";
 import { computeStats, evaluateRoll, makeResolver, parseRollCommand } from "../domain/dice";
 import {
   Character,
@@ -236,7 +247,11 @@ export const defaultTemplate = (worldId: string): SheetTemplate => ({
 
 export class WorldDO extends DurableObject<WorldDoEnv> {
   private readonly compendium: WorldCompendium;
-  private readonly sources: WorldSources;
+  private readonly sources: Promise<WorldSources>;
+  private readonly sourceRuntime: ManagedRuntime.ManagedRuntime<
+    SourceStorage | CorpusBucket | CorpusAccountId | CorpusClient,
+    never
+  >;
   constructor(ctx: DurableObjectState, env: WorldDoEnv) {
     super(ctx, env);
     this.compendium = new WorldCompendium({
@@ -246,20 +261,36 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       bucket: env.BUCKET,
       worldId: this.worldId,
     });
-    this.sources = new WorldSources({
-      sql: ctx.storage.sql,
-      transactionSync: (closure) => ctx.storage.transactionSync(closure),
-      compendium: this.compendium,
-      corpus: corpusEnabled(env) ? env.CORPUS : undefined,
-      bucket: corpusEnabled(env) ? env.CORPUS_BUCKET : undefined,
-      accountId: () =>
-        ctx.storage.sql
-          .exec<{ value: string }>("SELECT value FROM settings WHERE key = 'corpus_account_id'")
-          .toArray()[0]?.value ?? "",
-    });
-    this.compendium.setSources(this.sources);
+    this.sourceRuntime = ManagedRuntime.make(
+      Layer.mergeAll(
+        Layer.succeed(SourceStorage, {
+          sql: ctx.storage.sql,
+          transactionSync: (closure) => ctx.storage.transactionSync(closure),
+        }),
+        Layer.succeed(CorpusClient, corpusClient(corpusEnabled(env) ? env.CORPUS : undefined)),
+        Layer.succeed(CorpusBucket, corpusEnabled(env) ? env.CORPUS_BUCKET : undefined),
+        Layer.succeed(
+          CorpusAccountId,
+          () =>
+            ctx.storage.sql
+              .exec<{ value: string }>("SELECT value FROM settings WHERE key = 'corpus_account_id'")
+              .toArray()[0]?.value ?? "",
+        ),
+      ),
+    );
+    this.sources = this.sourceRuntime.runPromise(WorldSources.make(this.compendium));
     ctx.blockConcurrencyWhile(async () => {
       this.ensureSchema();
+      const sources = await this.sources;
+      await this.sourceRuntime.runPromise(sources.migrate());
+      this.compendium.setSources({
+        available: sources.available,
+        ownsType: (id) => sources.ownsType(id),
+        resolve: (id, role) => this.sourceRuntime.runPromise(sources.resolve(id, role)),
+        bodies: (ids, role) => this.sourceRuntime.runPromise(sources.bodies(ids, role)),
+        exportEntries: () => this.sourceRuntime.runPromise(sources.exportEntries()),
+        prepareImport: (entries) => this.sourceRuntime.runPromise(sources.prepareImport(entries)),
+      });
       await this.compendium.ensureMigrated();
     });
   }
@@ -519,7 +550,6 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       updated_at TEXT NOT NULL
     )`);
     this.compendium.migrate();
-    this.sources.migrate();
     // Additive columns for instances created before the feature existed.
     this.ensureColumn("templates", "layout", "layout TEXT");
     this.ensureColumn("notes", "editable_by_all", "editable_by_all INTEGER NOT NULL DEFAULT 0");
@@ -1300,17 +1330,12 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     const corpusAccountId = request.headers.get("x-ttrpg-corpus-account-id");
     if (corpusAccountId)
       this.ctx.storage.sql.exec(
-        "INSERT INTO settings (key,value) VALUES ('corpus_account_id',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        "INSERT INTO settings (key,value) VALUES ('corpus_account_id',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE settings.value <> excluded.value",
         corpusAccountId,
       );
 
     if (request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
-      if (corpusEnabled(this.env)) {
-        await this.sources
-          .check()
-          .catch((error: unknown) => console.error("Library refresh failed", error));
-        await this.scheduleSourceCheck();
-      }
+      await this.scheduleSourceCheck();
       return this.handleUpgrade(request);
     }
 
@@ -1321,21 +1346,42 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
     return json({ error: "Not found" }, 404);
   }
 
-  private async scheduleSourceCheck(): Promise<void> {
-    if (
-      corpusEnabled(this.env) &&
-      this.ctx.storage.sql.exec("SELECT source_id FROM world_sources LIMIT 1").toArray().length
-    )
-      await this.ctx.storage.setAlarm(Date.now() + 15 * 60 * 1000);
-    else await this.ctx.storage.deleteAlarm();
+  private async scheduleSourceCheck(retry = false): Promise<void> {
+    const storage = this.ctx.storage;
+    await this.sourceRuntime.runPromise(
+      corpusEdge(
+        Effect.gen({ self: this }, function* () {
+          if (
+            !corpusEnabled(this.env) ||
+            !storage.sql.exec("SELECT source_id FROM world_sources LIMIT 1").toArray().length
+          ) {
+            yield* corpusIO(() => storage.deleteAlarm());
+            return;
+          }
+          const last = Number(
+            storage.sql
+              .exec<{ value: string }>("SELECT value FROM settings WHERE key = 'corpus_last_check'")
+              .toArray()[0]?.value ?? 0,
+          );
+          const due = retry
+            ? Date.now() + 15 * 60 * 1000
+            : Math.max(Date.now() + 1000, last + 15 * 60 * 1000);
+          const scheduled = yield* corpusIO(() => storage.getAlarm());
+          if (scheduled === null || due < scheduled) yield* corpusIO(() => storage.setAlarm(due));
+        }),
+        () => undefined,
+      ),
+    );
   }
 
   async alarm(): Promise<void> {
-    if (corpusEnabled(this.env))
-      await this.sources
-        .check()
-        .catch((error: unknown) => console.error("Library refresh failed", error));
-    await this.scheduleSourceCheck();
+    if (corpusEnabled(this.env)) {
+      const sources = await this.sources;
+      await this.sourceRuntime.runPromise(
+        sources.check().pipe(Effect.catchCause((cause) => Effect.logError(cause))),
+      );
+    }
+    await this.scheduleSourceCheck(true);
   }
 
   private handleUpgrade(request: Request): Response {
@@ -1402,7 +1448,12 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
         path.startsWith("compendium/overrides/") ||
         path.startsWith("compendium/blocked/")
       ) {
-        const response = await this.sources.handle(request.method, path, body, role);
+        const sources = await this.sources;
+        const response = await this.sourceRuntime.runPromise(
+          corpusEdge(sources.handle(request.method, path, body, role), (error) =>
+            json({ error: error.message }, corpusStatus(error)),
+          ),
+        );
         await this.scheduleSourceCheck();
         return response;
       }

@@ -2,7 +2,6 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import {
-  CORPUS_API_VERSION,
   SystemInput,
   SourceInput,
   SaveEntriesCall,
@@ -10,6 +9,8 @@ import {
   type CorpusApi,
   type CorpusCall,
 } from "../domain/corpus-rpc";
+import type { CorpusReply } from "../domain/corpus-errors";
+import { CorpusClient, corpusEdge, corpusStatus } from "./corpus-env";
 import { CorpusBinding, CurrentUser } from "./services";
 
 const EntriesInput = Schema.Struct({ entries: SaveEntriesCall.fields.entries });
@@ -19,7 +20,7 @@ type Action = (
   context: CorpusCall,
   body: unknown,
   sourceId: string,
-) => Promise<unknown>;
+) => Promise<CorpusReply<unknown>>;
 
 /** Management for local dev and tests only (`corpus-admin`); the corpus has no public HTTP route. */
 const corpusRoute = (
@@ -53,16 +54,13 @@ const corpusRoute = (
           return HttpServerResponse.jsonUnsafe({ error: "Invalid corpus data" }, { status: 400 });
         }
       }
-      const context: CorpusCall = { apiVersion: CORPUS_API_VERSION, accountId: user.id };
-      const result = yield* Effect.tryPromise({
-        try: () => action(corpus, context, body, params.sourceId ?? ""),
-        catch: (error) => (error instanceof Error ? error.message : "Corpus request failed"),
-      }).pipe(
-        Effect.match({
-          onSuccess: (value) => HttpServerResponse.jsonUnsafe(value ?? null),
-          onFailure: (message) =>
-            HttpServerResponse.jsonUnsafe({ error: message }, { status: 400 }),
-        }),
+      const client = yield* CorpusClient;
+      const result = yield* corpusEdge(
+        client
+          .call((api, context) => action(api, context, body, params.sourceId ?? ""), user.id)
+          .pipe(Effect.map((value) => HttpServerResponse.jsonUnsafe(value ?? null))),
+        (error) =>
+          HttpServerResponse.jsonUnsafe({ error: error.message }, { status: corpusStatus(error) }),
       );
       return result;
     }),
