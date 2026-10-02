@@ -372,6 +372,18 @@ export const BuilderPart = Schema.Union([
     markdown: StepText(4000),
     ...partFields,
   }),
+  Schema.Struct({
+    type: Schema.Literal("assign"),
+    /** Shown above the chips; defaults to the kind's name. */
+    label: Schema.optional(StepText(60)),
+    /** Fixed values to place, e.g. a standard array. */
+    values: Schema.Array(Schema.Union([Schema.Finite, StepText(30)])).check(Schema.isMaxLength(12)),
+    /** Stat, field or tracker keys to place onto. */
+    targets: Schema.Array(Schema.String).check(Schema.isMaxLength(12)),
+    /** Trackers also take the placed value as their maximum. */
+    max: Schema.optional(Schema.Boolean),
+    ...partFields,
+  }),
 ]);
 export type BuilderPart = typeof BuilderPart.Type;
 
@@ -386,6 +398,7 @@ const knownPartTypes: Record<BuilderPart["type"], true> = {
   budget: true,
   scores: true,
   text: true,
+  assign: true,
 };
 export const isKnownPartType = (type: string): type is BuilderPart["type"] =>
   Object.hasOwn(knownPartTypes, type);

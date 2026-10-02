@@ -455,6 +455,33 @@ export function ItemRows<T extends Record<string, unknown>>(props: {
   );
 }
 
+/** Comma-separated items; saved when you leave the field, so a typed comma isn't tidied away. */
+export function ListInput(props: {
+  label: string;
+  value: readonly (string | number)[];
+  placeholder?: string;
+  onChange: (items: string[]) => void;
+}) {
+  return (
+    <label {...sx(e.field)}>
+      {props.label}
+      <input
+        {...sx(styles.input, e.small)}
+        value={props.value.join(", ")}
+        placeholder={props.placeholder}
+        onChange={(event) =>
+          props.onChange(
+            event.currentTarget.value
+              .split(",")
+              .map((item) => item.trim())
+              .filter(Boolean),
+          )
+        }
+      />
+    </label>
+  );
+}
+
 export function TextInput(props: {
   label: string;
   value: string;

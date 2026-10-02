@@ -79,12 +79,13 @@ test("readouts show formulas and where they come from, and write nothing", async
   await expect(readouts).toBeVisible();
   await expect(readouts.getByRole("note")).toHaveCount(0);
   // floor((14 - 10) / 2) is 2; a formula that doesn't parse shows "?".
-  await expect(readouts.getByRole("button", { name: "2" })).toBeVisible();
-  await expect(readouts.getByRole("button", { name: "28" })).toBeVisible();
-  await expect(readouts.getByRole("button", { name: "?" })).toBeVisible();
+  await expect(readouts.getByRole("button", { name: "2", exact: true })).toBeVisible();
+  await expect(readouts.getByRole("button", { name: "28", exact: true })).toBeVisible();
+  const broken = readouts.getByRole("button", { name: /^Formula problem:/ });
+  await expect(broken).toHaveText("?");
 
   // Clicking a value shows the formula and each value it read, with labels.
-  await readouts.getByRole("button", { name: "28" }).click();
+  await readouts.getByRole("button", { name: "28", exact: true }).click();
   const note = readouts.getByRole("note");
   await expect(note).toContainText("@str * 2");
   await expect(note).toContainText("STR");
@@ -92,7 +93,7 @@ test("readouts show formulas and where they come from, and write nothing", async
   await page.keyboard.press("Escape");
 
   // "?" names the reason.
-  await readouts.getByRole("button", { name: "?" }).click();
+  await broken.click();
   await expect(readouts.getByRole("note")).toContainText("Expected an expression");
   await page.keyboard.press("Escape");
 

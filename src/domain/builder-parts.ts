@@ -144,6 +144,26 @@ export const builderParts: { readonly [T in BuilderPart["type"]]: PartKind<T> } 
       if (!part.markdown.trim()) problem(`${name} has a text part with no guidance`);
     },
   },
+  assign: {
+    label: "Place values",
+    blank: () => ({ type: "assign", values: [], targets: [] }),
+    check: (part, { layout, name, problem }) => {
+      if (!part.values.length) problem(`${name} has a place-values part with no values to place`);
+      // Stat, field and tracker keys, in sheet order (groups already flattened).
+      const keys = new Set(
+        allBlocks(layout).flatMap((block) =>
+          block.type === "stats" || block.type === "fields" || block.type === "trackers"
+            ? block.items.map((item) => item.key)
+            : [],
+        ),
+      );
+      for (const target of part.targets)
+        if (!keys.has(target))
+          problem(
+            `${name} places onto "${target}", which isn't a stat, field or tracker on the sheet`,
+          );
+    },
+  },
 };
 
 /** The kind of a part, typed for that part. */
