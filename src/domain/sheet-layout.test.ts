@@ -87,4 +87,10 @@ describe("block conditions", () => {
     expect(blockShown(filled, { class: "Wizard" })).toBe(true);
     expect(blockShown(filled, {})).toBe(false);
   });
+  it("asks `holds` about a formula, and shows the block without it", () => {
+    const formula = { when: { expr: "@level >= 3" } };
+    expect(blockShown(formula, {})).toBe(true);
+    expect(blockShown(formula, {}, (expr) => expr === "@level >= 3")).toBe(true);
+    expect(blockShown(formula, {}, () => false)).toBe(false);
+  });
 });

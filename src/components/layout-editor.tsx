@@ -31,13 +31,14 @@ import {
   type ListRow,
   type SheetValues,
 } from "../domain/sheet-layout";
-import { explain } from "../domain/derived";
-import { formulaRefs } from "../domain/formula-help";
+import { explain, type Expr, type Scalar, type Term } from "../domain/derived";
+import { formulaRefs, type RefSuggestion } from "../domain/formula-help";
 import { layoutLimitsError } from "../domain/template-io";
 import { layoutProblems, sheetDerived, sheetScope } from "../domain/sheet-refs";
 import { sx } from "../theme/sx";
 import { BuilderEditor } from "./builder-editor";
 import { e, ItemRows, summarize, TextInput, type Column } from "./editor-kit";
+import { FormulaInput } from "./formula-input";
 import { SheetBlocks } from "./sheet-blocks";
 import { styles } from "./styles.stylex";
 
@@ -47,6 +48,9 @@ import { styles } from "./styles.stylex";
  * and a live preview at panel or wide width where each block's style and width
  * set the layout's defaults. A JSON view covers anything the forms don't.
  */
+
+/** The "only show when" choice that switches to a formula condition. */
+const FORMULA = "\u0000formula";
 
 function Inspector(props: {
   block: LayoutBlock;
@@ -59,8 +63,21 @@ function Inspector(props: {
   keys: readonly string[];
   /** Suggestions and preview for a list's computed-column formulas. */
   columnFormula?: (list: string) => NonNullable<Column["formula"]>;
+  /** Suggestions and preview for a "show when" formula. */
+  whenFormula?: {
+    suggestions: () => readonly RefSuggestion[];
+    preview?: (expr: Expr) => { value: Scalar; terms: readonly Term[] } | undefined;
+  };
 }) {
   const b = () => props.block;
+  // The block's condition, by kind: a value empty or filled, or a formula.
+  const when = () => {
+    const condition = b().when;
+    if (!condition) return undefined;
+    return "expr" in condition
+      ? { mode: "expr" as const, expr: condition.expr }
+      : { mode: "key" as const, key: condition.key, is: condition.is };
+  };
   const patch = (partial: Record<string, unknown>) =>
     props.onChange({ ...props.block, ...partial } as LayoutBlock);
   const variants = () => blockVariants[b().type] as readonly string[];
@@ -144,26 +161,46 @@ function Inspector(props: {
           Only show when
           <select
             {...sx(styles.select, e.small)}
-            value={b().when?.key ?? ""}
+            value={when()?.mode === "key" ? when()!.key : when()?.mode === "expr" ? FORMULA : ""}
             onChange={(event) => {
               const key = event.currentTarget.value;
-              patch({ when: key ? { key, is: b().when?.is ?? "empty" } : undefined });
+              const current = when();
+              patch({
+                when:
+                  key === FORMULA
+                    ? { expr: current?.mode === "expr" ? current.expr : "" }
+                    : key
+                      ? { key, is: current?.mode === "key" ? current.is : "empty" }
+                      : undefined,
+              });
             }}
           >
             <option value="">Always shown</option>
-            <For each={props.keys}>{(key) => <option value={key}>{key}</option>}</For>
+            <For each={props.keys}>
+              {(key) => (
+                <option value={key} selected={when()?.mode === "key" && when()!.key === key}>
+                  {key}
+                </option>
+              )}
+            </For>
+            <option value={FORMULA} selected={when()?.mode === "expr"}>
+              a formula holds…
+            </option>
           </select>
         </label>
-        <Show when={b().when}>
-          {(when) => (
+        <Show when={when()?.mode === "key" ? when() : undefined}>
+          {(condition) => (
             <label {...sx(e.field)}>
               is
               <select
                 {...sx(styles.select, e.small)}
-                value={when().is}
+                value={condition().is}
                 onChange={(event) =>
                   patch({
-                    when: { key: when().key, is: event.currentTarget.value as "empty" | "filled" },
+                    when: {
+                      key: condition().key,
+                      is: event.currentTarget.value as "empty" | "filled",
+                    },
                   })
                 }
               >
@@ -174,6 +211,22 @@ function Inspector(props: {
           )}
         </Show>
       </div>
+      <Show when={when()?.mode === "expr" ? when() : undefined}>
+        {(condition) => (
+          <label {...sx(e.field)}>
+            Formula
+            <FormulaInput
+              condition
+              label="Only show when formula"
+              placeholder="@level >= 3"
+              value={condition().expr ?? ""}
+              suggestions={props.whenFormula?.suggestions() ?? []}
+              preview={props.whenFormula?.preview}
+              onInput={(expr) => patch({ when: { expr } })}
+            />
+          </label>
+        )}
+      </Show>
       <Switch>
         <Match when={b().type === "heading" && b()}>
           {(block) => (
@@ -1102,6 +1155,10 @@ export function LayoutEditor(props: {
                 onChange={(next) =>
                   props.onChange(updateBlock(props.layout, current().id, () => next))
                 }
+                whenFormula={{
+                  suggestions: () => formulaRefs(props.layout),
+                  preview: (expr) => explain(expr, sheetScope(props.layout, previewValues())),
+                }}
                 columnFormula={(list) => ({
                   suggestions: () => formulaRefs(props.layout, list),
                   // On the preview sheet's first row of this list, if it has one.

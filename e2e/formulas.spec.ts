@@ -29,6 +29,8 @@ const layout: SheetLayout = {
             { key: "loop_a", label: "Looped" },
           ],
         },
+        { id: "mighty", type: "heading", text: "Mighty", when: { expr: "@str >= 13" } },
+        { id: "feeble", type: "heading", text: "Feeble", when: { expr: "@str < 8" } },
       ],
     },
   ],
@@ -64,6 +66,14 @@ test("the formula editor suggests values, shows the result and names mistakes", 
 
   await page.getByRole("button", { name: "Formula functions" }).first().click();
   await expect(page.getByRole("table", { name: "Formula functions" })).toContainText("step");
+
+  // A block's "only show when" can be a formula, checked against the preview sheet.
+  await page.locator(`[data-row="mighty"]`).click();
+  const condition = page.getByRole("combobox", { name: "Only show when formula" });
+  await expect(condition).toHaveValue("@str >= 13");
+  await expect(page.getByRole("status").filter({ hasText: "doesn't apply" })).toBeVisible();
+  await condition.fill("@str >= 13 and");
+  await expect(condition).toHaveAttribute("aria-invalid", "true");
 });
 
 test("a computed value shows where it comes from, and a broken one shows why", async ({
@@ -80,6 +90,8 @@ test("a computed value shows where it comes from, and a broken one shows why", a
   await table.open(table.player);
   const sheet = page.locator("#world-tools");
   await expect(sheet.getByRole("heading", { name: "Brute" })).toBeVisible();
+  await expect(sheet.getByText("Mighty", { exact: true })).toBeVisible();
+  await expect(sheet.getByText("Feeble", { exact: true })).toHaveCount(0);
 
   await sheet.getByRole("button", { name: "2", exact: true }).click();
   const note = sheet.getByRole("note");

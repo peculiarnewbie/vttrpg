@@ -43,7 +43,7 @@ import {
 } from "../domain/compendium-rows";
 import { searchEntries } from "../domain/compendium-search";
 import { explain, parseExpr, type Scalar } from "../domain/derived";
-import { sheetDerived, sheetRefLookup, sheetScope } from "../domain/sheet-refs";
+import { formulaHolds, sheetDerived, sheetRefLookup, sheetScope } from "../domain/sheet-refs";
 import {
   PROGRESS_BOXES,
   TICKS_PER_BOX,
@@ -1139,6 +1139,8 @@ type Ctx = Omit<
   derivedCell: (column: ListColumn, row: ListRow) => Scalar | undefined;
   /** Where a derived value comes from: its formula, what it read, or why it failed. */
   why: (key: string) => Why | undefined;
+  /** Whether a condition formula holds on this character (a block's `when`). */
+  holds: (formula: string) => boolean;
 };
 
 type Why = {
@@ -2474,7 +2476,7 @@ function Group(props: { block: GroupBlock; ctx: Ctx }) {
 
 /** Conditional blocks hide on the sheet but stay reachable while editing or styling. */
 const shown = (block: LayoutBlock, ctx: Ctx) =>
-  ctx.editing || ctx.customize || blockShown(block, ctx.values);
+  ctx.editing || ctx.customize || blockShown(block, ctx.values, ctx.holds);
 
 function BlockCell(props: { block: LayoutBlock; ctx: Ctx }) {
   return (
@@ -2564,6 +2566,8 @@ export function SheetBlocks(props: Props) {
     computed,
     derivedCell,
     why,
+    holds: (formula) =>
+      formulaHolds(formula, sheetScope(props.layout, refSource(), undefined, derived())),
     readOnly: props.readOnly,
     compendium: props.compendium,
     onOpenEntry: props.onOpenEntry,

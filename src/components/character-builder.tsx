@@ -1,7 +1,8 @@
 import * as stylex from "@stylexjs/stylex";
 import type { JSX } from "@solidjs/web";
 import { For, Show, createSignal } from "solid-js";
-import { evaluate, parseExpr, type Scope } from "../domain/derived";
+import type { Scope } from "../domain/derived";
+import { formulaHolds } from "../domain/sheet-refs";
 import {
   isKnownPart,
   type BuilderPart,
@@ -35,18 +36,9 @@ type Props = {
   renderBlocks: (ids: readonly string[]) => JSX.Element;
 };
 
-/**
- * Whether a step's or part's condition holds on this character. No
- * condition, or one that doesn't parse (the layout editor names the
- * problem), means it applies — a typo never hides a step.
- */
-const holds = (formula: string | undefined, scope: () => Scope, otherwise: boolean) => {
-  if (!formula?.trim()) return otherwise;
-  const parsed = parseExpr(formula);
-  if (!parsed.ok) return otherwise;
-  const value = evaluate(parsed.value, scope());
-  return typeof value === "string" ? value.trim() !== "" : value !== 0;
-};
+/** A step's or part's condition; none means it applies (see {@link formulaHolds}). */
+const holds = (formula: string | undefined, scope: () => Scope, otherwise: boolean) =>
+  formula?.trim() ? formulaHolds(formula, scope()) : otherwise;
 
 export function CharacterBuilder(props: Props) {
   const steps = () => props.context.layout.builder?.steps ?? [];

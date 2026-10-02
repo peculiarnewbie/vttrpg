@@ -172,6 +172,19 @@ export const sheetScope = (
 };
 
 /**
+ * Whether a condition formula holds on this scope: a non-zero number or
+ * non-blank text. One that doesn't parse holds, so a typo never hides
+ * something (the layout editor names the problem).
+ */
+export const formulaHolds = (formula: string, scope: Scope): boolean => {
+  if (!formula.trim()) return true;
+  const parsed = parseExpr(formula);
+  if (!parsed.ok) return true;
+  const value = evaluate(parsed.value, scope);
+  return typeof value === "string" ? value.trim() !== "" : value !== 0;
+};
+
+/**
  * Lookup for {@link rollNotation}. Labels come from the layout: a derived
  * value's label, else the label of a stat/field/tracker item with that key,
  * else a list column's label for `@row.column`, else the key itself. Refs that
@@ -281,6 +294,8 @@ export const layoutProblems = (layout: SheetLayout): string[] => {
       problems.push(`Derived "${item.label}" refers to itself`);
   }
   for (const block of allBlocks(layout)) {
+    if (block.when && "expr" in block.when)
+      expression(block.id, block.when.expr, false, `Block "${block.id}" shows when`);
     switch (block.type) {
       case "rolls":
         for (const item of block.items) roll(item.label, item.dice);

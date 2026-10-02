@@ -58,11 +58,15 @@ export type BlockVariant<T extends BlockType> = (typeof blockVariants)[T][number
 
 const Span = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: GRID_COLUMNS }));
 
-/** Show a block only while a value is empty or filled (hidden blocks still show while editing). */
-export const BlockCondition = Schema.Struct({
-  key: Schema.String,
-  is: Schema.Literals(["empty", "filled"]),
-});
+/**
+ * Show a block only while a value is empty or filled, or while a formula
+ * (derived.ts) holds, e.g. `@level >= 3`. Hidden blocks still show while
+ * editing.
+ */
+export const BlockCondition = Schema.Union([
+  Schema.Struct({ key: Schema.String, is: Schema.Literals(["empty", "filled"]) }),
+  Schema.Struct({ expr: Schema.String.check(Schema.isMaxLength(400)) }),
+]);
 export type BlockCondition = typeof BlockCondition.Type;
 
 const common = {
@@ -425,9 +429,21 @@ const filled = (value: SheetValues[string]) =>
       ? value.length > 0
       : value !== undefined && value !== false;
 
-/** Whether a block's `when` condition holds for these values (always true without one). */
-export const blockShown = (block: { when?: BlockCondition }, values: SheetValues) =>
-  !block.when || filled(values[block.when.key]) === (block.when.is === "filled");
+/**
+ * Whether a block's `when` condition holds for these values (always true
+ * without one). A formula condition needs `holds` (sheet-refs evaluates it);
+ * without it, the block shows.
+ */
+export const blockShown = (
+  block: { when?: BlockCondition },
+  values: SheetValues,
+  holds?: (expr: string) => boolean,
+) => {
+  const when = block.when;
+  if (!when) return true;
+  if ("expr" in when) return holds?.(when.expr) ?? true;
+  return filled(values[when.key]) === (when.is === "filled");
+};
 
 /** Every tracker item in a layout, groups included, in sheet order. */
 export const layoutTrackers = (layout: SheetLayout): TrackerItem[] =>

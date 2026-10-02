@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SheetLayout, SheetValues } from "./sheet-layout";
 import {
+  formulaHolds,
   layoutProblems,
   refValues,
   sheetDerived,
@@ -243,6 +244,19 @@ describe("layoutProblems (expressions)", () => {
     ]);
   });
 
+  it("checks a block's formula condition", () => {
+    const sheet = withBlocks([
+      { id: "stats", type: "stats", items: [{ key: "str", label: "STR" }] },
+      { id: "late", type: "heading", text: "Late", when: { expr: "@str >= 3 and" } },
+      { id: "unknown", type: "heading", text: "Unknown", when: { expr: "@level >= 3" } },
+      { id: "fine", type: "heading", text: "Fine", when: { expr: "@str_mod >= 1" } },
+    ]);
+    expect(layoutProblems(sheet)).toEqual([
+      'Block "late" shows when: Expected an expression at 13',
+      'Block "unknown" shows when uses @level, which isn\'t on the sheet',
+    ]);
+  });
+
   it("reports a missing derived-column expression and keeps first duplicate derived keys", () => {
     expect(
       layoutProblems({
@@ -328,6 +342,20 @@ describe("layoutProblems (needs dice-notation)", () => {
       'Roll "Pool" uses @missing, which isn\'t on the sheet',
       'Roll "Pool" uses @row.bonus, which isn\'t on the sheet',
     ]);
+  });
+});
+
+describe("formulaHolds", () => {
+  const scope = valueScope({ name: "Ash", level: 2, blank: " " });
+  it("holds for non-zero numbers and non-blank text", () => {
+    expect(formulaHolds("@level >= 2", scope)).toBe(true);
+    expect(formulaHolds("@level > 2", scope)).toBe(false);
+    expect(formulaHolds("@name", scope)).toBe(true);
+    expect(formulaHolds("@blank", scope)).toBe(false);
+  });
+  it("holds when the formula is blank or doesn't parse", () => {
+    expect(formulaHolds("", scope)).toBe(true);
+    expect(formulaHolds("@level >=", scope)).toBe(true);
   });
 });
 
