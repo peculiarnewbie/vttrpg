@@ -57,6 +57,43 @@ export type PartKind<T extends BuilderPart["type"]> = {
   readonly check: (part: PartOf<T>, checks: PartChecks) => void;
 };
 
+/** What an options part can fill: a fields/stats item (one value), a text block, or a checks block. */
+export type OptionsTarget =
+  | { readonly kind: "text"; readonly key: string; readonly label: string }
+  | {
+      readonly kind: "checks";
+      readonly key: string;
+      readonly label: string;
+      readonly options: readonly string[];
+    };
+
+/** Fillable values in sheet order: fields/stats items, text blocks, checks blocks. */
+export const optionsTargets = (layout: SheetLayout): OptionsTarget[] =>
+  allBlocks(layout).flatMap((block): OptionsTarget[] => {
+    if (block.type === "fields" || block.type === "stats")
+      return block.items.map((item) => ({
+        kind: "text" as const,
+        key: item.key,
+        label: item.label,
+      }));
+    if (block.type === "text")
+      return [{ kind: "text" as const, key: block.key, label: block.label ?? block.key }];
+    if (block.type === "checks")
+      return [
+        {
+          kind: "checks" as const,
+          key: block.key,
+          label: block.label ?? block.key,
+          options: block.options,
+        },
+      ];
+    return [];
+  });
+
+/** The value an options part fills, if its key is still on the sheet. */
+export const optionsTarget = (layout: SheetLayout, key: string): OptionsTarget | undefined =>
+  optionsTargets(layout).find((target) => target.key === key);
+
 export const builderParts: { readonly [T in BuilderPart["type"]]: PartKind<T> } = {
   blocks: {
     label: "Sheet blocks",
@@ -162,6 +199,31 @@ export const builderParts: { readonly [T in BuilderPart["type"]]: PartKind<T> } 
           problem(
             `${name} places onto "${target}", which isn't a stat, field or tracker on the sheet`,
           );
+    },
+  },
+  options: {
+    label: "Pick from options",
+    blank: (layout) => ({ type: "options", key: optionsTargets(layout)[0]?.key ?? "" }),
+    check: (part, { layout, name, problem }) => {
+      const target = optionsTarget(layout, part.key);
+      if (!target)
+        problem(
+          `${name} offers options for "${part.key}", which isn't a field, stat, text, or checks value on the sheet`,
+        );
+      if ((part.grants?.length ?? 0) > 0 && target && target.kind !== "checks")
+        problem(`${name} gives options for "${part.key}", which isn't a checks block`);
+      if (target?.kind === "checks" || !target) {
+        // Grants are meaningful on a checks target, where empty options fall
+        // back to the block's own options — the membership check follows suit.
+        const offered = part.options?.length
+          ? part.options.map((option) => option.label)
+          : target?.kind === "checks"
+            ? [...target.options]
+            : [];
+        for (const grant of part.grants ?? [])
+          if (!offered.includes(grant))
+            problem(`${name} gives "${grant}", which isn't one of its options`);
+      }
     },
   },
 };

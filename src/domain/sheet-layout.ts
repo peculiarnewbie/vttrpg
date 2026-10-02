@@ -384,6 +384,22 @@ export const BuilderPart = Schema.Union([
     max: Schema.optional(Schema.Boolean),
     ...partFields,
   }),
+  Schema.Struct({
+    type: Schema.Literal("options"),
+    /** A fields/stats item, a text block, or a checks block: the value this fills. */
+    key: Schema.String,
+    /** The DM's own choices; a checks target falls back to its own options when empty. */
+    options: Schema.optional(
+      Schema.Array(
+        Schema.Struct({ label: StepText(60), note: Schema.optional(StepText(200)) }),
+      ).check(Schema.isMaxLength(50)),
+    ),
+    /** Shown as "Picked N of pick"; never enforced. */
+    pick: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+    /** Checks only: options this choice always gives, ticked with one explicit button. */
+    grants: Schema.optional(Schema.Array(Schema.String).check(Schema.isMaxLength(20))),
+    ...partFields,
+  }),
 ]);
 export type BuilderPart = typeof BuilderPart.Type;
 
@@ -399,6 +415,7 @@ const knownPartTypes: Record<BuilderPart["type"], true> = {
   scores: true,
   text: true,
   assign: true,
+  options: true,
 };
 export const isKnownPartType = (type: string): type is BuilderPart["type"] =>
   Object.hasOwn(knownPartTypes, type);

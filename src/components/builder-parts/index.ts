@@ -5,6 +5,7 @@ import { BlocksEditor, BlocksView } from "./blocks";
 import { BudgetEditor, BudgetView } from "./budget";
 import { ChooseEditor, ChooseView } from "./choose";
 import { ReviewEditor, ReviewView } from "./review";
+import { OptionsEditor, OptionsView } from "./options";
 import { RollsEditor, RollsView } from "./rolls";
 import { ShowEditor, ShowView } from "./show";
 import { ScoresEditor, ScoresView } from "./scores";
@@ -35,6 +36,7 @@ export const partViews: {
   scores: { View: ScoresView, Editor: ScoresEditor },
   text: { View: TextView, Editor: TextEditor },
   assign: { View: AssignView, Editor: AssignEditor },
+  options: { View: OptionsView, Editor: OptionsEditor },
 };
 
 /** The view and editor for a part, typed for that part. */
