@@ -356,6 +356,16 @@ export const BuilderPart = Schema.Union([
     ),
     ...partFields,
   }),
+  Schema.Struct({
+    type: Schema.Literal("scores"),
+    /** Tracker and stat keys to set as numbers, in sheet order. */
+    items: Schema.Array(
+      Schema.Struct({ key: Schema.String, label: Schema.optional(StepText(60)) }),
+    ).check(Schema.isMaxLength(12)),
+    /** A tracker also takes the number as its maximum (a draft until Done). */
+    max: Schema.optional(Schema.Boolean),
+    ...partFields,
+  }),
 ]);
 export type BuilderPart = typeof BuilderPart.Type;
 
@@ -368,6 +378,7 @@ const knownPartTypes: Record<BuilderPart["type"], true> = {
   tables: true,
   review: true,
   budget: true,
+  scores: true,
 };
 export const isKnownPartType = (type: string): type is BuilderPart["type"] =>
   Object.hasOwn(knownPartTypes, type);

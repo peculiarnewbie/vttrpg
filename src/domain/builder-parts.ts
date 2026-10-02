@@ -121,6 +121,22 @@ export const builderParts: { readonly [T in BuilderPart["type"]]: PartKind<T> } 
         if (!known.has(item.key)) problem(`${name} counts "${item.key}", which isn't on the sheet`);
     },
   },
+  scores: {
+    label: "Scores",
+    blank: () => ({ type: "scores", items: [] }),
+    check: (part, { layout, name, problem }) => {
+      const keys = new Set(
+        allBlocks(layout).flatMap((block) =>
+          block.type === "trackers" || block.type === "stats"
+            ? block.items.map((item) => item.key)
+            : [],
+        ),
+      );
+      for (const item of part.items)
+        if (!keys.has(item.key))
+          problem(`${name} sets "${item.key}", which isn't a tracker or stat on the sheet`);
+    },
+  },
 };
 
 /** The kind of a part, typed for that part. */

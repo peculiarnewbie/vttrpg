@@ -6,6 +6,7 @@ import { ChooseEditor, ChooseView } from "./choose";
 import { ReviewEditor, ReviewView } from "./review";
 import { RollsEditor, RollsView } from "./rolls";
 import { ShowEditor, ShowView } from "./show";
+import { ScoresEditor, ScoresView } from "./scores";
 import { TablesEditor, TablesView } from "./tables";
 import type { PartEditorProps, PartViewProps } from "./types";
 
@@ -29,6 +30,7 @@ export const partViews: {
   tables: { View: TablesView, Editor: TablesEditor },
   review: { View: ReviewView, Editor: ReviewEditor },
   budget: { View: BudgetView, Editor: BudgetEditor },
+  scores: { View: ScoresView, Editor: ScoresEditor },
 };
 
 /** The view and editor for a part, typed for that part. */
