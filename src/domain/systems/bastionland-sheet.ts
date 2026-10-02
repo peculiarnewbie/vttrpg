@@ -1,4 +1,4 @@
-import type { SheetLayout } from "../sheet-layout";
+import type { SheetBuilder, SheetLayout } from "../sheet-layout";
 
 /*
  * Mythic Bastionland on generic blocks — structure only, no rules text. A
@@ -42,9 +42,54 @@ const bastionKnight = {
   fill: [{ from: "property", to: "property" }],
 } as const;
 
+/*
+ * One builder for both layouts, using only blocks they share (virtues, guard,
+ * standing, property, knight-entry, bonds, fatigue). Steps defer to the book —
+ * the builder only picks the Knight, offers its Property, rolls dice to chat,
+ * and shows the same blocks the sheet edits.
+ */
+export const bastionlandBuilder: SheetBuilder = {
+  steps: [
+    {
+      id: "knight",
+      title: "Knight",
+      hint: "Choose your Knight from the list. Accept the offer to copy its Property onto the sheet.",
+      parts: [{ type: "choose", key: "knight" }],
+    },
+    {
+      id: "virtues",
+      title: "Virtues & Guard",
+      hint: "Follow your book's steps for each value, then write it in.",
+      parts: [
+        {
+          type: "rolls",
+          items: [
+            { label: "d6", dice: "1d6" },
+            { label: "d20", dice: "1d20" },
+          ],
+        },
+        { type: "blocks", blocks: ["virtues", "guard"] },
+      ],
+    },
+    {
+      id: "bonds",
+      title: "Bonds & Standing",
+      hint: "Follow your book for the rest, then write each in.",
+      parts: [{ type: "blocks", blocks: ["bonds", "standing"] }],
+    },
+    {
+      id: "review",
+      title: "Review",
+      hint: "Look over the sheet and fill in anything left.",
+      parts: [{ type: "blocks", blocks: ["property", "fatigue"] }],
+    },
+  ],
+};
+
 export const bastionlandClassic: SheetLayout = {
   system: "Mythic Bastionland",
   name: "Classic",
+  builder: bastionlandBuilder,
   pages: [
     {
       id: "knight",
@@ -154,6 +199,7 @@ export const bastionlandClassic: SheetLayout = {
 export const bastionlandCompact: SheetLayout = {
   system: "Mythic Bastionland",
   name: "Compact",
+  builder: bastionlandBuilder,
   pages: [
     {
       id: "knight",
