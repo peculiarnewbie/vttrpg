@@ -9,6 +9,7 @@ import {
 } from "../domain/compendium";
 import { packFileName, parsePack } from "../domain/compendium-io";
 import { entryTypesForLayout, presetEntryTypes } from "../domain/compendium-presets";
+import { gameSystems } from "../domain/systems";
 import { typeError } from "../domain/compendium-rules";
 import { effectiveLayout } from "../domain/layout-from-template";
 import { slugKey } from "../domain/layout-edit";
@@ -29,7 +30,7 @@ import { Button, ErrorBanner, Field, Input } from "./ui";
  * panel, where they're read.
  */
 
-const PRESET_SYSTEMS = ["Mythic Bastionland", "Mothership", "Blades in the Dark"];
+const PRESET_SYSTEMS = gameSystems.map((item) => item.system.name);
 
 const kindLabels: Record<EntryField["kind"], string> = {
   text: "Short text",

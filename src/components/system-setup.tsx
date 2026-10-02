@@ -4,7 +4,7 @@ import { api } from "../client/api";
 import type { CompendiumStore } from "../client/compendium-store";
 import type { WorldLibraries } from "../domain/corpus-rpc";
 import type { SaveTemplateInput, SheetTemplate } from "../domain/schemas";
-import { firstPartySystems, type FirstPartySystem } from "../domain/systems";
+import { gameSystems, type GameSystem } from "../domain/systems";
 import { colors, fontSize, space } from "../theme/tokens.stylex";
 import { sx } from "../theme/sx";
 import { styles } from "./styles.stylex";
@@ -13,11 +13,12 @@ import { Badge, Button, ErrorBanner } from "./ui";
 /*
  * Start a world from one of the systems the app ships: its sheet templates,
  * and its library (rules text under an open licence) when one is published —
- * otherwise just its entry types, for the DM to fill. Nothing is replaced:
- * templates and types already in the world stay as they are.
+ * otherwise just its entry types, for the DM to fill. Systems without an open
+ * licence never have a library. Nothing is replaced: templates and types
+ * already in the world stay as they are.
  */
 
-const templateName = (item: FirstPartySystem, layout: { name: string }) =>
+const templateName = (item: GameSystem, layout: { name: string }) =>
   `${item.system.name} — ${layout.name}`;
 
 export function SystemSetup(props: {
@@ -39,16 +40,16 @@ export function SystemSetup(props: {
     void refreshLibraries().catch(() => setLibraries(null));
   });
 
-  const missingTemplates = (item: FirstPartySystem) =>
+  const missingTemplates = (item: GameSystem) =>
     (item.system.layouts ?? []).filter(
       (layout) => !props.templates.some((template) => template.name === templateName(item, layout)),
     );
-  const enabled = (item: FirstPartySystem) =>
-    libraries()?.enabled.some((source) => source.sourceId === item.source.id) ?? false;
-  const published = (item: FirstPartySystem) =>
-    libraries()?.available.some((source) => source.id === item.source.id) ?? false;
+  const enabled = (item: GameSystem) =>
+    libraries()?.enabled.some((source) => source.sourceId === item.source?.id) ?? false;
+  const published = (item: GameSystem) =>
+    libraries()?.available.some((source) => source.id === item.source?.id) ?? false;
 
-  const setUp = async (item: FirstPartySystem) => {
+  const setUp = async (item: GameSystem) => {
     setBusy(item.system.id);
     setError("");
     setNotice("");
@@ -67,15 +68,17 @@ export function SystemSetup(props: {
       }
       if (added.length) props.onTemplates([...props.templates, ...added]);
       let content = "";
-      if (enabled(item)) content = "Its library was already enabled.";
-      else if (published(item)) {
+      if (item.source && enabled(item)) content = "Its library was already enabled.";
+      else if (item.source && published(item)) {
         await api.enableLibrary(props.worldId, item.source.id, {});
         content = `Enabled the ${item.source.name} library.`;
       } else {
         const fresh = item.system.entryTypes.filter((type) => !props.compendium.typeById(type.id));
         for (const type of fresh) await api.saveEntryType(props.worldId, type);
         content = fresh.length
-          ? "Added its entry types; its library isn't published here yet, so entries are yours to write."
+          ? item.source
+            ? "Added its entry types; its library isn't published here yet, so entries are yours to write."
+            : "Added its entry types; entries are yours to write from your book."
           : "Its entry types were already here.";
       }
       await Promise.all([props.compendium.refresh(), refreshLibraries()]);
@@ -103,7 +106,7 @@ export function SystemSetup(props: {
         </p>
       </Show>
       <div {...sx(s.grid)}>
-        <For each={firstPartySystems}>
+        <For each={gameSystems}>
           {(item) => (
             <article {...sx(styles.card, styles.col)} aria-label={item.system.name}>
               <div {...sx(styles.row)}>
@@ -117,7 +120,9 @@ export function SystemSetup(props: {
               <span {...sx(s.small)}>
                 Sheets: {(item.system.layouts ?? []).map((layout) => layout.name).join(", ")}
                 {" · "}
-                Text: {item.source.name}, {item.source.licence.name}
+                {item.source
+                  ? `Text: ${item.source.name}, ${item.source.licence.name}`
+                  : "No rules text: write entries from your own book"}
               </span>
               <div {...sx(styles.row)}>
                 <Button
@@ -128,9 +133,11 @@ export function SystemSetup(props: {
                 >
                   {busy() === item.system.id ? "Setting up…" : "Use this system"}
                 </Button>
-                <a href="/legal" {...sx(s.small)}>
-                  Licence & attribution
-                </a>
+                <Show when={item.source}>
+                  <a href="/legal" {...sx(s.small)}>
+                    Licence & attribution
+                  </a>
+                </Show>
               </div>
             </article>
           )}

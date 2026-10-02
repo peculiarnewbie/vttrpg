@@ -121,8 +121,7 @@ drags by the ⠿ handle; with the handle focused, arrow keys reorder); ungroup a
 group to keep its blocks (deleting a non-empty group asks first); duplicate and
 remove blocks, edit their contents, preview at panel or wide width, or edit the
 layout as JSON. Items inside blocks (stats, trackers, columns), entry-type fields,
-and a sheet's list rows while editing reorder the same way, by their ⠿ handles. Templates can start from a premade layout (Mythic Bastionland
-Classic and Compact, Mothership, Blades in the Dark) and be exported or imported as
+and a sheet's list rows while editing reorder the same way, by their ⠿ handles. Templates can start from any shipped system's layout (see Game systems) and be exported or imported as
 `ttrpg-template` JSON. Older templates render through an equivalent derived layout
 and can be converted; their formulas and roll modifiers stay in effect. On the
 sheet, **Edit** makes fields, lists, and plain stats editable in place, saving
@@ -262,6 +261,19 @@ rolls against two separate challenge dice, Blades' pools keep the highest die
 What a result means is the table's call. `/legal` lists every library's licence
 and attribution; the libraries use the publishers' open text only — no art,
 and no endorsement implied.
+
+Games whose text isn't under an open licence ship as **presets** — sheets and
+entry types only, no rules text, tables, content lists or art, marked
+unofficial — and the DM writes the entries from their own book:
+
+| System             | Sheets                                             | Entry types                                           |
+| ------------------ | -------------------------------------------------- | ----------------------------------------------------- |
+| Mythic Bastionland | Classic, Compact (Virtues roll the d20 save)       | Knights, Myths (ordered omens), spark tables, people  |
+| Stonetop           | Character (stats roll 2d6+stat), Steading (shared) | Playbooks, moves, arcana, steading improvements, NPCs |
+| Mothership         | Classic (stats and saves roll d100; [+]/[-])       | Classes, skills, weapons, items, creatures            |
+
+Stonetop's text is reported to be CC BY-SA 4.0; once that's confirmed from the
+book's copyright page it can become a library like Cairn.
 
 Gaps in the current text: the SRD 5.2 library has no rules glossary or
 conditions yet (Foundry's rules journals mix SRD and non-SRD text without

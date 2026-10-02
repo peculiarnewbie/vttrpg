@@ -6,15 +6,38 @@ import { licenceError } from "../licence";
 import { layoutLimitsError } from "../template-io";
 import { layoutProblems } from "../sheet-refs";
 import { SheetLayout } from "../sheet-layout";
-import { firstPartySystems } from "./index";
+import { firstPartySystems, gameSystems, presetSystems } from "./index";
+
+it("names every system and id once, and each layout after its own system", () => {
+  expect(new Set(gameSystems.map((item) => item.system.id)).size).toBe(gameSystems.length);
+  expect(new Set(gameSystems.map((item) => item.system.name)).size).toBe(gameSystems.length);
+  for (const { system } of gameSystems)
+    for (const layout of system.layouts ?? []) expect(layout.system).toBe(system.name);
+});
+
+it("marks systems without an open licence as unofficial", () => {
+  for (const system of presetSystems) expect(system.description).toMatch(/^Unofficial /);
+});
 
 describe.each(firstPartySystems.map((item) => [item.system.name, item] as const))(
-  "%s",
+  "%s library",
   (_name, { system, source }) => {
-    it("decodes as a corpus system and source", () => {
-      expect(() => Schema.decodeUnknownSync(SystemInput)(system)).not.toThrow();
+    it("decodes as a corpus source for its system", () => {
       expect(() => Schema.decodeUnknownSync(SourceInput)(source)).not.toThrow();
       expect(source.systemId).toBe(system.id);
+    });
+    it("carries a valid text licence with attribution", () => {
+      expect(licenceError(source.licence)).toBeUndefined();
+      expect(source.licence.attribution).toMatch(/licen[cs]ed/i);
+    });
+  },
+);
+
+describe.each(gameSystems.map((item) => [item.system.name, item] as const))(
+  "%s",
+  (_name, { system }) => {
+    it("decodes as a corpus system", () => {
+      expect(() => Schema.decodeUnknownSync(SystemInput)(system)).not.toThrow();
     });
     it("has entry types the compendium accepts", () => {
       expect(new Set(system.entryTypes.map((type) => type.id)).size).toBe(system.entryTypes.length);
@@ -40,10 +63,6 @@ describe.each(firstPartySystems.map((item) => [item.system.name, item] as const)
         if (block.type === "entry") expect(ids).toContain(block.entryType);
         if (block.type === "list" && block.source) expect(ids).toContain(block.source.entryType);
       }
-    });
-    it("carries a valid text licence with attribution", () => {
-      expect(licenceError(source.licence)).toBeUndefined();
-      expect(source.licence.attribution).toMatch(/licen[cs]ed/i);
     });
   },
 );

@@ -1,6 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 import { For } from "solid-js";
-import { firstPartySystems } from "../domain/systems";
+import { firstPartySystems, presetSystems } from "../domain/systems";
 import { colors, fontSize, space } from "../theme/tokens.stylex";
 import { sx } from "../theme/sx";
 import { styles } from "../components/styles.stylex";
@@ -45,6 +45,15 @@ export default function Legal() {
             </section>
           )}
         </For>
+        <section {...sx(styles.card, styles.col)} aria-label="Sheets for other games">
+          <h2 {...sx(s.heading)}>Sheets for other games</h2>
+          <p {...sx(s.attribution)}>
+            Tabletop also ships unofficial sheets and entry types for{" "}
+            {presetSystems.map((system) => system.name).join(", ")}. They contain no text, tables,
+            lists or art from those books — only the shape of a sheet — and their publishers have
+            not made, sponsored or endorsed them. Tables fill in entries from their own copies.
+          </p>
+        </section>
         <p {...sx(s.meta)}>
           Game names are trademarks of their owners and are used only to say which game a sheet or
           library is for.

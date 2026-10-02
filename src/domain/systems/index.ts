@@ -2,9 +2,13 @@ import type { SourceInput, SystemInput } from "../corpus-rpc";
 import { BLADES_SOURCE_ID, BLADES_SYSTEM_ID, bladesEntryTypes, bladesLicence } from "./blades";
 import { CAIRN_SOURCE_ID, CAIRN_SYSTEM_ID, cairnEntryTypes, cairnLicence } from "./cairn2e";
 import { DND5E_SYSTEM_ID, SRD52_SOURCE_ID, dnd5eEntryTypes, srd52Licence } from "./dnd5e-2024";
+import { BASTIONLAND_SYSTEM_ID, bastionlandEntryTypes } from "./bastionland";
+import { bastionlandClassic, bastionlandCompact } from "./bastionland-sheet";
 import { bladesCrew, bladesScoundrel } from "./blades-sheet";
 import { cairnCharacter } from "./cairn-sheet";
 import { dnd5eCharacter } from "./dnd5e-sheet";
+import { MOTHERSHIP_SYSTEM_ID, mothershipEntryTypes } from "./mothership";
+import { mothership } from "./mothership-sheet";
 import { starforgedCharacter, starforgedStarship } from "./starforged-sheet";
 import {
   STARFORGED_SOURCE_ID,
@@ -12,6 +16,8 @@ import {
   starforgedEntryTypes,
   starforgedLicence,
 } from "./starforged";
+import { STONETOP_SYSTEM_ID, stonetopEntryTypes } from "./stonetop";
+import { stonetopCharacter, stonetopSteading } from "./stonetop-sheet";
 
 /*
  * The systems the app ships first-party: each a system definition (entry
@@ -90,3 +96,47 @@ export const firstPartySystems: readonly FirstPartySystem[] = [
 
 export const firstPartySystem = (systemId: string) =>
   firstPartySystems.find((item) => item.system.id === systemId);
+
+/*
+ * Systems whose text isn't under an open licence: the app ships their shapes
+ * only (sheets and entry types, no rules text, tables or content lists), named
+ * to say which game they're for and marked unofficial. A DM writes the entries
+ * from their own book.
+ */
+export const presetSystems: readonly SystemInput[] = [
+  {
+    id: BASTIONLAND_SYSTEM_ID,
+    name: "Mythic Bastionland",
+    description:
+      "Unofficial sheets and entry types for Mythic Bastionland by Chris McDowall (Bastionland Press).",
+    entryTypes: bastionlandEntryTypes,
+    layouts: [bastionlandClassic, bastionlandCompact],
+  },
+  {
+    id: STONETOP_SYSTEM_ID,
+    name: "Stonetop",
+    description:
+      "Unofficial sheets and entry types for Stonetop by Jeremy Strandberg (Lampblack & Brimstone).",
+    entryTypes: stonetopEntryTypes,
+    layouts: [stonetopCharacter, stonetopSteading],
+  },
+  {
+    id: MOTHERSHIP_SYSTEM_ID,
+    name: "Mothership",
+    description: "Unofficial sheet and entry types for Mothership (Tuesday Knight Games).",
+    entryTypes: mothershipEntryTypes,
+    layouts: [mothership],
+  },
+];
+
+/** Every system a world can start from; `source` is its library, when it has one. */
+export type GameSystem = { system: SystemInput; source?: SourceInput };
+
+export const gameSystems: readonly GameSystem[] = [
+  ...firstPartySystems,
+  ...presetSystems.map((system) => ({ system })),
+];
+
+/** By name, as layouts name their system (`layout.system`). */
+export const gameSystemNamed = (name: string) =>
+  gameSystems.find((item) => item.system.name === name);

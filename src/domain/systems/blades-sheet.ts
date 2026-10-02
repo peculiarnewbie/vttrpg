@@ -1,11 +1,169 @@
 import type { SheetLayout } from "../sheet-layout";
-import { bladesInTheDark } from "../sheet-presets";
 
 /*
  * Blades in the Dark on generic blocks: the classic scoundrel page with each
  * action rollable as a dice pool (zero dots rolls two and keeps the lower),
  * special abilities from the library, and the crew as a shared sheet.
  */
+
+const action = (key: string, label: string) => ({ key, label, min: 0, max: 4, start: 0 });
+
+/** The classic scoundrel page; the Scoundrel sheet adds rolls and the playbook link. */
+export const bladesInTheDark: SheetLayout = {
+  system: "Blades in the Dark",
+  name: "Classic",
+  pages: [
+    {
+      id: "scoundrel",
+      title: "Scoundrel",
+      blocks: [
+        {
+          id: "who",
+          type: "fields",
+          variant: "inline",
+          columns: 2,
+          items: [
+            { key: "playbook", label: "Playbook" },
+            { key: "heritage", label: "Heritage" },
+            { key: "vice", label: "Vice" },
+            { key: "look", label: "Look" },
+          ],
+        },
+        {
+          id: "condition",
+          type: "group",
+          wide: 3,
+          blocks: [
+            {
+              id: "stress",
+              type: "trackers",
+              items: [{ key: "stress", label: "Stress", min: 0, max: 9, start: 0 }],
+            },
+            {
+              id: "trauma",
+              type: "checks",
+              key: "trauma",
+              label: "Trauma",
+              variant: "tags",
+              options: [
+                "Cold",
+                "Haunted",
+                "Obsessed",
+                "Paranoid",
+                "Reckless",
+                "Soft",
+                "Unstable",
+                "Vicious",
+              ],
+            },
+            {
+              id: "harm",
+              type: "list",
+              key: "harm",
+              title: "Harm",
+              columns: [
+                { key: "level", label: "Lvl", kind: "number" },
+                { key: "harm", label: "Harm", kind: "text" },
+              ],
+              slots: 3,
+            },
+          ],
+        },
+        {
+          id: "clocks",
+          type: "trackers",
+          variant: "boxes",
+          wide: 3,
+          items: [
+            { key: "healing", label: "Healing", min: 0, max: 4, start: 0, display: "clock" },
+            { key: "vendetta", label: "Vendetta", min: 0, max: 8, start: 0, display: "clock" },
+          ],
+        },
+        {
+          id: "insight",
+          type: "group",
+          title: "Insight",
+          variant: "framed",
+          span: 3,
+          wide: 2,
+          blocks: [
+            {
+              id: "insight-actions",
+              type: "trackers",
+              items: [
+                action("hunt", "Hunt"),
+                action("study", "Study"),
+                action("survey", "Survey"),
+                action("tinker", "Tinker"),
+              ],
+            },
+          ],
+        },
+        {
+          id: "prowess",
+          type: "group",
+          title: "Prowess",
+          variant: "framed",
+          span: 3,
+          wide: 2,
+          blocks: [
+            {
+              id: "prowess-actions",
+              type: "trackers",
+              items: [
+                action("finesse", "Finesse"),
+                action("prowl", "Prowl"),
+                action("skirmish", "Skirmish"),
+                action("wreck", "Wreck"),
+              ],
+            },
+          ],
+        },
+        {
+          id: "resolve",
+          type: "group",
+          title: "Resolve",
+          variant: "framed",
+          span: 6,
+          wide: 2,
+          blocks: [
+            {
+              id: "resolve-actions",
+              type: "trackers",
+              items: [
+                action("attune", "Attune"),
+                action("command", "Command"),
+                action("consort", "Consort"),
+                action("sway", "Sway"),
+              ],
+            },
+          ],
+        },
+        {
+          id: "load",
+          type: "list",
+          key: "items",
+          title: "Load",
+          wide: 4,
+          columns: [
+            { key: "carried", label: "", kind: "check" },
+            { key: "item", label: "Item", kind: "text" },
+            { key: "load", label: "Load", kind: "number" },
+          ],
+        },
+        {
+          id: "roll",
+          type: "rolls",
+          wide: 2,
+          items: [
+            { label: "Action", dice: "2d6" },
+            { label: "Resist", dice: "1d6" },
+          ],
+        },
+      ],
+    },
+  ],
+};
 
 const ACTIONS = [
   "hunt",

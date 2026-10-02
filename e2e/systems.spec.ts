@@ -200,3 +200,78 @@ test("Cairn: a background's table rolls the die its rows span", async ({ table }
     timeout: 15_000,
   });
 });
+
+/*
+ * Games without an open licence ship as shapes only: sheets and entry types,
+ * no text. Setting one up adds both and says the entries are the DM's to write.
+ */
+const setUpPreset = async (table: Table, system: string) => {
+  const page = table.dm.page;
+  await page.goto(`/worlds/${table.worldId}/settings?section=system`);
+  const card = page.getByRole("article", { name: system });
+  await expect(card).toContainText("No rules text");
+  await expect(card.getByRole("link", { name: "Licence & attribution" })).toHaveCount(0);
+  await card.getByRole("button", { name: "Use this system" }).click();
+  await expect(page.getByRole("status")).toContainText("entries are yours to write from your book");
+  return (await (
+    await table.dm.api.get(`/api/worlds/${table.worldId}/templates`)
+  ).json()) as SheetTemplate[];
+};
+
+test("Mythic Bastionland: unofficial sheets and entry types, and a Virtue rolls its save", async ({
+  table,
+}) => {
+  const templates = await setUpPreset(table, "Mythic Bastionland");
+  expect(
+    templates
+      .map((template) => template.name)
+      .filter((name) => name.startsWith("Mythic"))
+      .sort(),
+  ).toEqual(["Mythic Bastionland — Classic", "Mythic Bastionland — Compact"]);
+  const index = (await (
+    await table.dm.api.get(`/api/worlds/${table.worldId}/compendium/index?since=0`)
+  ).json()) as { types: { id: string }[]; upserts: unknown[] };
+  expect(index.types.map((type) => type.id).sort()).toEqual(["knight", "myth", "person", "spark"]);
+  // Shapes only: no entries come with it.
+  expect(index.upserts).toEqual([]);
+
+  await table.saveCharacter({
+    name: "Ser Quill",
+    templateId: templates.find((template) => template.name.endsWith("Classic"))!.id,
+    memberId: table.player.memberId,
+    values: {},
+  });
+  const page = table.player.page;
+  await table.open(table.player);
+  const sheet = page.locator("#world-tools");
+  await expect(sheet.getByRole("heading", { name: "Ser Quill" })).toBeVisible();
+  await sheet
+    .getByRole("button", { name: /^(Vigour|VIG)$/ })
+    .first()
+    .click();
+  await expect(page.locator("#world-chat").getByText("1d20").first()).toBeVisible({
+    timeout: 15_000,
+  });
+});
+
+test("Stonetop: a stat rolls 2d6 plus itself, and the steading is a shared sheet", async ({
+  table,
+}) => {
+  const templates = await setUpPreset(table, "Stonetop");
+  const steading = templates.find((template) => template.name === "Stonetop — Steading");
+  expect(steading?.layout?.subject).toBe("shared");
+  await table.saveCharacter({
+    name: "Wren",
+    templateId: templates.find((template) => template.name === "Stonetop — Character")!.id,
+    memberId: table.player.memberId,
+    values: { str: 2, dex: 1, int: 0, wis: 1, con: 0, cha: -1 },
+  });
+  const page = table.player.page;
+  await table.open(table.player);
+  const sheet = page.locator("#world-tools");
+  await expect(sheet.getByRole("heading", { name: "Wren" })).toBeVisible();
+  await sheet.getByRole("button", { name: "STR", exact: true }).click();
+  await expect(page.locator("#world-chat").getByText("(STR +2)").first()).toBeVisible({
+    timeout: 15_000,
+  });
+});

@@ -10,13 +10,15 @@
 > (the server already applies blocks, overrides and visibility).
 > P6 (first-party systems) is built: four system definitions with sheets,
 > importers producing validated bundles (SRD 5.2: 1,597 entries; Starforged:
-> 442; Cairn 2e: 751; Blades SRD: 192), `pnpm corpus:publish` (writes R2 and
+> 442; Cairn 2e: 621; Blades SRD: 192), `pnpm corpus:publish` (writes R2 and
 > D1 with wrangler directly — the corpus HTTP routes stay off in production,
 > so P4's draft listing gap no longer blocks), searchable library text, a
 > Game system setup and `/legal`. Publishing the libraries to production is a
 > manual step. Known gaps: SRD 5.2 rules glossary/conditions (needs a source
 > whose licence is marked per document), Blades named playbooks (not in the
-> SRD). **Next: P7.**
+> SRD). The four libraries are published to preview and production.
+> P7 has started: Mythic Bastionland, Stonetop and Mothership ship as presets
+> (sheets and entry types, no text) in the same Game system setup.
 
 ## Context
 
@@ -215,8 +217,8 @@ cairn2e,blades}.ts` (layouts, entry types, filters — orchestrator-written);
 
 ## P7 — Buildability proof and release
 
-- Presets (layouts + entry types, no rules text) for Mothership and Stonetop
-  (steading as a shared sheet); `docs/buildability.md` maps each scope demand to
+- Presets (layouts + entry types, no rules text) for Mythic Bastionland,
+  Mothership and Stonetop (steading as a shared sheet) — done; `docs/buildability.md` maps each scope demand to
   the feature and the Playwright spec that proves it.
 - Release checklist: real Google sign-in replaces the dev email stub (which
   stays live until then so the deployed site is easy to test); flags
