@@ -73,6 +73,14 @@ export const builderParts: { readonly [T in BuilderPart["type"]]: PartKind<T> } 
       if (!part.from && !part.entries?.length) problem(`${name} has a tables part with no tables`);
     },
   },
+  review: {
+    label: "Review what's left",
+    blank: () => ({ type: "review" }),
+    check: (_part, { layout, name, problem }) => {
+      if ((layout.builder?.steps.length ?? 0) <= 1)
+        problem(`${name} is a review with only one step to look back on`);
+    },
+  },
 };
 
 /** The kind of a part, typed for that part. */

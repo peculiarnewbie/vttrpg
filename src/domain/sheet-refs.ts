@@ -173,13 +173,18 @@ export const sheetScope = (
 
 /**
  * Whether a condition formula holds on this scope: a non-zero number or
- * non-blank text. One that doesn't parse holds, so a typo never hides
- * something (the layout editor names the problem).
+ * non-blank text. A blank one, or one that doesn't parse, gives `otherwise`
+ * — true for "applies when", so a typo never hides something (the layout
+ * editor names the problem), false for "done when".
  */
-export const formulaHolds = (formula: string, scope: Scope): boolean => {
-  if (!formula.trim()) return true;
+export const formulaHolds = (
+  formula: string | undefined,
+  scope: Scope,
+  otherwise = true,
+): boolean => {
+  if (!formula?.trim()) return otherwise;
   const parsed = parseExpr(formula);
-  if (!parsed.ok) return true;
+  if (!parsed.ok) return otherwise;
   const value = evaluate(parsed.value, scope);
   return typeof value === "string" ? value.trim() !== "" : value !== 0;
 };

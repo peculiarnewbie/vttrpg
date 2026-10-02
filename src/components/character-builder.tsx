@@ -1,7 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 import type { JSX } from "@solidjs/web";
 import { For, Show, createSignal } from "solid-js";
-import type { Scope } from "../domain/derived";
 import { formulaHolds } from "../domain/sheet-refs";
 import {
   isKnownPart,
@@ -36,16 +35,12 @@ type Props = {
   renderBlocks: (ids: readonly string[]) => JSX.Element;
 };
 
-/** A step's or part's condition; none means it applies (see {@link formulaHolds}). */
-const holds = (formula: string | undefined, scope: () => Scope, otherwise: boolean) =>
-  formula?.trim() ? formulaHolds(formula, scope()) : otherwise;
-
 export function CharacterBuilder(props: Props) {
   const steps = () => props.context.layout.builder?.steps ?? [];
   const [index, setIndex] = createSignal(0);
   const step = () => steps()[Math.min(index(), steps().length - 1)];
-  const applies = (item: BuilderStep) => holds(item.when, props.context.scope, true);
-  const done = (item: BuilderStep) => holds(item.done, props.context.scope, false);
+  const applies = (item: BuilderStep) => formulaHolds(item.when, props.context.scope());
+  const done = (item: BuilderStep) => formulaHolds(item.done, props.context.scope(), false);
   // Back and Next pass over steps that don't apply to this character.
   const next = (from: number, delta: 1 | -1) => {
     for (let at = from + delta; at >= 0 && at < steps().length; at += delta)
@@ -129,7 +124,7 @@ function PartHost(props: Props & { part: StoredBuilderPart; navigate: (stepId: s
       }
     >
       {(part) => (
-        <Show when={holds(part().when, props.context.scope, true)}>
+        <Show when={formulaHolds(part().when, props.context.scope())}>
           <KnownPart {...props} part={part()} />
         </Show>
       )}

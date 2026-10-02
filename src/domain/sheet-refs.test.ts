@@ -357,7 +357,10 @@ describe("formulaHolds", () => {
   });
   it("holds when the formula is blank or doesn't parse", () => {
     expect(formulaHolds("", scope)).toBe(true);
+    expect(formulaHolds(undefined, scope)).toBe(true);
     expect(formulaHolds("@level >=", scope)).toBe(true);
+    // "Done when" falls back the other way: a typo never ticks a step.
+    expect(formulaHolds("@level >=", scope, false)).toBe(false);
   });
 });
 
