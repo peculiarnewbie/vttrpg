@@ -11,6 +11,27 @@ import type { BuilderPart, SheetLayout } from "./sheet-layout";
  */
 
 export type PartOf<T extends BuilderPart["type"]> = Extract<BuilderPart, { type: T }>;
+export type RollsItem = PartOf<"rolls">["items"][number];
+
+/** A roll button's repeat inputs: its label, notation, and how many times it repeats. */
+export type RepeatItem = {
+  readonly label: string;
+  readonly dice: string;
+  readonly times?: number;
+};
+
+/** How many times a roll item repeats; one unless `times` says more. A hint, never a gate. */
+export const rollTimes = (item: { readonly times?: number }): number => item.times ?? 1;
+
+/** `Ability scores` × 3 → `Ability scores ×3`; a single roll keeps its label. */
+export const repeatLabel = (item: RepeatItem): string =>
+  rollTimes(item) > 1 ? `${item.label} ×${rollTimes(item)}` : item.label;
+
+/** One chat roll with the groups kept apart: `4d6kh3` × 3 → `4d6kh3 | 4d6kh3 | 4d6kh3`. */
+export const repeatNotation = (item: RepeatItem): string =>
+  rollTimes(item) > 1
+    ? Array.from({ length: rollTimes(item) }, () => item.dice).join(" | ")
+    : item.dice;
 
 /** What a kind's problem check can use; `problem` records one sentence. */
 export type PartChecks = {
@@ -61,7 +82,8 @@ export const builderParts: { readonly [T in BuilderPart["type"]]: PartKind<T> } 
     label: "Roll buttons",
     blank: () => ({ type: "rolls", items: [{ label: "Roll", dice: "1d6" }] }),
     check: (part, { roll }) => {
-      for (const item of part.items) roll(item.label, item.dice);
+      // A repeated roll posts its groups together, so check the combined notation.
+      for (const item of part.items) roll(repeatLabel(item), repeatNotation(item));
     },
   },
   tables: {

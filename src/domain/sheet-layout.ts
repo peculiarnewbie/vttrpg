@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { DICE_LIMITS } from "./dice-notation";
 
 /*
  * Sheet layouts as data (proposal, proven in /lab/systems).
@@ -296,9 +297,23 @@ export const BuilderPart = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("rolls"),
-    items: Schema.Array(Schema.Struct({ label: StepText(60), dice: Schema.String })).check(
-      Schema.isMaxLength(12),
-    ),
+    items: Schema.Array(
+      Schema.Struct({
+        label: StepText(60),
+        dice: Schema.String,
+        /**
+         * Repeat the notation this many times in one chat roll, keeping the
+         * groups apart (`4d6kh3` × 2 → `4d6kh3 | 4d6kh3`). At most 8: the
+         * notation allows at most 8 groups, so a repeated single-group roll
+         * already fills it. Longer combined notations are flagged as problems.
+         */
+        times: Schema.optional(
+          Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: DICE_LIMITS.groups })),
+        ),
+        /** Our own short reminder beside the button — never rules text. */
+        note: Schema.optional(StepText(120)),
+      }),
+    ).check(Schema.isMaxLength(12)),
     ...partFields,
   }),
   Schema.Struct({

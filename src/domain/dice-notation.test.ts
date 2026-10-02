@@ -158,7 +158,11 @@ describe("parseNotation", () => {
     expect(parseNotation("2d6+")).toEqual({ ok: false, error: "Expected “d” at 4" });
     expect(parseNotation("d0")).toEqual({ ok: false, error: "Dice need at least 1 side at 1" });
     expect(parseNotation(" ".repeat(201))).toEqual({ ok: false, error: "At most 200 characters" });
-    expect(parseNotation("1|2|3|4|5")).toMatchObject({ ok: false });
+    expect(parseNotation("1|2|3|4|5|6|7|8").ok).toBe(true);
+    expect(parseNotation("1|2|3|4|5|6|7|8|9")).toMatchObject({
+      ok: false,
+      error: "At most 8 groups at 16",
+    });
     expect(parseNotation(Array.from({ length: 21 }, () => "1").join("+"))).toMatchObject({
       ok: false,
     });

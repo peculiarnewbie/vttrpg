@@ -10,7 +10,7 @@ import { evaluate, exprRefs, parseExpr, toNumber, type Expr, type Scope } from "
  * Grammar (whitespace is ignored; `d`, `kh`, `kl`, `adv`, `dis`, `z` are
  * case-insensitive; ref names are case-sensitive):
  *
- *   notation := group ("|" group)*               at most 4 groups
+ *   notation := group ("|" group)*               at most 8 groups
  *   group    := ["+"|"-"] term (("+"|"-") term)* at most 20 terms
  *   term     := dice | integer | ref | formula
  *   dice     := [count] "d" sides suffix*
@@ -37,7 +37,7 @@ import { evaluate, exprRefs, parseExpr, toNumber, type Expr, type Scope } from "
 export const DICE_LIMITS = {
   /** Characters in one notation. */
   length: 200,
-  groups: 4,
+  groups: 8,
   termsPerGroup: 20,
   /** Dice actually rolled across every group, after refs and adv/dis/z resolve. */
   dice: 100,
@@ -233,7 +233,8 @@ class NotationParser {
   parse(): Notation {
     const groups = [this.group()];
     while (this.take("|")) {
-      if (groups.length === DICE_LIMITS.groups) fail("At most 4 groups", this.peek().position);
+      if (groups.length === DICE_LIMITS.groups)
+        fail(`At most ${DICE_LIMITS.groups} groups`, this.peek().position);
       groups.push(this.group());
     }
     const token = this.peek();
@@ -325,7 +326,7 @@ class NotationParser {
 
 /**
  * Parse notation. Errors are short sentences a player can act on:
- * "Unexpected “x” at 5", "Dice need at least 1 side", "At most 4 groups".
+ * "Unexpected “x” at 5", "Dice need at least 1 side", "At most 8 groups".
  * Unknown tokens are errors, never ignored.
  */
 export const parseNotation = (input: string): Parsed<Notation> => {
