@@ -1016,7 +1016,11 @@ class WorldOperations {
     const layout = character ? this.getTemplate(character.templateId)?.layout : undefined;
     const rolled = rollNotation(parsed.value, {
       lookup: character
-        ? sheetRefLookup(layout, refValues(layout, character.values, character.tickers), row)
+        ? sheetRefLookup(
+            layout,
+            refValues(layout, character.values, character.tickers),
+            row && frame.row && { row, list: frame.row.key },
+          )
         : undefined,
     });
     if (!rolled.ok) return yield* new BadRequest({ message: rolled.error });

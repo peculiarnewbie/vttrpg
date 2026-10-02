@@ -3,10 +3,15 @@ import {
   computeDerived,
   DERIVED_LIMITS,
   evaluate,
+  explain,
+  exprLists,
   exprRefs,
   parseExpr,
   type Expr,
   type ExprScope,
+  type RowScope,
+  type Scalar,
+  type Scope,
 } from "./derived";
 
 const expr = (input: string): Expr => {
@@ -91,10 +96,8 @@ describe("parseExpr", () => {
     "1.",
     "1 2",
     "1;2",
-    "1 % 2",
     "2 ** 3",
     "2d6",
-    "1 < 2 < 3",
     "@9",
     "@str.",
     "@str.dex.mod",
@@ -276,5 +279,125 @@ describe("computeDerived", () => {
     expect(result.values.__proto__).toBe(3);
     expect(result.values.constructor).toBe(4);
     expect(computeDerived([], () => undefined)).toEqual({ values: {}, errors: {} });
+  });
+});
+
+describe("formulas v2", () => {
+  const rows = (items: Record<string, Scalar>[]): RowScope[] =>
+    items.map((row) => (column) => row[column]);
+  const sheet: Scope = {
+    value: (ref) =>
+      ({ level: 7, str: 12, class_name: "Wizard", blank: undefined, three: "3" })[
+        ref.key as "level"
+      ],
+    rows: (key) =>
+      key === "spells"
+        ? rows([
+            { name: "Light", prepared: 1, level: 0 },
+            { name: "Sleep", prepared: 0, level: 1 },
+            { name: "Shield", prepared: 1, level: 1 },
+          ])
+        : key === "empty"
+          ? []
+          : undefined,
+    checked: (key) => (key === "skills" ? ["Athletics", "Stealth"] : undefined),
+  };
+  const value = (input: string) => run(input, sheet);
+
+  it.each([
+    ['"Wizard"', "Wizard"],
+    ["@class_name", "Wizard"],
+    ['@class_name == "wizard"', 1],
+    ['@class_name != "Cleric"', 1],
+    ['@blank == ""', 1],
+    ["@blank == 0", 1],
+    ["@three + 1", 4],
+    ["@class_name + 1", 1],
+    ["true + true", 2],
+    ["@level >= 5 and @str > 10", 1],
+    ["@level < 5 or @str > 13", 0],
+    ["not @blank", 1],
+    ['not "x"', 0],
+    ["1 < 2 < 3", 1],
+    ["3 > 2 > 2", 0],
+    ["7 % 3", 1],
+    ["7 % 0", 0],
+    ["clamp(@str, 0, 10)", 10],
+    ["pick(2, 10, 20, 30)", 20],
+    ["pick(4, 10, 20, 30)", 0],
+    ['if(@level > 5, "High", "Low")', "High"],
+    ['text("Level ", @level, " ", @class_name)', "Level 7 Wizard"],
+    ["text(1 / 4)", "0.25"],
+    ["step(@level, 1: 2, 5: 3, 9: 4)", 3],
+    ["step(0, 1: 2, 5: 3)", 0],
+    ["step(-1, -5: 1, 0: 2)", 1],
+    ['step(@level, 1: "Novice", 5: "Adept")', "Adept"],
+    ["sum(@spells, @row.prepared)", 2],
+    ["sum(@spells, @row.level * 10 + @level)", 41],
+    ["count(@spells)", 3],
+    ["count(@spells, @row.prepared and @row.level > 0)", 1],
+    ["count(@skills)", 2],
+    ["count(@empty)", 0],
+    ["highest(@spells, @row.level)", 1],
+    ["lowest(@spells, @row.level)", 0],
+    ["highest(@empty, @row.level)", 0],
+    ["sum(@missing, @row.x)", 0],
+    ['has(@skills, "athletics")', 1],
+    ['has(@skills, "Arcana")', 0],
+    ['has(@spells, "Sleep")', 1],
+  ])("evaluates %s", (input, result) => expect(value(input)).toBe(result));
+
+  it.each([
+    ["2d6", "Formulas can't roll dice (“2d6”); put dice in a roll instead at 0"],
+    ["@str + d20", "Formulas can't roll dice (“d20”); put dice in a roll instead at 7"],
+    ["sum(@spells.level, 1)", "“sum” needs a list first, like sum(@inventory, @row.weight) at 4"],
+    ["sum(@spells)", "“sum” needs 2 arguments, like sum(@inventory, @row.weight) at 0"],
+    ["step(@level)", "“step” needs at least one threshold, like step(@level, 1: 2) at 0"],
+    ["step(@level, 5: 1, 1: 2)", "Thresholds must go up at 19"],
+    ["strength + 1", "Unknown name “strength” (refer to values with @, like @strength) at 0"],
+    ['"open', 'Expected a closing " at 5'],
+    ["clamp(1, 2)", "Function “clamp” needs 3 arguments at 0"],
+  ])("explains what's wrong with %s", (input, error) =>
+    expect(parseExpr(input)).toEqual({ ok: false, error }),
+  );
+
+  it("lists list refs and the row columns aggregates read", () => {
+    const parsed = expr("sum(@inventory, @row.slots * @mult) + count(@spells, @row.prepared)");
+    expect(exprRefs(parsed)).toEqual([{ key: "inventory" }, { key: "mult" }, { key: "spells" }]);
+    expect(exprLists(parsed)).toEqual([
+      { list: "inventory", columns: ["slots"] },
+      { list: "spells", columns: ["prepared"] },
+    ]);
+  });
+
+  it("explains a value with the refs it read, once each", () => {
+    expect(explain(expr("@str + @level * 2 + @str + count(@skills)"), sheet)).toEqual({
+      value: 40,
+      terms: [
+        { ref: { key: "str" }, value: 12 },
+        { ref: { key: "level" }, value: 7 },
+        { ref: { key: "skills" }, value: undefined },
+      ],
+    });
+  });
+
+  it("gives up with 0 past the step limit instead of hanging", () => {
+    const many: Scope = {
+      value: () => 1,
+      rows: () => Array.from({ length: 300 }, () => () => 1),
+    };
+    expect(run("sum(@a, sum(@b, sum(@c, 1)))", many)).toBe(0);
+    expect(run("sum(@a, sum(@b, 1))", many)).toBe(90_000 > DERIVED_LIMITS.steps ? 0 : 90_000);
+  });
+
+  it("computes text derived values and lets numbers depend on them", () => {
+    const result = computeDerived(
+      [
+        derived("title", 'if(@level >= 5, "Veteran", "Novice")'),
+        derived("bonus", 'if(@title == "Veteran", 2, 0)'),
+      ],
+      sheet,
+    );
+    expect(result.values).toEqual({ title: "Veteran", bonus: 2 });
   });
 });

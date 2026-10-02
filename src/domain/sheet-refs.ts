@@ -1,28 +1,44 @@
 import { notationRefs, parseNotation, type Ref, type RefLookup } from "./dice-notation";
-import { computeDerived, exprRefs, parseExpr, type DerivedResult, type ExprScope } from "./derived";
+import {
+  computeDerivedWith,
+  evaluate,
+  exprLists,
+  exprRefs,
+  parseExpr,
+  toNumber,
+  withRow,
+  type DerivedResult,
+  type Expr,
+  type RowScope,
+  type Scalar,
+  type Scope,
+} from "./derived";
 import { allBlocks, derivedKeys, layoutKeys } from "./layout-edit";
 import { layoutTrackers, type ListRow, type SheetLayout, type SheetValues } from "./sheet-layout";
 
 /*
- * How `@refs` in derived values and roll notation read a character's values.
+ * How `@refs` in formulas and roll notation read a character's values.
  * Used by the sheet (display) and by the server (rolls), so both agree.
  *
  * - `@key` — a derived value if the layout defines one with that key;
- *   otherwise the character value: a number; a numeric string ("3"); true = 1,
- *   false = 0; a string array (checks) = how many are checked; a list = its
- *   row count. Anything else (empty, text) is `undefined`, i.e. 0.
- * - `@list.column` — the sum of that numeric column over the list's rows.
+ *   otherwise the character value: a number; numeric text ("3") as a number;
+ *   other text as text; true = 1, false = 0; a string array (checks) = how
+ *   many are checked; a list = its row count. Empty is `undefined`, i.e. 0.
+ * - `@list.column` — the sum of that column over the list's rows (a computed
+ *   column sums its computed values).
  * - `@row.column` — the column in the current row (a list row's roll or a
- *   derived list column); `undefined` without a current row.
+ *   computed list column); `undefined` without a current row.
+ * - `sum(@list, …)`, `count(@checks)` and the other aggregates read the
+ *   list's rows and the checks' ticked options through the same scope.
  */
 
-const numeric = (value: SheetValues[string]): number | undefined => {
+const scalar = (value: SheetValues[string] | ListRow[string] | undefined): Scalar | undefined => {
   if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
   if (typeof value === "boolean") return Number(value);
   if (typeof value === "string") {
     if (!value.trim()) return undefined;
     const number = Number(value);
-    return Number.isFinite(number) ? number : undefined;
+    return Number.isFinite(number) ? number : value;
   }
   if (Array.isArray(value)) return value.length;
   return undefined;
@@ -31,9 +47,12 @@ const numeric = (value: SheetValues[string]): number | undefined => {
 const ownValue = <T>(values: Readonly<Record<string, T>>, key: string): T | undefined =>
   Object.hasOwn(values, key) ? values[key] : undefined;
 
-const isList = (value: SheetValues[string]): value is readonly ListRow[] =>
+const isList = (value: SheetValues[string] | undefined): value is readonly ListRow[] =>
   Array.isArray(value) &&
   value.every((row) => typeof row === "object" && row !== null && !Array.isArray(row));
+
+const isChecks = (value: SheetValues[string] | undefined): value is readonly string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === "string");
 
 /**
  * The values refs read. Trackers keep their values apart from the others
@@ -51,38 +70,104 @@ export const refValues = (
   return merged;
 };
 
-/** Resolve refs to non-derived values. */
-export const valueScope =
-  (values: SheetValues, row?: ListRow): ExprScope =>
-  (ref) => {
-    const column = ref.column;
-    if (column === undefined) return numeric(ownValue(values, ref.key));
-    if (ref.key === "row") return row ? numeric(ownValue(row, column)) : undefined;
-    const list = ownValue(values, ref.key);
-    if (!isList(list)) return undefined;
-    const sum = list.reduce((total, item) => {
-      const cell = ownValue(item, column);
-      return (
-        total + (typeof cell === "number" || typeof cell === "string" ? (numeric(cell) ?? 0) : 0)
-      );
-    }, 0);
-    return Number.isFinite(sum) ? sum : 0;
+/** The current list row, and which list it's in (so its computed columns compute). */
+export type CurrentRow = { readonly row: ListRow; readonly list?: string };
+
+/**
+ * Resolve refs to non-derived values. With a layout, computed list columns
+ * compute, reading other refs through `self` (the finished scope, derived
+ * values included).
+ */
+export const valueScope = (
+  values: SheetValues,
+  at?: CurrentRow,
+  layout?: SheetLayout,
+  self?: () => Scope,
+): Scope => {
+  const computed = new Map<string, Map<string, Expr | undefined>>();
+  for (const block of layout ? allBlocks(layout) : [])
+    if (block.type === "list")
+      for (const column of block.columns)
+        if (column.kind === "derived") {
+          const columns = computed.get(block.key) ?? new Map<string, Expr | undefined>();
+          const parsed = parseExpr(column.expr ?? "");
+          columns.set(column.key, parsed.ok ? parsed.value : undefined);
+          computed.set(block.key, columns);
+        }
+  // A computed column that reads itself (through other columns) reads as empty.
+  const pending = new WeakMap<ListRow, Set<string>>();
+  const rowScope =
+    (list: string | undefined, row: ListRow): RowScope =>
+    (column) => {
+      const columns = list === undefined ? undefined : computed.get(list);
+      if (!columns?.has(column)) return scalar(ownValue(row, column));
+      const expr = columns.get(column);
+      const busy = pending.get(row) ?? new Set<string>();
+      if (!expr || busy.has(column)) return undefined;
+      busy.add(column);
+      pending.set(row, busy);
+      try {
+        return evaluate(expr, withRow(self?.() ?? scope, rowScope(list, row)));
+      } finally {
+        busy.delete(column);
+      }
+    };
+  const scope: Scope = {
+    value: (ref) => {
+      const column = ref.column;
+      if (column === undefined) return scalar(ownValue(values, ref.key));
+      if (ref.key === "row") return at ? rowScope(at.list, at.row)(column) : undefined;
+      const list = ownValue(values, ref.key);
+      if (!isList(list)) return undefined;
+      // Sums numbers and numeric text; ticks and tags in the column don't add (count() counts them).
+      const isComputed = computed.get(ref.key)?.has(column) ?? false;
+      const sum = list.reduce((total, row) => {
+        const cell = ownValue(row, column);
+        return (
+          total +
+          (isComputed || typeof cell === "number" || typeof cell === "string"
+            ? toNumber(rowScope(ref.key, row)(column))
+            : 0)
+        );
+      }, 0);
+      return Number.isFinite(sum) ? sum : 0;
+    },
+    rows: (key) => {
+      const list = ownValue(values, key);
+      return isList(list) ? list.map((row) => rowScope(key, row)) : undefined;
+    },
+    checked: (key) => {
+      const checks = ownValue(values, key);
+      return isChecks(checks) && !isList(checks) ? checks : undefined;
+    },
   };
+  return scope;
+};
 
 /** {@link computeDerived} for a layout's `derived` list against these values. */
 export const sheetDerived = (layout: SheetLayout | undefined, values: SheetValues): DerivedResult =>
-  computeDerived(layout?.derived ?? [], valueScope(values));
+  computeDerivedWith(layout?.derived ?? [], (self) =>
+    valueScope(values, undefined, layout, () => self),
+  );
 
 /** Derived values first, then {@link valueScope}. */
 export const sheetScope = (
   layout: SheetLayout | undefined,
   values: SheetValues,
-  row?: ListRow,
-): ExprScope => {
-  const derived = sheetDerived(layout, values).values;
-  const base = valueScope(values, row);
-  return (ref) =>
-    ref.column === undefined && Object.hasOwn(derived, ref.key) ? derived[ref.key] : base(ref);
+  at?: CurrentRow,
+  /** {@link sheetDerived} for these values, when the caller already has it. */
+  result: DerivedResult = sheetDerived(layout, values),
+): Scope => {
+  const derived = result.values;
+  const base = valueScope(values, at, layout, () => scope);
+  const scope: Scope = {
+    ...base,
+    value: (ref) =>
+      ref.column === undefined && Object.hasOwn(derived, ref.key)
+        ? derived[ref.key]
+        : base.value(ref),
+  };
+  return scope;
 };
 
 /**
@@ -96,9 +181,9 @@ export const sheetScope = (
 export const sheetRefLookup = (
   layout: SheetLayout | undefined,
   values: SheetValues,
-  row?: ListRow,
+  at?: CurrentRow,
 ): RefLookup => {
-  const scope = sheetScope(layout, values, row);
+  const scope = sheetScope(layout, values, at);
   const known = new Set(layout ? [...layoutKeys(layout), ...derivedKeys(layout)] : []);
   const blocks = layout ? allBlocks(layout) : [];
   const label = (ref: Ref): string => {
@@ -122,9 +207,9 @@ export const sheetRefLookup = (
     return ref.key;
   };
   return (ref) => {
-    if (!known.has(ref.key) && !Object.hasOwn(values, ref.key) && !(ref.key === "row" && row))
+    if (!known.has(ref.key) && !Object.hasOwn(values, ref.key) && !(ref.key === "row" && at))
       return undefined;
-    return { value: scope(ref) ?? 0, label: label(ref) };
+    return { value: toNumber(scope.value(ref)), label: label(ref) };
   };
 };
 
@@ -148,11 +233,37 @@ export const layoutProblems = (layout: SheetLayout): string[] => {
       if (!known.has(ref.key) && !(inList && ref.key === "row"))
         problems.push(`${name} uses ${refText(ref)}, which isn't on the sheet`);
   };
+  const blocksOf = allBlocks(layout);
+  const listColumns = new Map(
+    blocksOf.flatMap((block) =>
+      block.type === "list"
+        ? [[block.key, block.columns.map((column) => column.key)] as const]
+        : [],
+    ),
+  );
+  const checksKeys = new Set(
+    blocksOf.flatMap((block) => (block.type === "checks" ? [block.key] : [])),
+  );
   const expression = (label: string, expr: string, inList = false) => {
     const name = `Derived "${label}"`;
     const parsed = parseExpr(expr);
-    if (!parsed.ok) problems.push(`${name}: ${parsed.error}`);
-    else checkRefs(name, exprRefs(parsed.value), inList);
+    if (!parsed.ok) {
+      problems.push(`${name}: ${parsed.error}`);
+      return;
+    }
+    checkRefs(name, exprRefs(parsed.value), inList);
+    // sum(@list, …), count(@checks) and the like read a list's rows or a checks block's ticks.
+    for (const { list, columns } of parsed.value ? exprLists(parsed.value) : []) {
+      const known = listColumns.get(list);
+      if (!known && !checksKeys.has(list)) {
+        if (layoutKeys(layout).includes(list))
+          problems.push(`${name} reads @${list} as a list, but it isn't a list or checks`);
+        continue;
+      }
+      for (const column of new Set(columns))
+        if (!known?.includes(column))
+          problems.push(`${name} reads @row.${column}, which isn't a column of @${list}`);
+    }
   };
   const roll = (label: string, dice: string, inList = false) => {
     const name = `Roll "${label}"`;

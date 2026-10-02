@@ -1,0 +1,622 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`evaluates every shipped layout's formulas as before 1`] = `
+{
+  "Blades in the Dark — Crew": {
+    "cells": [
+      {
+        "list": "abilities",
+        "sums": [
+          3,
+        ],
+      },
+      {
+        "list": "upgrades",
+        "sums": [
+          3,
+          5,
+        ],
+      },
+    ],
+    "derived": {},
+    "refs": [
+      [
+        18,
+      ],
+      [],
+    ],
+  },
+  "Blades in the Dark — Scoundrel": {
+    "cells": [
+      {
+        "list": "harm",
+        "sums": [
+          3,
+          5,
+        ],
+      },
+      {
+        "list": "items",
+        "sums": [
+          3,
+          5,
+          7,
+        ],
+      },
+      {
+        "list": "abilities",
+        "sums": [
+          3,
+        ],
+      },
+      {
+        "list": "friends",
+        "sums": [
+          3,
+          5,
+        ],
+      },
+    ],
+    "derived": {},
+    "refs": [
+      [
+        13,
+      ],
+      [
+        1,
+      ],
+      [
+        8,
+      ],
+      [
+        15,
+      ],
+      [
+        3,
+      ],
+      [
+        10,
+      ],
+      [
+        17,
+      ],
+      [
+        5,
+      ],
+      [
+        12,
+      ],
+      [
+        0,
+      ],
+      [
+        7,
+      ],
+      [
+        14,
+      ],
+      [],
+      [],
+    ],
+  },
+  "Cairn (2nd edition) — Character": {
+    "cells": [
+      {
+        "list": "inventory",
+        "sums": [
+          3,
+          5,
+          7,
+          9,
+        ],
+      },
+    ],
+    "derived": {},
+    "refs": [
+      [],
+      [],
+      [],
+      [],
+      [],
+      [],
+    ],
+  },
+  "Fifth Edition (SRD 5.2) — Character": {
+    "cells": [
+      {
+        "list": "weapons",
+        "sums": [
+          3,
+          5,
+          7,
+          9,
+          11,
+        ],
+      },
+      {
+        "list": "spells",
+        "sums": [
+          3,
+          5,
+          7,
+          9,
+          11,
+        ],
+      },
+      {
+        "list": "features",
+        "sums": [
+          3,
+          5,
+        ],
+      },
+      {
+        "list": "feats",
+        "sums": [
+          3,
+          5,
+        ],
+      },
+      {
+        "list": "gear",
+        "sums": [
+          3,
+          5,
+          7,
+        ],
+      },
+      {
+        "list": "armor",
+        "sums": [
+          3,
+          5,
+          7,
+        ],
+      },
+      {
+        "list": "magic_items",
+        "sums": [
+          3,
+          5,
+          7,
+        ],
+      },
+    ],
+    "derived": {
+      "acrobatics_bonus": -3,
+      "animal_handling_bonus": 12,
+      "arcana_bonus": 32,
+      "athletics_bonus": 7,
+      "cha_mod": 1,
+      "cha_save": 25,
+      "con_mod": 0,
+      "con_save": 20,
+      "deception_bonus": 19,
+      "dex_mod": -3,
+      "dex_save": 3,
+      "history_bonus": 36,
+      "initiative": -3,
+      "insight_bonus": 6,
+      "int_mod": 4,
+      "int_save": 38,
+      "intimidation_bonus": 23,
+      "investigation_bonus": 40,
+      "medicine_bonus": 10,
+      "nature_bonus": 30,
+      "passive_perception": 10,
+      "perception_bonus": 0,
+      "performance_bonus": 17,
+      "persuasion_bonus": 31,
+      "prof": 2,
+      "religion_bonus": 10,
+      "sleight_of_hand_bonus": 17,
+      "spell_attack": 2,
+      "spell_dc": 10,
+      "stealth_bonus": 31,
+      "str_mod": 3,
+      "str_save": 33,
+      "survival_bonus": 8,
+      "wis_mod": -2,
+      "wis_save": 8,
+    },
+    "refs": [
+      [
+        3,
+      ],
+      [
+        -3,
+      ],
+      [
+        0,
+      ],
+      [
+        4,
+      ],
+      [
+        -2,
+      ],
+      [
+        1,
+      ],
+      [
+        -3,
+      ],
+      [],
+      [],
+      [],
+      [
+        33,
+      ],
+      [
+        3,
+      ],
+      [
+        20,
+      ],
+      [
+        38,
+      ],
+      [
+        8,
+      ],
+      [
+        25,
+      ],
+      [
+        -3,
+      ],
+      [
+        12,
+      ],
+      [
+        32,
+      ],
+      [
+        7,
+      ],
+      [
+        19,
+      ],
+      [
+        36,
+      ],
+      [
+        6,
+      ],
+      [
+        23,
+      ],
+      [
+        40,
+      ],
+      [
+        10,
+      ],
+      [
+        30,
+      ],
+      [
+        0,
+      ],
+      [
+        17,
+      ],
+      [
+        31,
+      ],
+      [
+        10,
+      ],
+      [
+        17,
+      ],
+      [
+        31,
+      ],
+      [
+        8,
+      ],
+      [
+        2,
+      ],
+    ],
+  },
+  "Ironsworn: Starforged — Character": {
+    "cells": [
+      {
+        "list": "vows",
+        "sums": [
+          3,
+          5,
+          7,
+        ],
+      },
+      {
+        "list": "assets",
+        "sums": [
+          3,
+          5,
+          7,
+          9,
+        ],
+      },
+      {
+        "list": "connections",
+        "sums": [
+          3,
+          5,
+          7,
+          9,
+        ],
+      },
+    ],
+    "derived": {},
+    "refs": [
+      [
+        9,
+      ],
+      [
+        16,
+      ],
+      [
+        4,
+      ],
+      [
+        11,
+      ],
+      [
+        18,
+      ],
+      [
+        6,
+      ],
+      [
+        13,
+      ],
+      [
+        1,
+      ],
+      [],
+      [],
+    ],
+  },
+  "Ironsworn: Starforged — Starship": {
+    "cells": [
+      {
+        "list": "modules",
+        "sums": [
+          3,
+          5,
+        ],
+      },
+      {
+        "list": "expeditions",
+        "sums": [
+          3,
+          5,
+          7,
+        ],
+      },
+    ],
+    "derived": {},
+    "refs": [
+      [
+        14,
+      ],
+    ],
+  },
+  "Mothership — Classic": {
+    "cells": [
+      {
+        "list": "skills",
+        "sums": [
+          3,
+          5,
+          7,
+        ],
+      },
+      {
+        "list": "weapons",
+        "sums": [
+          3,
+          5,
+          7,
+        ],
+      },
+      {
+        "list": "gear",
+        "sums": [
+          3,
+          5,
+        ],
+      },
+    ],
+    "derived": {},
+    "refs": [
+      [],
+      [],
+      [],
+      [],
+      [],
+      [],
+      [],
+      [],
+      [],
+      [],
+    ],
+  },
+  "Mythic Bastionland — Classic": {
+    "cells": [
+      {
+        "list": "property",
+        "sums": [
+          3,
+          5,
+          7,
+        ],
+      },
+      {
+        "list": "scars",
+        "sums": [
+          3,
+        ],
+      },
+    ],
+    "derived": {},
+    "refs": [
+      [],
+      [],
+      [],
+      [],
+    ],
+  },
+  "Mythic Bastionland — Compact": {
+    "cells": [
+      {
+        "list": "property",
+        "sums": [
+          3,
+          5,
+          7,
+        ],
+      },
+    ],
+    "derived": {},
+    "refs": [
+      [],
+      [],
+      [],
+      [],
+    ],
+  },
+  "Stonetop — Character": {
+    "cells": [
+      {
+        "list": "moves",
+        "sums": [
+          3,
+          5,
+          7,
+        ],
+      },
+      {
+        "list": "arcana",
+        "sums": [
+          3,
+          5,
+        ],
+      },
+      {
+        "list": "inventory",
+        "sums": [
+          3,
+          5,
+          7,
+        ],
+      },
+      {
+        "list": "small_items",
+        "sums": [
+          3,
+          5,
+        ],
+      },
+      {
+        "list": "connections",
+        "sums": [
+          3,
+          5,
+        ],
+      },
+      {
+        "list": "followers",
+        "sums": [
+          3,
+          5,
+          7,
+          9,
+          11,
+          13,
+        ],
+      },
+    ],
+    "derived": {},
+    "refs": [
+      [
+        16,
+      ],
+      [
+        4,
+      ],
+      [
+        11,
+      ],
+      [
+        18,
+      ],
+      [
+        6,
+      ],
+      [
+        13,
+      ],
+      [],
+      [],
+      [],
+    ],
+  },
+  "Stonetop — Steading": {
+    "cells": [
+      {
+        "list": "improvements",
+        "sums": [
+          3,
+          5,
+        ],
+      },
+      {
+        "list": "resources",
+        "sums": [
+          3,
+        ],
+      },
+      {
+        "list": "fortifications",
+        "sums": [
+          3,
+        ],
+      },
+      {
+        "list": "assets",
+        "sums": [
+          3,
+          5,
+        ],
+      },
+      {
+        "list": "residents",
+        "sums": [
+          3,
+          5,
+          7,
+        ],
+      },
+      {
+        "list": "neighbors",
+        "sums": [
+          3,
+          5,
+          7,
+          9,
+        ],
+      },
+    ],
+    "derived": {},
+    "refs": [
+      [
+        7,
+      ],
+    ],
+  },
+}
+`;

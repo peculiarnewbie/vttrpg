@@ -92,19 +92,13 @@ describe("valueScope", () => {
       checks: 2,
       list: 2,
       emptyChecks: 0,
+      // Text reads as text (arithmetic reads it as 0).
+      text: "abc",
+      infString: "Infinity",
     }))
-      expect(scope({ key })).toBe(expected);
-    for (const key of [
-      "empty",
-      "whitespace",
-      "text",
-      "missing",
-      "inf",
-      "nan",
-      "infString",
-      "toString",
-    ])
-      expect(scope({ key })).toBeUndefined();
+      expect(scope.value({ key })).toBe(expected);
+    for (const key of ["empty", "whitespace", "missing", "inf", "nan", "toString"])
+      expect(scope.value({ key })).toBeUndefined();
   });
 
   it("sums list columns, ignoring empty, missing and non-numeric cells", () => {
@@ -123,24 +117,24 @@ describe("valueScope", () => {
       checks: ["a"],
       text: "3",
     });
-    expect(scope({ key: "inventory", column: "weight" })).toBe(5.5);
-    expect(scope({ key: "inventory", column: "unknown" })).toBe(0);
-    expect(scope({ key: "empty", column: "weight" })).toBe(0);
-    expect(scope({ key: "checks", column: "weight" })).toBeUndefined();
-    expect(scope({ key: "text", column: "weight" })).toBeUndefined();
-    expect(scope({ key: "missing", column: "weight" })).toBeUndefined();
+    expect(scope.value({ key: "inventory", column: "weight" })).toBe(5.5);
+    expect(scope.value({ key: "inventory", column: "unknown" })).toBe(0);
+    expect(scope.value({ key: "empty", column: "weight" })).toBe(0);
+    expect(scope.value({ key: "checks", column: "weight" })).toBeUndefined();
+    expect(scope.value({ key: "text", column: "weight" })).toBeUndefined();
+    expect(scope.value({ key: "missing", column: "weight" })).toBeUndefined();
   });
 
   it("reads the current row without mutating values or rows", () => {
     const row = Object.freeze({ qty: "2", checked: true, tags: ["a", "b"], name: "Sword" });
     const values = Object.freeze({ qty: 100 });
-    const scope = valueScope(values, row);
-    expect(scope({ key: "row", column: "qty" })).toBe(2);
-    expect(scope({ key: "row", column: "checked" })).toBe(1);
-    expect(scope({ key: "row", column: "tags" })).toBe(2);
-    expect(scope({ key: "row", column: "name" })).toBeUndefined();
-    expect(scope({ key: "row", column: "missing" })).toBeUndefined();
-    expect(valueScope(values)({ key: "row", column: "qty" })).toBeUndefined();
+    const scope = valueScope(values, { row });
+    expect(scope.value({ key: "row", column: "qty" })).toBe(2);
+    expect(scope.value({ key: "row", column: "checked" })).toBe(1);
+    expect(scope.value({ key: "row", column: "tags" })).toBe(2);
+    expect(scope.value({ key: "row", column: "name" })).toBe("Sword");
+    expect(scope.value({ key: "row", column: "missing" })).toBeUndefined();
+    expect(valueScope(values).value({ key: "row", column: "qty" })).toBeUndefined();
     expect(values.qty).toBe(100);
   });
 });
@@ -149,17 +143,21 @@ describe("sheet scopes and labels", () => {
   it("computes layout values and lets derived values shadow stored values", () => {
     const values = Object.freeze({ str: 15, str_mod: 100 });
     expect(sheetDerived(layout, values)).toEqual({ values: { str_mod: 2 }, errors: {} });
-    expect(sheetScope(layout, values)({ key: "str_mod" })).toBe(2);
-    expect(sheetScope(layout, values)({ key: "str" })).toBe(15);
-    expect(sheetScope(undefined, values)({ key: "str_mod" })).toBe(100);
+    expect(sheetScope(layout, values).value({ key: "str_mod" })).toBe(2);
+    expect(sheetScope(layout, values).value({ key: "str" })).toBe(15);
+    expect(sheetScope(undefined, values).value({ key: "str_mod" })).toBe(100);
     expect(sheetDerived(undefined, values)).toEqual({ values: {}, errors: {} });
     expect(values.str_mod).toBe(100);
-    const rowScope = sheetScope(layout, values, { qty: 3 });
-    expect(rowScope({ key: "row", column: "qty" })).toBe(3);
+    const rowScope = sheetScope(layout, values, { row: { qty: 3 } });
+    expect(rowScope.value({ key: "row", column: "qty" })).toBe(3);
   });
 
   it("uses derived, stat, field, tracker and column labels through groups", () => {
-    const lookup = sheetRefLookup(layout, { str: 15, inventory: [{ weight: 3 }] }, { qty: 2 });
+    const lookup = sheetRefLookup(
+      layout,
+      { str: 15, inventory: [{ weight: 3 }] },
+      { row: { qty: 2 } },
+    );
     expect(lookup({ key: "str_mod" })).toEqual({ value: 2, label: "STR mod" });
     expect(lookup({ key: "str" })).toEqual({ value: 15, label: "Strength" });
     expect(lookup({ key: "bonus" })).toEqual({ value: 0, label: "Bonus" });
@@ -183,7 +181,7 @@ describe("sheet scopes and labels", () => {
       value: 3,
       label: "bonus",
     });
-    expect(sheetRefLookup(undefined, {}, {})({ key: "row", column: "qty" })).toEqual({
+    expect(sheetRefLookup(undefined, {}, { row: {} })({ key: "row", column: "qty" })).toEqual({
       value: 0,
       label: "row",
     });
@@ -366,5 +364,129 @@ describe("refValues", () => {
 
   it("keeps trackers of older templates that have no layout", () => {
     expect(refValues(undefined, { str: 12 }, { hp: 4 })).toEqual({ str: 12, hp: 4 });
+  });
+});
+
+describe("formulas over lists, checks and computed columns", () => {
+  const gear: SheetLayout = {
+    system: "Test",
+    name: "Gear",
+    derived: [
+      { key: "prof", label: "Proficiency", expr: "2" },
+      { key: "load", label: "Load", expr: "sum(@gear, @row.weight * @row.qty)" },
+      { key: "attacks", label: "Attack total", expr: "@weapons.attack" },
+      { key: "best", label: "Best attack", expr: "highest(@weapons, @row.attack)" },
+      { key: "skilled", label: "Skilled", expr: 'count(@skills) + has(@skills, "Stealth")' },
+      { key: "status", label: "Status", expr: 'if(@load > 10, "Encumbered", "Fine")' },
+    ],
+    pages: [
+      {
+        id: "main",
+        title: "Main",
+        blocks: [
+          {
+            id: "gear",
+            type: "list",
+            key: "gear",
+            columns: [
+              { key: "name", label: "Item", kind: "text" },
+              { key: "weight", label: "Weight", kind: "number" },
+              { key: "qty", label: "Qty", kind: "number" },
+            ],
+          },
+          {
+            id: "weapons",
+            type: "list",
+            key: "weapons",
+            columns: [
+              { key: "name", label: "Weapon", kind: "text" },
+              { key: "bonus", label: "Bonus", kind: "number" },
+              // A computed column that reads another computed column and a derived value.
+              { key: "base", label: "Base", kind: "derived", expr: "@row.bonus + @prof" },
+              { key: "attack", label: "Attack", kind: "derived", expr: "@row.base + 1" },
+            ],
+          },
+          { id: "skills", type: "checks", key: "skills", options: ["Athletics", "Stealth"] },
+        ],
+      },
+    ],
+  };
+  const values = {
+    gear: [
+      { name: "Rope", weight: 1, qty: 2 },
+      { name: "Anvil", weight: 9, qty: 1 },
+    ],
+    weapons: [
+      { name: "Sword", bonus: 1 },
+      { name: "Bow", bonus: 3 },
+    ],
+    skills: ["Stealth"],
+  };
+
+  it("computes aggregates, computed columns and text values", () => {
+    expect(sheetDerived(gear, values)).toEqual({
+      values: { prof: 2, load: 11, attacks: 10, best: 6, skilled: 2, status: "Encumbered" },
+      errors: {},
+    });
+    const cell = sheetScope(gear, values, { row: values.weapons[1], list: "weapons" });
+    expect(cell.value({ key: "row", column: "attack" })).toBe(6);
+    expect(layoutProblems(gear)).toEqual([]);
+  });
+
+  it("reads a loop through computed columns as empty instead of hanging", () => {
+    const looped: SheetLayout = {
+      ...gear,
+      derived: [{ key: "total", label: "Total", expr: "@weapons.a" }],
+      pages: [
+        {
+          id: "main",
+          title: "Main",
+          blocks: [
+            {
+              id: "weapons",
+              type: "list",
+              key: "weapons",
+              columns: [
+                { key: "a", label: "A", kind: "derived", expr: "@row.b + 1" },
+                { key: "b", label: "B", kind: "derived", expr: "@row.a + @total" },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    expect(sheetDerived(looped, { weapons: [{}] }).values).toEqual({ total: 1 });
+  });
+
+  it("warns about aggregates over things that aren't lists, and missing columns", () => {
+    expect(
+      layoutProblems({
+        ...gear,
+        derived: [
+          { key: "bad", label: "Bad", expr: "sum(@gear, @row.price) + count(@prof)" },
+          { key: "prof", label: "Proficiency", expr: "2" },
+        ],
+      }),
+    ).toEqual(['Derived "Bad" reads @row.price, which isn\'t a column of @gear']);
+    expect(
+      layoutProblems({
+        ...gear,
+        derived: [{ key: "bad", label: "Bad", expr: "sum(@name_field, 1)" }],
+        pages: [
+          {
+            id: "main",
+            title: "Main",
+            blocks: [
+              {
+                id: "f",
+                type: "fields",
+                columns: 1,
+                items: [{ key: "name_field", label: "Name" }],
+              },
+            ],
+          },
+        ],
+      }),
+    ).toEqual(['Derived "Bad" reads @name_field as a list, but it isn\'t a list or checks']);
   });
 });

@@ -1,3 +1,4 @@
+import { DERIVED_LIMITS } from "./derived";
 import { describe, expect, it } from "vitest";
 import type { SaveTemplateInput, SheetTemplate } from "./schemas";
 import type { SheetLayout } from "./sheet-layout";
@@ -192,11 +193,13 @@ describe("derived layout limits", () => {
 
   it("checks expression length, syntax and depth", () => {
     expect(
-      layoutLimitsError(withDerived([{ ...value, expr: `1${" ".repeat(199)}` }])),
+      layoutLimitsError(
+        withDerived([{ ...value, expr: `1${" ".repeat(DERIVED_LIMITS.length - 1)}` }]),
+      ),
     ).toBeUndefined();
-    expect(layoutLimitsError(withDerived([{ ...value, expr: `1${" ".repeat(200)}` }]))).toContain(
-      "At most 200 characters",
-    );
+    expect(
+      layoutLimitsError(withDerived([{ ...value, expr: `1${" ".repeat(DERIVED_LIMITS.length)}` }])),
+    ).toContain(`At most ${DERIVED_LIMITS.length} characters`);
     expect(layoutLimitsError(withDerived([{ ...value, expr: "floor()" }]))).toContain(
       "needs 1 argument",
     );
@@ -228,7 +231,9 @@ describe("derived layout limits", () => {
     expect(layoutLimitsError(column())).toBe(
       'Derived column "Total weight": Expected an expression at 0',
     );
-    expect(layoutLimitsError(column(`1${" ".repeat(200)}`))).toContain("At most 200 characters");
+    expect(layoutLimitsError(column(`1${" ".repeat(DERIVED_LIMITS.length)}`))).toContain(
+      `At most ${DERIVED_LIMITS.length} characters`,
+    );
   });
 
   it("keeps cycles, unknown refs and legacy notation saveable", () => {

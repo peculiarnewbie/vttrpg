@@ -41,7 +41,7 @@ import {
   sourceOf,
 } from "../domain/compendium-rows";
 import { searchEntries } from "../domain/compendium-search";
-import { evaluate, parseExpr, type Expr } from "../domain/derived";
+import type { Scalar } from "../domain/derived";
 import { sheetDerived, sheetScope } from "../domain/sheet-refs";
 import {
   PROGRESS_BOXES,
@@ -53,7 +53,7 @@ import {
 import { slotLayout } from "../domain/slots";
 import { rowsUpToLevel } from "../domain/progression";
 import { acceptedFills, fillOffers, withRows } from "../domain/entry-fill";
-import { findBlock } from "../domain/layout-edit";
+import { allBlocks, findBlock } from "../domain/layout-edit";
 import { colors, fonts, radii, skin } from "../theme/tokens.stylex";
 import { useTheme } from "../theme/theme-context";
 import { moveIndex } from "../client/sortable";
@@ -692,7 +692,7 @@ type Props = {
   /** Per-character maximum while editing; `null` restores the layout's. */
   onTrackerMax?: (key: string, max: number | null) => void;
   /** Stats derived from other values (legacy formulas); these are never edited directly. */
-  computed?: (key: string) => number | undefined;
+  computed?: (key: string) => Scalar | undefined;
   /** Viewers who can't edit this character: compendium pickers are hidden. */
   readOnly?: boolean;
   /** The world's compendium, for entry blocks and lists with a source. */
@@ -729,8 +729,13 @@ const num = (value: SheetValues[string], fallback = 0) =>
 const clamp = (value: number, item: TrackerItem) => Math.max(item.min, Math.min(item.max, value));
 
 /** Derived values can be fractional; sheets show at most two decimals. */
-const formatNumber = (value: number) =>
-  Number.isInteger(value) ? String(value) : String(Math.round(value * 100) / 100);
+/** A computed value as shown: text as is, numbers to at most two places. */
+const formatNumber = (value: number | string) =>
+  typeof value === "string"
+    ? value
+    : Number.isInteger(value)
+      ? String(value)
+      : String(Math.round(value * 100) / 100);
 
 /** A block item's label, which rolls its notation when the author gave it one. */
 function ItemLabel(props: { text: string; roll?: string; onRoll: (dice: string) => void }) {
@@ -1034,7 +1039,7 @@ function Cell(props: {
   row: ListRow | undefined;
   onRoll: (dice: string) => void;
   onToggle: () => void;
-  derived: (column: ListColumn, row: ListRow) => number | undefined;
+  derived: (column: ListColumn, row: ListRow) => Scalar | undefined;
   /** Set this cell's value in place (progress tracks mark ticks without editing the sheet). */
   onSet?: (value: number) => void;
 }) {
@@ -1091,7 +1096,7 @@ type Ctx = Omit<
   /** The layout's list at `key`, for filling it from an entry. */
   listBlock: (key: string) => Extract<LeafBlock, { type: "list" }> | undefined;
   /** A derived list column's value for one row. */
-  derivedCell: (column: ListColumn, row: ListRow) => number | undefined;
+  derivedCell: (column: ListColumn, row: ListRow) => Scalar | undefined;
 };
 
 const Heading = (props: { text: string }) => (
@@ -1336,7 +1341,7 @@ export function ListEditor(props: {
   rows: readonly ListRow[];
   onSave: (rows: readonly ListRow[]) => void;
   /** Values for derived columns, which are shown but never edited. */
-  derived?: (column: ListColumn, row: ListRow) => number | undefined;
+  derived?: (column: ListColumn, row: ListRow) => Scalar | undefined;
 }) {
   const save = (rows: readonly ListRow[]) => props.onSave(rows);
   const setCell = (index: number, key: string, value: ListRow[string]) =>
@@ -2388,15 +2393,16 @@ export function SheetBlocks(props: Props) {
   const derived = createMemo(() => sheetDerived(props.layout, refSource()));
   const computed = (key: string) =>
     key in derived().values ? derived().values[key] : props.computed?.(key);
-  const parsed = new Map<string, Expr | null>();
+  // A computed column reads its row, the sheet's derived values and other computed columns.
   const derivedCell = (column: ListColumn, row: ListRow) => {
-    if (!column.expr) return undefined;
-    if (!parsed.has(column.expr)) {
-      const result = parseExpr(column.expr);
-      parsed.set(column.expr, result.ok ? result.value : null);
-    }
-    const expr = parsed.get(column.expr);
-    return expr ? evaluate(expr, sheetScope(props.layout, refSource(), row)) : undefined;
+    const list = allBlocks(props.layout).find(
+      (block) => block.type === "list" && block.columns.includes(column),
+    );
+    if (!column.expr || list?.type !== "list") return undefined;
+    return sheetScope(props.layout, refSource(), { row, list: list.key }, derived()).value({
+      key: "row",
+      column: column.key,
+    });
   };
   const ctx = (): Ctx => ({
     values: props.values,
