@@ -235,6 +235,23 @@ test("Mythic Bastionland: unofficial sheets and entry types, and a Virtue rolls 
   // Shapes only: no entries come with it.
   expect(index.upserts).toEqual([]);
 
+  // The empty types are where a DM starts writing from their book.
+  const dm = table.dm.page;
+  await dm.goto(`/worlds/${table.worldId}/compendium`);
+  const browser = dm.getByRole("region", { name: "Compendium browser" });
+  await browser.getByRole("button", { name: /^Knights\s*0$/ }).click();
+  await expect(browser.getByText("No knights yet.", { exact: false })).toBeVisible();
+  await browser.getByRole("button", { name: "New Knight" }).click();
+  const editor = browser.getByRole("group", { name: "New Knight" });
+  await editor.getByLabel("Name").fill("The Test Knight");
+  await editor.getByRole("button", { name: "Save" }).click();
+  await expect(
+    browser.getByRole("list", { name: "Entries" }).getByRole("button", { name: /The Test Knight/ }),
+  ).toBeVisible();
+  await expect(browser.getByRole("complementary", { name: "Preview" })).toContainText(
+    "The Test Knight",
+  );
+
   await table.saveCharacter({
     name: "Ser Quill",
     templateId: templates.find((template) => template.name.endsWith("Classic"))!.id,

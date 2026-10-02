@@ -66,12 +66,15 @@ export function CompendiumBrowser(props: {
   const [selection, setSelection] = createSignal<FacetSelection>({});
   const [sort, setSort] = createSignal<RowSort>({ by: "name", direction: "asc" });
   const [editing, setEditing] = createSignal(false);
+  // A new entry being written, in the preview pane (DM only).
+  const [creating, setCreating] = createSignal<EntryType | null>(null);
   const [notice, setNotice] = createSignal("");
   const [error, setError] = createSignal("");
 
   const type = () => (typeId() ? props.compendium.typeById(typeId()!) : undefined);
   const typeName = (id: string) => props.compendium.typeById(id)?.name ?? id;
   const chooseType = (id: string | undefined) => {
+    setCreating(null);
     setSelection({});
     setSort({ by: "name", direction: "asc" });
     setParams({ type: id, entry: undefined, compare: undefined });
@@ -99,6 +102,14 @@ export function CompendiumBrowser(props: {
   const summaries = createMemo(() =>
     type() ? facetSummaries(type()!, searched(), selection()) : [],
   );
+  const startNew = (entryType: EntryType) => {
+    setEditing(false);
+    setNotice("");
+    setCreating(entryType);
+  };
+  // DMs see every type, so a type with no entries yet is somewhere to start writing.
+  const listedTypes = () =>
+    props.compendium.types().filter((item) => props.isDm || counts().get(item.id));
   const counts = createMemo(() => {
     const byType = new Map<string, number>();
     for (const row of props.compendium.rows())
@@ -118,6 +129,7 @@ export function CompendiumBrowser(props: {
   };
   const open = (id: string) => {
     setEditing(false);
+    setCreating(null);
     setNotice("");
     setParams({ entry: id });
   };
@@ -219,6 +231,24 @@ export function CompendiumBrowser(props: {
             ? `${results().length} entries`
             : `${results().length} of ${props.compendium.rows().length}`}
         </span>
+        <Show when={props.isDm && props.compendium.types().length}>
+          <Show
+            when={type()}
+            fallback={
+              <Menu label="New entry" trigger="New entry">
+                <For each={props.compendium.types()}>
+                  {(item) => <MenuItem onClick={() => startNew(item)}>{item.name}</MenuItem>}
+                </For>
+              </Menu>
+            }
+          >
+            {(current) => (
+              <Button small variant="primary" onClick={() => startNew(current())}>
+                New {current().name}
+              </Button>
+            )}
+          </Show>
+        </Show>
       </header>
       <div {...sx(c.body)}>
         <nav {...sx(c.facets)} aria-label="Filters">
@@ -232,7 +262,7 @@ export function CompendiumBrowser(props: {
               <span>Everything</span>
               <span {...sx(c.facetCount)}>{props.compendium.rows().length}</span>
             </button>
-            <For each={props.compendium.types().filter((item) => counts().get(item.id))}>
+            <For each={listedTypes()}>
               {(item) => (
                 <button
                   type="button"
@@ -241,7 +271,7 @@ export function CompendiumBrowser(props: {
                   onClick={() => chooseType(item.id)}
                 >
                   <span>{item.plural ?? item.name}</span>
-                  <span {...sx(c.facetCount)}>{counts().get(item.id)}</span>
+                  <span {...sx(c.facetCount)}>{counts().get(item.id) ?? 0}</span>
                 </button>
               )}
             </For>
@@ -282,7 +312,11 @@ export function CompendiumBrowser(props: {
                 <EmptyState>
                   {props.compendium.loading() && !props.compendium.rows().length
                     ? "Loading the compendium…"
-                    : "No entries match."}
+                    : props.isDm && type() && !counts().get(type()!.id)
+                      ? `No ${(type()!.plural ?? type()!.name).toLowerCase()} yet. Use New ${type()!.name} to write the first.`
+                      : props.isDm && !props.compendium.rows().length
+                        ? "No entries yet. Use New entry to write one, or enable a library in World settings."
+                        : "No entries match."}
                 </EmptyState>
               }
             >
@@ -342,9 +376,27 @@ export function CompendiumBrowser(props: {
         </div>
         <aside {...sx(c.preview)} aria-label="Preview">
           <ErrorBanner message={error()} />
+          <Show when={creating()}>
+            {(entryType) => (
+              <EntryEditor
+                worldId={props.worldId}
+                compendium={props.compendium}
+                type={entryType()}
+                onSaved={(saved) => {
+                  void props.compendium.refresh();
+                  open(saved.id);
+                }}
+                onCancel={() => setCreating(null)}
+              />
+            )}
+          </Show>
           <Show
-            when={params.entry}
-            fallback={<EmptyState>Pick an entry to read it here.</EmptyState>}
+            when={!creating() && params.entry}
+            fallback={
+              <Show when={!creating()}>
+                <EmptyState>Pick an entry to read it here.</EmptyState>
+              </Show>
+            }
           >
             <Show
               when={selected()}
