@@ -256,6 +256,65 @@ export const DerivedValue = Schema.Struct({
 });
 export type DerivedValue = typeof DerivedValue.Type;
 
+/*
+ * An optional step-by-step way to fill in the same character the sheet edits.
+ * It holds no data of its own: `blocks` parts show sheet blocks edited as on
+ * the sheet, `choose` picks compendium entries into an entry block or a
+ * sourced list (with the same copy offers), and `rolls`/`tables` are plain
+ * chat rolls — nothing a roll lands on is ever written to the character.
+ * Counts are hints; nothing is checked (see docs/v1-scope.md).
+ */
+
+/** An entry chosen earlier (the value of entry block `entry`) and a reference field on it. */
+const FromEntry = Schema.Struct({ entry: Schema.String, field: Schema.String });
+const StepText = (maximum: number) => Schema.String.check(Schema.isMaxLength(maximum));
+
+export const BuilderPart = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("blocks"),
+    /** Sheet block ids, shown in this order. */
+    blocks: Schema.Array(Schema.String).check(Schema.isMaxLength(30)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("choose"),
+    /** An entry block (one pick) or a list with a `source` (rows added). */
+    key: Schema.String,
+    /** Offer only the entries this reference field lists (a playbook's moves). */
+    from: Schema.optional(FromEntry),
+    /** Shown as "Pick N"; never enforced. */
+    pick: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("rolls"),
+    items: Schema.Array(Schema.Struct({ label: StepText(60), dice: Schema.String })).check(
+      Schema.isMaxLength(12),
+    ),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("tables"),
+    /** Oracle entries listed by a reference field of an entry chosen earlier (a background's tables)… */
+    from: Schema.optional(FromEntry),
+    /** …or fixed oracle entries by id (name tables). */
+    entries: Schema.optional(Schema.Array(Schema.String).check(Schema.isMaxLength(20))),
+  }),
+]);
+export type BuilderPart = typeof BuilderPart.Type;
+
+export const BuilderStep = Schema.Struct({
+  id: Schema.String,
+  /** Shown as "Step N" while empty. */
+  title: StepText(60),
+  /** Our own short guidance — never rules text copied from a closed book. */
+  hint: Schema.optional(StepText(400)),
+  parts: Schema.Array(BuilderPart).check(Schema.isMaxLength(8)),
+});
+export type BuilderStep = typeof BuilderStep.Type;
+
+export const SheetBuilder = Schema.Struct({
+  steps: Schema.Array(BuilderStep).check(Schema.isMaxLength(20)),
+});
+export type SheetBuilder = typeof SheetBuilder.Type;
+
 export const SheetLayout = Schema.Struct({
   /**
    * `shared`: sheets that belong to the table rather than one player — a crew,
@@ -267,6 +326,7 @@ export const SheetLayout = Schema.Struct({
   name: Schema.String,
   pages: Schema.Array(SheetPage),
   derived: Schema.optional(Schema.Array(DerivedValue)),
+  builder: Schema.optional(SheetBuilder),
 });
 export type SheetLayout = typeof SheetLayout.Type;
 

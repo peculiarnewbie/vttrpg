@@ -127,6 +127,28 @@ and can be converted; their formulas and roll modifiers stay in effect. On the
 sheet, **Edit** makes fields, lists, and plain stats editable in place, saving
 each value as you leave it. Layouts are prototyped at `/lab/systems`.
 
+### Character builder
+
+A layout can carry an optional **builder**: steps that fill in the same
+character the sheet edits, for making a character without facing the whole
+sheet. Each step has a title, a short hint and parts:
+
+- **Sheet blocks** — some of the sheet's own blocks, edited as on the sheet.
+- **Choose from the compendium** — a searchable list with a readable preview,
+  into an entry block (a Knight, a class) or a compendium-fed list (moves,
+  gear). Options can come from a reference field of an entry chosen in an
+  earlier step (a playbook's moves). Choosing makes the same "Add its Property
+  to the sheet?" offer the sheet does; "Pick 2" is a hint, never enforced.
+- **Roll buttons** and **table rolls** (oracles referenced by a chosen entry,
+  or fixed ones) — plain chat rolls. Nothing a roll lands on is written to the
+  character; players type in what they keep.
+
+It's another frontend over Edit: **Builder** on any character whose layout has
+one (or **Create and open builder** for a new one) opens the steps, in any
+order, with Edit's Cancel and **Done** (Save). It only writes what the player
+edits or accepts, so opening it on a finished character changes nothing. DMs
+edit steps under **Character builder** in the layout editor, or as JSON.
+
 ### Shared sheets, tracks and slots
 
 - A layout marked **Shared sheet** makes sheets that belong to the table — a

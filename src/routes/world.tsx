@@ -346,6 +346,7 @@ export default function WorldPage() {
   const saveCharacter = async (input: SaveCharacterInput) => {
     const character = await api.saveCharacter(params.id, input);
     setCharacters((prev) => upsert(prev, character));
+    return character;
   };
 
   const deleteCharacter = async (characterId: string) => {
@@ -642,6 +643,7 @@ export default function WorldPage() {
                         compendium={compendium}
                         onOpenEntry={setOpenEntry}
                         onSave={saveCharacter}
+                        onRollTable={rollTable}
                         onDelete={deleteCharacter}
                         onUploadAvatar={uploadAvatar}
                       />

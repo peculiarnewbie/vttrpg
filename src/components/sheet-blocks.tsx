@@ -52,6 +52,8 @@ import {
 } from "../domain/progress";
 import { slotLayout } from "../domain/slots";
 import { rowsUpToLevel } from "../domain/progression";
+import { acceptedFills, fillOffers, withRows } from "../domain/entry-fill";
+import { findBlock } from "../domain/layout-edit";
 import { colors, fonts, radii, skin } from "../theme/tokens.stylex";
 import { useTheme } from "../theme/theme-context";
 import { moveIndex } from "../client/sortable";
@@ -697,6 +699,12 @@ type Props = {
   compendium?: CompendiumLookup;
   /** Show an entry's full card (the sheet only shows a summary). */
   onOpenEntry?: (entryId: string) => void;
+  /**
+   * Only these blocks, by id and in this order, without page tabs (a character
+   * builder step). The whole layout still feeds derived values, tracker refs
+   * and copy targets; unknown ids are skipped.
+   */
+  blocks?: readonly string[];
 };
 
 /** A list row a roll reads `@row.column` from. */
@@ -1922,28 +1930,8 @@ function EntryBlock(props: {
   const type = () => lookup()?.typeById(props.block.entryType);
   const label = () => props.block.label ?? type()?.name ?? "Entry";
   const canPick = () => !props.ctx.readOnly && !!lookup() && !!type();
-  /** An entry with one list field replaced, so the row copier sees only those rows. */
-  const withRows = (source: CompendiumEntry, key: string, rows: readonly ListRow[]) => ({
-    ...source,
-    fields: { ...source.fields, [key]: rows as CompendiumEntry["fields"][string] },
-  });
   const fills = (picked: CompendiumEntry) =>
-    (props.block.fill ?? []).flatMap((fill) => {
-      const list = props.ctx.listBlock(fill.to);
-      // A progression only offers what the character's level reaches.
-      const spec = props.block.progression;
-      const all = picked.fields[fill.from];
-      const source =
-        spec?.field === fill.from && Array.isArray(all)
-          ? withRows(
-              picked,
-              fill.from,
-              rowsUpToLevel(all as readonly ListRow[], num(props.ctx.values[spec.level], 0)),
-            )
-          : picked;
-      const rows = list ? rowsFromEntryList(source, fill.from, list.columns) : [];
-      return rows.length ? [{ to: fill.to, title: list?.title ?? fill.to, rows }] : [];
-    });
+    fillOffers(picked, props.block, props.ctx.listBlock, props.ctx.values);
   const pick = async (picked: IndexRow) => {
     props.ctx.onChange(props.block.key, picked.id);
     setOffer(null);
@@ -1953,10 +1941,8 @@ function EntryBlock(props: {
   const acceptOffer = () => {
     const picked = offer();
     if (!picked) return;
-    for (const fill of fills(picked)) {
-      const existing = (props.ctx.values[fill.to] as readonly ListRow[] | undefined) ?? [];
-      props.ctx.onChange(fill.to, [...existing, ...fill.rows]);
-    }
+    for (const [key, rows] of acceptedFills(fills(picked), props.ctx.values))
+      props.ctx.onChange(key, rows);
     setOffer(null);
   };
   // The progression variant: rows up to the character's level, read from the sheet.
@@ -2443,7 +2429,7 @@ export function SheetBlocks(props: Props) {
           </Show>
         </header>
       </Show>
-      <Show when={props.layout.pages.length > 1}>
+      <Show when={!props.blocks && props.layout.pages.length > 1}>
         <div {...sx(s.tabs)} role="tablist">
           <For each={props.layout.pages}>
             {(item) => (
@@ -2463,7 +2449,13 @@ export function SheetBlocks(props: Props) {
         </div>
       </Show>
       <div {...sx(s.grid)}>
-        <For each={current()?.blocks ?? []}>
+        <For
+          each={
+            props.blocks
+              ? props.blocks.flatMap((id) => findBlock(props.layout, id) ?? [])
+              : (current()?.blocks ?? [])
+          }
+        >
           {(block) => <BlockCell block={block} ctx={ctx()} />}
         </For>
       </div>

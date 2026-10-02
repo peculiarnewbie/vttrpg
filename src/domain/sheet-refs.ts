@@ -185,5 +185,47 @@ export const layoutProblems = (layout: SheetLayout): string[] => {
         break;
     }
   }
+  // Builder steps refer to blocks by id and key; a dangling one is skipped when shown.
+  const blocks = allBlocks(layout);
+  const entryKeys = new Set(blocks.flatMap((block) => (block.type === "entry" ? [block.key] : [])));
+  const choosable = new Set(
+    blocks.flatMap((block) =>
+      block.type === "entry" || (block.type === "list" && block.source) ? [block.key] : [],
+    ),
+  );
+  const blockIds = new Set(blocks.map((block) => block.id));
+  for (const step of layout.builder?.steps ?? []) {
+    const name = `Builder step "${step.title}"`;
+    for (const part of step.parts) {
+      switch (part.type) {
+        case "blocks":
+          for (const id of part.blocks)
+            if (!blockIds.has(id))
+              problems.push(`${name} shows block "${id}", which isn't on the sheet`);
+          break;
+        case "choose":
+          if (!choosable.has(part.key))
+            problems.push(
+              `${name} chooses into "${part.key}", which isn't an entry block or a list from the compendium`,
+            );
+          if (part.from && !entryKeys.has(part.from.entry))
+            problems.push(
+              `${name} takes options from "${part.from.entry}", which isn't an entry block`,
+            );
+          break;
+        case "rolls":
+          for (const item of part.items) roll(item.label, item.dice);
+          break;
+        case "tables":
+          if (part.from && !entryKeys.has(part.from.entry))
+            problems.push(
+              `${name} takes tables from "${part.from.entry}", which isn't an entry block`,
+            );
+          if (!part.from && !part.entries?.length)
+            problems.push(`${name} has a tables part with no tables`);
+          break;
+      }
+    }
+  }
   return problems;
 };

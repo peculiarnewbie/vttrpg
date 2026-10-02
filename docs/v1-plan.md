@@ -220,6 +220,9 @@ cairn2e,blades}.ts` (layouts, entry types, filters — orchestrator-written);
 - Presets (layouts + entry types, no rules text) for Mythic Bastionland,
   Mothership and Stonetop (steading as a shared sheet) — done; `docs/buildability.md` maps each scope demand to
   the feature and the Playwright spec that proves it.
+- Character builder (optional steps over the same character: sheet blocks,
+  compendium choices with copy offers, chat-only rolls) — machinery done;
+  builders for the shipped systems are next (one per system, data only).
 - Release checklist: real Google sign-in replaces the dev email stub (which
   stays live until then so the deployed site is easy to test); flags
   removed/defaulted on (`corpus-admin` stays off in production); migrations in production and

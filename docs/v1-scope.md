@@ -79,7 +79,9 @@ manage them; the app only holds whatever values they set.
   hits, successes, or degrees of success.
 - **Rule enforcement**: prerequisites, encumbrance limits, legal character
   builds, action economy. Level-up shows what a level grants and can _offer_
-  to copy it onto a sheet; it never validates or applies choices.
+  to copy it onto a sheet; it never validates or applies choices. The same
+  goes for the character builder: it shows steps, offers copies and rolls
+  dice into chat, and never checks a build or writes a roll into a stat.
 - **Combat automation**: initiative that advances itself, turn enforcement,
   effect durations.
 

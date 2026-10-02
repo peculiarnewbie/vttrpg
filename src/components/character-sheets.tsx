@@ -4,7 +4,8 @@ import { api } from "../client/api";
 import { computeStats } from "../domain/dice";
 import { effectiveLayout } from "../domain/layout-from-template";
 import { trackerDefinitions } from "../domain/trackers-definitions";
-import { SheetBlocks, type CompendiumLookup, type RollRow, type SheetRoll } from "./sheet-blocks";
+import { CharacterBuilder, type BuilderCompendium } from "./character-builder";
+import { SheetBlocks, type RollRow, type SheetRoll } from "./sheet-blocks";
 import type {
   Character,
   CharacterValue,
@@ -431,10 +432,12 @@ type Props = {
   onLayoutPref: (characterId: string, blockId: string, variant: string | null) => void;
   /** A roll that isn't one of the template's roll definitions, e.g. a Property row's d8. */
   onRollDice: (notation: string, label: string, sheet?: SheetRoll) => void;
-  /** The world's compendium, for entry blocks and "from compendium" lists. */
-  compendium?: CompendiumLookup;
+  /** The world's compendium, for entry blocks, "from compendium" lists and the builder. */
+  compendium?: BuilderCompendium;
   onOpenEntry?: (entryId: string) => void;
-  onSave: (input: SaveCharacterInput) => Promise<void>;
+  /** Roll one of an entry's oracle tables (the builder's table rolls). */
+  onRollTable?: (entryId: string, field: string) => void;
+  onSave: (input: SaveCharacterInput) => Promise<Character>;
   onDelete: (characterId: string) => Promise<void>;
   onUploadAvatar: (characterId: string, file: File) => Promise<void>;
   /** Lock or unlock a shared sheet (DM). */
@@ -464,6 +467,8 @@ export function CharacterSheets(props: Props) {
   const [newTemplateId, setNewTemplateId] = createSignal(props.templates[0]?.id ?? "");
   const [newMemberId, setNewMemberId] = createSignal(props.me.id);
   const [editing, setEditing] = createSignal(false);
+  // The builder: Edit's drafts and Save, with the layout's builder steps instead of the sheet.
+  const [building, setBuilding] = createSignal(false);
   // Style mode: pick each block's variant (stats as bars, lists as cards…) for this character.
   const [customizing, setCustomizing] = createSignal(false);
   const [draftName, setDraftName] = createSignal("");
@@ -488,6 +493,7 @@ export function CharacterSheets(props: Props) {
       else localStorage.removeItem(selectionKey(props.worldId));
     }
     setEditing(false);
+    setBuilding(false);
     setView(characterId ? "sheet" : "list");
   };
 
@@ -511,6 +517,16 @@ export function CharacterSheets(props: Props) {
     setDraftMax({ ...character.tickerMax });
     setEditing(true);
   };
+  const startBuild = (character: Character) => {
+    startEdit(character);
+    setBuilding(true);
+  };
+  const stopEdit = () => {
+    setEditing(false);
+    setBuilding(false);
+  };
+  const hasBuilder = (templateId: string) =>
+    !!props.templates.find((template) => template.id === templateId)?.layout?.builder?.steps.length;
 
   // Values are saved one at a time as they're edited; Save commits the name and maxima.
   const saveEdit = async (character: Character) => {
@@ -522,7 +538,7 @@ export function CharacterSheets(props: Props) {
       values: character.values,
       tickerMax: draftMax(),
     });
-    setEditing(false);
+    stopEdit();
   };
 
   /** Template rolls keep their modifiers and visibility; anything else rolls its dice. */
@@ -557,11 +573,11 @@ export function CharacterSheets(props: Props) {
     }
   };
 
-  const create = async (event: Event) => {
+  const create = async (event: Event, build = false) => {
     event.preventDefault();
     if (!newName().trim()) return;
     const templateId = newTemplateId() || props.templates[0]?.id || "";
-    await props.onSave({
+    const character = await props.onSave({
       name: newName().trim(),
       templateId,
       memberId: props.isDm && !isShared(templateId) ? newMemberId() : props.me.id,
@@ -570,6 +586,8 @@ export function CharacterSheets(props: Props) {
     });
     setNewName("");
     setCreating(false);
+    select(character.id);
+    if (build) startBuild(character);
   };
 
   const memberName = (character: Character) =>
@@ -643,130 +661,9 @@ export function CharacterSheets(props: Props) {
             const template = () => templateFor(props.templates, character());
             return (
               <Show when={template()}>
-                {(sheet) => (
-                  <div {...sx(sheetStyles.sheet)}>
-                    <div {...sx(sheetStyles.bar)}>
-                      <button {...sx(sheetStyles.barButton)} onClick={() => setView("list")}>
-                        ← All
-                      </button>
-                      <div {...sx(styles.spacer)} />
-                      <Show when={editing()}>
-                        <button {...sx(sheetStyles.barButton)} onClick={() => setEditing(false)}>
-                          Cancel
-                        </button>
-                        <button
-                          {...sx(sheetStyles.barButton, sheetStyles.barPrimary)}
-                          onClick={() => void saveEdit(character())}
-                        >
-                          Save
-                        </button>
-                      </Show>
-                      <Show when={!editing() && canEdit(character())}>
-                        <button
-                          {...sx(sheetStyles.barButton, customizing() && sheetStyles.barPrimary)}
-                          aria-pressed={customizing() ? "true" : "false"}
-                          title="Choose how each part of this sheet looks"
-                          onClick={() => setCustomizing(!customizing())}
-                        >
-                          {customizing() ? "Done styling" : "Style"}
-                        </button>
-                        <Show when={!customizing()}>
-                          <button
-                            {...sx(sheetStyles.barButton)}
-                            onClick={() => startEdit(character())}
-                          >
-                            Edit
-                          </button>
-                        </Show>
-                      </Show>
-                      <Show when={props.isDm && !editing() && shared(character()) && props.onLock}>
-                        <button
-                          {...sx(sheetStyles.barButton)}
-                          aria-pressed={character().locked ? "true" : "false"}
-                          title={
-                            character().locked
-                              ? "Let every member edit this sheet again"
-                              : "Only you can edit it while it's locked"
-                          }
-                          onClick={() => props.onLock?.(character().id, !character().locked)}
-                        >
-                          {character().locked ? "Unlock" : "Lock"}
-                        </button>
-                      </Show>
-                      <Show when={props.isDm && !editing()}>
-                        <button
-                          {...sx(sheetStyles.barButton, sheetStyles.barDanger)}
-                          onClick={() => {
-                            setDeleteError("");
-                            setDeleting(character());
-                          }}
-                        >
-                          Delete
-                        </button>
-                      </Show>
-                    </div>
-
-                    <div {...sx(sheetStyles.identity, bandHeader() && sheetStyles.identityBand)}>
-                      <label
-                        {...sx(
-                          sheetStyles.portrait,
-                          canEdit(character()) && sheetStyles.portraitEditable,
-                        )}
-                        title={canEdit(character()) ? "Change picture" : undefined}
-                      >
-                        <Show
-                          when={character().avatarKey}
-                          fallback={<span>{character().name.slice(0, 1).toUpperCase()}</span>}
-                        >
-                          <img
-                            src={api.avatarUrl(
-                              props.worldId,
-                              character().id,
-                              character().avatarKey!,
-                            )}
-                            alt=""
-                            {...sx(sheetStyles.portraitImage)}
-                          />
-                        </Show>
-                        <Show when={canEdit(character())}>
-                          <input
-                            type="file"
-                            aria-label="Change picture"
-                            accept="image/png,image/jpeg,image/webp,image/gif"
-                            style={{ display: "none" }}
-                            onChange={(event) => {
-                              const file = event.currentTarget.files?.[0];
-                              if (file) void uploadAvatar(character(), file);
-                              event.currentTarget.value = "";
-                            }}
-                          />
-                        </Show>
-                      </label>
-                      <div {...sx(sheetStyles.identityText)}>
-                        <Show
-                          when={editing()}
-                          fallback={
-                            <h2 {...sx(sheetStyles.name, bandHeader() && sheetStyles.bandText)}>
-                              {character().name}
-                            </h2>
-                          }
-                        >
-                          <input
-                            {...sx(sheetStyles.input, sheetStyles.nameInput)}
-                            aria-label="Name"
-                            value={draftName()}
-                            onInput={(event) => setDraftName(event.currentTarget.value)}
-                          />
-                        </Show>
-                        <span {...sx(sheetStyles.meta, bandHeader() && sheetStyles.bandText)}>
-                          {memberName(character())} · {sheet().name}
-                        </span>
-                      </div>
-                    </div>
-                    <Show when={avatarError()}>
-                      <span {...sx(styles.errorBanner)}>{avatarError()}</span>
-                    </Show>
-
+                {(sheet) => {
+                  /** The sheet, or just some of its blocks (a builder step). */
+                  const renderSheet = (blocks?: readonly string[]) => (
                     <SheetBlocks
                       layout={effectiveLayout(sheet())}
                       name={character().name}
@@ -810,11 +707,168 @@ export function CharacterSheets(props: Props) {
                         rollFromSheet(character(), sheet(), label, dice, row)
                       }
                       readOnly={!canEdit(character())}
+                      blocks={blocks}
                       compendium={props.compendium}
                       onOpenEntry={props.onOpenEntry}
                     />
-                  </div>
-                )}
+                  );
+                  return (
+                    <div {...sx(sheetStyles.sheet)}>
+                      <div {...sx(sheetStyles.bar)}>
+                        <button {...sx(sheetStyles.barButton)} onClick={() => setView("list")}>
+                          ← All
+                        </button>
+                        <div {...sx(styles.spacer)} />
+                        <Show when={editing()}>
+                          <button {...sx(sheetStyles.barButton)} onClick={stopEdit}>
+                            Cancel
+                          </button>
+                          <button
+                            {...sx(sheetStyles.barButton, sheetStyles.barPrimary)}
+                            onClick={() => void saveEdit(character())}
+                          >
+                            {building() ? "Done" : "Save"}
+                          </button>
+                        </Show>
+                        <Show when={!editing() && canEdit(character())}>
+                          <button
+                            {...sx(sheetStyles.barButton, customizing() && sheetStyles.barPrimary)}
+                            aria-pressed={customizing() ? "true" : "false"}
+                            title="Choose how each part of this sheet looks"
+                            onClick={() => setCustomizing(!customizing())}
+                          >
+                            {customizing() ? "Done styling" : "Style"}
+                          </button>
+                          <Show when={!customizing()}>
+                            <Show when={effectiveLayout(sheet()).builder?.steps.length}>
+                              <button
+                                {...sx(sheetStyles.barButton)}
+                                title="Fill in this character step by step"
+                                onClick={() => startBuild(character())}
+                              >
+                                Builder
+                              </button>
+                            </Show>
+                            <button
+                              {...sx(sheetStyles.barButton)}
+                              onClick={() => startEdit(character())}
+                            >
+                              Edit
+                            </button>
+                          </Show>
+                        </Show>
+                        <Show
+                          when={props.isDm && !editing() && shared(character()) && props.onLock}
+                        >
+                          <button
+                            {...sx(sheetStyles.barButton)}
+                            aria-pressed={character().locked ? "true" : "false"}
+                            title={
+                              character().locked
+                                ? "Let every member edit this sheet again"
+                                : "Only you can edit it while it's locked"
+                            }
+                            onClick={() => props.onLock?.(character().id, !character().locked)}
+                          >
+                            {character().locked ? "Unlock" : "Lock"}
+                          </button>
+                        </Show>
+                        <Show when={props.isDm && !editing()}>
+                          <button
+                            {...sx(sheetStyles.barButton, sheetStyles.barDanger)}
+                            onClick={() => {
+                              setDeleteError("");
+                              setDeleting(character());
+                            }}
+                          >
+                            Delete
+                          </button>
+                        </Show>
+                      </div>
+
+                      <div {...sx(sheetStyles.identity, bandHeader() && sheetStyles.identityBand)}>
+                        <label
+                          {...sx(
+                            sheetStyles.portrait,
+                            canEdit(character()) && sheetStyles.portraitEditable,
+                          )}
+                          title={canEdit(character()) ? "Change picture" : undefined}
+                        >
+                          <Show
+                            when={character().avatarKey}
+                            fallback={<span>{character().name.slice(0, 1).toUpperCase()}</span>}
+                          >
+                            <img
+                              src={api.avatarUrl(
+                                props.worldId,
+                                character().id,
+                                character().avatarKey!,
+                              )}
+                              alt=""
+                              {...sx(sheetStyles.portraitImage)}
+                            />
+                          </Show>
+                          <Show when={canEdit(character())}>
+                            <input
+                              type="file"
+                              aria-label="Change picture"
+                              accept="image/png,image/jpeg,image/webp,image/gif"
+                              style={{ display: "none" }}
+                              onChange={(event) => {
+                                const file = event.currentTarget.files?.[0];
+                                if (file) void uploadAvatar(character(), file);
+                                event.currentTarget.value = "";
+                              }}
+                            />
+                          </Show>
+                        </label>
+                        <div {...sx(sheetStyles.identityText)}>
+                          <Show
+                            when={editing()}
+                            fallback={
+                              <h2 {...sx(sheetStyles.name, bandHeader() && sheetStyles.bandText)}>
+                                {character().name}
+                              </h2>
+                            }
+                          >
+                            <input
+                              {...sx(sheetStyles.input, sheetStyles.nameInput)}
+                              aria-label="Name"
+                              value={draftName()}
+                              onInput={(event) => setDraftName(event.currentTarget.value)}
+                            />
+                          </Show>
+                          <span {...sx(sheetStyles.meta, bandHeader() && sheetStyles.bandText)}>
+                            {memberName(character())} · {sheet().name}
+                          </span>
+                        </div>
+                      </div>
+                      <Show when={avatarError()}>
+                        <span {...sx(styles.errorBanner)}>{avatarError()}</span>
+                      </Show>
+
+                      <Show
+                        when={building() && effectiveLayout(sheet()).builder?.steps.length}
+                        fallback={renderSheet()}
+                      >
+                        <CharacterBuilder
+                          layout={effectiveLayout(sheet())}
+                          values={character().values}
+                          readOnly={!canEdit(character())}
+                          compendium={props.compendium}
+                          renderBlocks={(ids) => renderSheet(ids)}
+                          onChange={(key, value) => {
+                            if (canEdit(character()) && value !== undefined)
+                              props.onValue(character().id, key, value as CharacterValue);
+                          }}
+                          onRoll={(label, dice) => rollFromSheet(character(), sheet(), label, dice)}
+                          onRollTable={props.onRollTable}
+                          onOpenEntry={props.onOpenEntry}
+                        />
+                      </Show>
+                    </div>
+                  );
+                }}
               </Show>
             );
           }}
@@ -896,9 +950,16 @@ export function CharacterSheets(props: Props) {
               </select>
             </Field>
           </Show>
-          <Button type="submit" variant="primary" disabled={!newName().trim()}>
-            Create
-          </Button>
+          <div {...sx(styles.row)}>
+            <Button type="submit" variant="primary" disabled={!newName().trim()}>
+              Create
+            </Button>
+            <Show when={hasBuilder(newTemplateId() || props.templates[0]?.id || "")}>
+              <Button disabled={!newName().trim()} onClick={(event) => void create(event, true)}>
+                Create and open builder
+              </Button>
+            </Show>
+          </div>
         </form>
       </Modal>
     </div>

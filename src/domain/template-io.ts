@@ -37,6 +37,11 @@ export const layoutLimitsError = (layout: SheetLayout | undefined): string | und
     const parsed = parseExpr(item.expr);
     if (!parsed.ok) return `Derived "${item.label}": ${parsed.error}`;
   }
+  const stepIds = new Set<string>();
+  for (const step of layout.builder?.steps ?? []) {
+    if (stepIds.has(step.id)) return "Builder step ids must be unique";
+    stepIds.add(step.id);
+  }
   for (const block of blocks) {
     if (block.type !== "list") continue;
     for (const column of block.columns) {

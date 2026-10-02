@@ -27,6 +27,8 @@ import {
   TrackerDisplay,
   blockVariants,
   type BlockType,
+  type BuilderPart,
+  type BuilderStep,
   type LayoutBlock,
   type SheetValues,
 } from "../domain/sheet-layout";
@@ -250,6 +252,31 @@ const e = stylex.create({
   json: { minHeight: "360px", fontFamily: fonts.mono, fontSize: "12px" },
   error: { color: colors.danger, fontSize: "12px" },
   hint: { fontSize: "12px", color: colors.textMuted },
+  stepCard: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
+    padding: "8px",
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: colors.border,
+  },
+  partCard: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+    paddingLeft: "8px",
+    borderLeftWidth: "2px",
+    borderLeftStyle: "solid",
+    borderLeftColor: colors.border,
+  },
+  checkList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "2px",
+    maxHeight: "160px",
+    overflowY: "auto",
+  },
   problems: {
     margin: 0,
     paddingBlock: "6px",
@@ -436,6 +463,386 @@ function TextInput(props: { label: string; value: string; onInput: (value: strin
         onInput={(event) => props.onInput(event.currentTarget.value)}
       />
     </label>
+  );
+}
+
+/*
+ * The optional character builder: steps over this layout's blocks (see
+ * `SheetBuilder`). Steps hold references, not copies — a removed block just
+ * drops out of its step, and the problems list says so.
+ */
+const partLabels: Record<BuilderPart["type"], string> = {
+  blocks: "Sheet blocks",
+  choose: "Choose from the compendium",
+  rolls: "Roll buttons",
+  tables: "Table rolls",
+};
+
+const moveItem = <T,>(items: readonly T[], index: number, delta: -1 | 1): T[] =>
+  index + delta < 0 || index + delta >= items.length
+    ? [...items]
+    : moveIndex(items, index, index + delta);
+
+function BuilderEditor(props: {
+  layout: SheetLayout;
+  entryTypes: readonly EntryType[];
+  onChange: (layout: SheetLayout) => void;
+}) {
+  const steps = () => props.layout.builder?.steps ?? [];
+  const setSteps = (next: readonly BuilderStep[]) =>
+    props.onChange({ ...props.layout, builder: next.length ? { steps: next } : undefined });
+  const setStep = (index: number, step: BuilderStep) =>
+    setSteps(steps().map((item, i) => (i === index ? step : item)));
+  const freshStepId = () => {
+    const ids = new Set(steps().map((step) => step.id));
+    let n = steps().length + 1;
+    while (ids.has(`step-${n}`)) n += 1;
+    return `step-${n}`;
+  };
+  return (
+    <div {...sx(e.column)} role="group" aria-label="Character builder steps">
+      <span {...sx(e.itemHead)}>Character builder</span>
+      <span {...sx(e.hint)}>
+        Optional steps that fill in this same sheet: its blocks, picks from the compendium, and roll
+        buttons. Rolls only go to chat; players write in what they keep.
+      </span>
+      <For each={steps()}>
+        {(step, index) => (
+          <StepEditor
+            step={step}
+            number={index() + 1}
+            layout={props.layout}
+            entryTypes={props.entryTypes}
+            onChange={(next) => setStep(index(), next)}
+            onMove={(delta) => setSteps(moveItem(steps(), index(), delta))}
+            onRemove={() => setSteps(steps().filter((_, i) => i !== index()))}
+          />
+        )}
+      </For>
+      <button
+        {...sx(styles.button, styles.buttonSmall)}
+        onClick={() => setSteps([...steps(), { id: freshStepId(), title: "", parts: [] }])}
+      >
+        + Add a step
+      </button>
+    </div>
+  );
+}
+
+function StepEditor(props: {
+  step: BuilderStep;
+  number: number;
+  layout: SheetLayout;
+  entryTypes: readonly EntryType[];
+  onChange: (step: BuilderStep) => void;
+  onMove: (delta: -1 | 1) => void;
+  onRemove: () => void;
+}) {
+  const name = () => `Step ${props.number}`;
+  const setParts = (parts: readonly BuilderPart[]) => props.onChange({ ...props.step, parts });
+  const blank = (type: BuilderPart["type"]): BuilderPart => {
+    switch (type) {
+      case "blocks":
+        return { type, blocks: [] };
+      case "choose":
+        return { type, key: chooseKeys(props.layout)[0]?.key ?? "" };
+      case "rolls":
+        return { type, items: [{ label: "Roll", dice: "1d6" }] };
+      case "tables":
+        return { type, entries: [] };
+    }
+  };
+  return (
+    <div {...sx(e.stepCard)} role="group" aria-label={name()}>
+      <div {...sx(e.bar)}>
+        <span {...sx(e.itemHead)}>{name()}</span>
+        <div {...sx(styles.spacer)} />
+        <button {...sx(e.icon)} aria-label={`Move ${name()} up`} onClick={() => props.onMove(-1)}>
+          ↑
+        </button>
+        <button {...sx(e.icon)} aria-label={`Move ${name()} down`} onClick={() => props.onMove(1)}>
+          ↓
+        </button>
+        <button {...sx(e.icon)} aria-label={`Remove ${name()}`} onClick={props.onRemove}>
+          ×
+        </button>
+      </div>
+      <TextInput
+        label="Title"
+        value={props.step.title}
+        onInput={(title) => props.onChange({ ...props.step, title })}
+      />
+      <TextInput
+        label="Hint (your own words)"
+        value={props.step.hint ?? ""}
+        onInput={(hint) => props.onChange({ ...props.step, hint: hint || undefined })}
+      />
+      <For each={props.step.parts}>
+        {(part, index) => (
+          <div {...sx(e.partCard)}>
+            <div {...sx(e.bar)}>
+              <span {...sx(e.itemHead)}>{partLabels[part.type]}</span>
+              <div {...sx(styles.spacer)} />
+              <button
+                {...sx(e.icon)}
+                aria-label={`Move ${name()} part ${index() + 1} up`}
+                onClick={() => setParts(moveItem(props.step.parts, index(), -1))}
+              >
+                ↑
+              </button>
+              <button
+                {...sx(e.icon)}
+                aria-label={`Remove ${name()} part ${index() + 1}`}
+                onClick={() => setParts(props.step.parts.filter((_, i) => i !== index()))}
+              >
+                ×
+              </button>
+            </div>
+            <PartEditor
+              part={part}
+              label={`${name()} part ${index() + 1}`}
+              layout={props.layout}
+              entryTypes={props.entryTypes}
+              onChange={(next) =>
+                setParts(props.step.parts.map((item, i) => (i === index() ? next : item)))
+              }
+            />
+          </div>
+        )}
+      </For>
+      <select
+        {...sx(styles.select, e.small)}
+        aria-label={`Add to ${name()}`}
+        value=""
+        onChange={(event) => {
+          const type = event.currentTarget.value as BuilderPart["type"];
+          event.currentTarget.value = "";
+          if (type) setParts([...props.step.parts, blank(type)]);
+        }}
+      >
+        <option value="">Add to this step…</option>
+        <For each={Object.entries(partLabels)}>
+          {([type, label]) => <option value={type}>{label}</option>}
+        </For>
+      </select>
+    </div>
+  );
+}
+
+/** Entry blocks and compendium-fed lists: what a choose part can fill. */
+const chooseKeys = (layout: SheetLayout) =>
+  allBlocks(layout).flatMap((block) =>
+    block.type === "entry"
+      ? [{ key: block.key, label: block.label ?? block.key, entryType: block.entryType }]
+      : block.type === "list" && block.source
+        ? [{ key: block.key, label: block.title ?? block.key, entryType: block.source.entryType }]
+        : [],
+  );
+
+/** "Options from" / "Tables from": an entry block and a reference field of its entry type. */
+function FromPicker(props: {
+  label: string;
+  value?: { entry: string; field: string };
+  layout: SheetLayout;
+  entryTypes: readonly EntryType[];
+  none: string;
+  onChange: (value: { entry: string; field: string } | undefined) => void;
+}) {
+  const entries = () =>
+    chooseKeys(props.layout).filter((item) => findEntryBlock(props.layout, item.key));
+  const fields = (key: string) => {
+    const typeId = entries().find((item) => item.key === key)?.entryType;
+    return (props.entryTypes.find((type) => type.id === typeId)?.fields ?? []).filter(
+      (field) => field.kind === "reference",
+    );
+  };
+  return (
+    <div {...sx(e.bar)}>
+      <label {...sx(e.field)}>
+        {props.label}
+        <select
+          {...sx(styles.select, e.small)}
+          value={props.value?.entry ?? ""}
+          onChange={(event) => {
+            const key = event.currentTarget.value;
+            props.onChange(key ? { entry: key, field: fields(key)[0]?.key ?? "" } : undefined);
+          }}
+        >
+          <option value="">{props.none}</option>
+          <For each={entries()}>
+            {(item) => (
+              <option value={item.key} selected={item.key === props.value?.entry}>
+                {item.label}
+              </option>
+            )}
+          </For>
+        </select>
+      </label>
+      <Show when={props.value}>
+        {(value) => (
+          <label {...sx(e.field)}>
+            Field
+            <select
+              {...sx(styles.select, e.small)}
+              value={value().field}
+              onChange={(event) =>
+                props.onChange({ entry: value().entry, field: event.currentTarget.value })
+              }
+            >
+              <For each={fields(value().entry)}>
+                {(field) => (
+                  <option value={field.key} selected={field.key === value().field}>
+                    {field.label}
+                  </option>
+                )}
+              </For>
+            </select>
+          </label>
+        )}
+      </Show>
+    </div>
+  );
+}
+
+const findEntryBlock = (layout: SheetLayout, key: string) =>
+  allBlocks(layout).some((block) => block.type === "entry" && block.key === key);
+
+function PartEditor(props: {
+  part: BuilderPart;
+  label: string;
+  layout: SheetLayout;
+  entryTypes: readonly EntryType[];
+  onChange: (part: BuilderPart) => void;
+}) {
+  return (
+    <Switch>
+      <Match when={props.part.type === "blocks" && props.part}>
+        {(part) => (
+          <div {...sx(e.checkList)} role="group" aria-label={`${props.label} blocks`}>
+            <For each={allBlocks(props.layout).filter((block) => block.type !== "group")}>
+              {(block) => (
+                <label {...sx(e.check)}>
+                  <input
+                    type="checkbox"
+                    checked={part().blocks.includes(block.id)}
+                    onChange={(event) => {
+                      const on = event.currentTarget.checked;
+                      // Shown in the sheet's own order.
+                      const ids = new Set(part().blocks);
+                      if (on) ids.add(block.id);
+                      else ids.delete(block.id);
+                      props.onChange({
+                        type: "blocks",
+                        blocks: allBlocks(props.layout)
+                          .map((item) => item.id)
+                          .filter((id) => ids.has(id)),
+                      });
+                    }}
+                  />
+                  {summarize(block)}
+                </label>
+              )}
+            </For>
+          </div>
+        )}
+      </Match>
+      <Match when={props.part.type === "choose" && props.part}>
+        {(part) => (
+          <>
+            <div {...sx(e.bar)}>
+              <label {...sx(e.field)}>
+                Into
+                <select
+                  {...sx(styles.select, e.small)}
+                  value={part().key}
+                  onChange={(event) =>
+                    props.onChange({ ...part(), key: event.currentTarget.value })
+                  }
+                >
+                  <For each={chooseKeys(props.layout)}>
+                    {(item) => (
+                      <option value={item.key} selected={item.key === part().key}>
+                        {item.label}
+                      </option>
+                    )}
+                  </For>
+                </select>
+              </label>
+              <label {...sx(e.field)}>
+                Pick (hint)
+                <input
+                  {...sx(styles.input, e.small)}
+                  type="number"
+                  min="1"
+                  max="50"
+                  value={part().pick ?? ""}
+                  onInput={(event) => {
+                    const pick = Math.trunc(Number(event.currentTarget.value));
+                    props.onChange({
+                      ...part(),
+                      pick: pick >= 1 && pick <= 50 ? pick : undefined,
+                    });
+                  }}
+                />
+              </label>
+            </div>
+            <FromPicker
+              label="Options from"
+              none="Every entry of its type"
+              value={part().from}
+              layout={props.layout}
+              entryTypes={props.entryTypes}
+              onChange={(from) => props.onChange({ ...part(), from })}
+            />
+          </>
+        )}
+      </Match>
+      <Match when={props.part.type === "rolls" && props.part}>
+        {(part) => (
+          <ItemRows
+            title={`${props.label} rolls`}
+            items={part().items}
+            columns={[
+              { key: "label", label: "Label" },
+              { key: "dice", label: "Dice", placeholder: "3d6", required: true },
+            ]}
+            onChange={(items) => props.onChange({ type: "rolls", items })}
+            make={() => ({ label: "Roll", dice: "1d6" })}
+          />
+        )}
+      </Match>
+      <Match when={props.part.type === "tables" && props.part}>
+        {(part) => (
+          <>
+            <FromPicker
+              label="Tables from"
+              none="These entries"
+              value={part().from}
+              layout={props.layout}
+              entryTypes={props.entryTypes}
+              onChange={(from) =>
+                props.onChange(from ? { type: "tables", from } : { type: "tables", entries: [] })
+              }
+            />
+            <Show when={!part().from}>
+              <TextInput
+                label="Table entry ids (comma separated)"
+                value={(part().entries ?? []).join(", ")}
+                onInput={(text) =>
+                  props.onChange({
+                    type: "tables",
+                    entries: text
+                      .split(",")
+                      .map((id) => id.trim())
+                      .filter(Boolean),
+                  })
+                }
+              />
+            </Show>
+          </>
+        )}
+      </Match>
+    </Switch>
   );
 }
 
@@ -1508,6 +1915,11 @@ export function LayoutEditor(props: {
             Numbers computed from other values, shown wherever a stat or field uses the key and
             usable as @key in rolls. They're never stored: change the values they come from.
           </span>
+          <BuilderEditor
+            layout={props.layout}
+            entryTypes={props.entryTypes ?? []}
+            onChange={props.onChange}
+          />
           <Show when={problems().length}>
             <ul {...sx(e.problems)} aria-label="Layout problems">
               <For each={problems()}>{(problem) => <li>{problem}</li>}</For>
