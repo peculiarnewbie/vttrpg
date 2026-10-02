@@ -1,10 +1,97 @@
-import type { SheetLayout } from "../sheet-layout";
+import type { SheetBuilder, SheetLayout } from "../sheet-layout";
 
 /*
  * Blades in the Dark on generic blocks: the classic scoundrel page with each
  * action rollable as a dice pool (zero dots rolls two and keeps the lower),
  * special abilities from the library, and the crew as a shared sheet.
+ *
+ * The builders walk the same values the sheets edit: pick the DM-written
+ * playbook or crew entry, fill in the sheet's own blocks, and add abilities
+ * or upgrades from that entry's references. They offer and roll only; the
+ * player writes everything.
  */
+
+/** Step-by-step over the scoundrel sheet: playbook, details, actions, one ability, review. */
+const scoundrelBuilder: SheetBuilder = {
+  steps: [
+    {
+      id: "playbook",
+      title: "Playbook",
+      hint: "Pick the playbook entry your table wrote for this scoundrel.",
+      parts: [{ type: "choose", key: "playbook_entry" }],
+    },
+    {
+      id: "details",
+      title: "Details",
+      hint: "Write in your heritage, vice and look.",
+      parts: [{ type: "blocks", blocks: ["who"] }],
+    },
+    {
+      id: "actions",
+      title: "Actions",
+      hint: "Mark your starting action dots.",
+      parts: [{ type: "blocks", blocks: ["insight", "prowess", "resolve"] }],
+    },
+    {
+      id: "ability",
+      title: "Special ability",
+      hint: "Pick one of the abilities listed on your playbook.",
+      parts: [
+        {
+          type: "choose",
+          key: "abilities",
+          from: { entry: "playbook_entry", field: "abilities" },
+          pick: 1,
+        },
+      ],
+    },
+    {
+      id: "review",
+      title: "Review",
+      hint: "Look the sheet over and fill in anything left blank.",
+      parts: [{ type: "blocks", blocks: ["stress", "trauma", "harm", "load"] }],
+    },
+  ],
+};
+
+/** The crew's short builder: its entry, its details, then abilities and upgrades from it. */
+const crewBuilder: SheetBuilder = {
+  steps: [
+    {
+      id: "crew",
+      title: "Crew",
+      hint: "Pick the crew entry your table wrote.",
+      parts: [{ type: "choose", key: "crew_entry" }],
+    },
+    {
+      id: "details",
+      title: "Details",
+      hint: "Fill in the crew's details, tier and hold.",
+      parts: [{ type: "blocks", blocks: ["about", "standing", "tier", "hold"] }],
+    },
+    {
+      id: "abilities",
+      title: "Abilities",
+      hint: "Pick the abilities listed on your crew entry.",
+      parts: [
+        {
+          type: "choose",
+          key: "abilities",
+          from: { entry: "crew_entry", field: "abilities" },
+          pick: 1,
+        },
+      ],
+    },
+    {
+      id: "upgrades",
+      title: "Upgrades",
+      hint: "Add the upgrades listed on your crew entry.",
+      parts: [
+        { type: "choose", key: "upgrades", from: { entry: "crew_entry", field: "upgrades" } },
+      ],
+    },
+  ],
+};
 
 const action = (key: string, label: string) => ({ key, label, min: 0, max: 4, start: 0 });
 
@@ -199,6 +286,7 @@ const rollable = (blocks: typeof scoundrel.blocks): typeof scoundrel.blocks =>
 export const bladesScoundrel: SheetLayout = {
   system: "Blades in the Dark",
   name: "Scoundrel",
+  builder: scoundrelBuilder,
   pages: [
     {
       ...scoundrel,
@@ -267,6 +355,7 @@ export const bladesCrew: SheetLayout = {
   subject: "shared",
   system: "Blades in the Dark",
   name: "Crew",
+  builder: crewBuilder,
   pages: [
     {
       id: "crew",
