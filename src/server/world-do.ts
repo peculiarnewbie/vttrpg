@@ -22,7 +22,7 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import { SheetLayout, type ListRow } from "../domain/sheet-layout";
 import { notationRefs, parseNotation, rollNotation } from "../domain/dice-notation";
-import { refValues, sheetRefLookup } from "../domain/sheet-refs";
+import { refValues, sheetRefLookup, sheetScope } from "../domain/sheet-refs";
 import { WorldCompendium, type PreparedSourceImport } from "./world-compendium";
 import type { CompendiumEntry, EntryType, PackEntry } from "../domain/compendium";
 import { WorldSources, CorpusBucket, CorpusAccountId } from "./world-sources";
@@ -1014,14 +1014,12 @@ class WorldOperations {
       row = selected;
     }
     const layout = character ? this.getTemplate(character.templateId)?.layout : undefined;
+    const values = character && refValues(layout, character.values, character.tickers);
+    const at = row && frame.row && { row, list: frame.row.key };
     const rolled = rollNotation(parsed.value, {
-      lookup: character
-        ? sheetRefLookup(
-            layout,
-            refValues(layout, character.values, character.tickers),
-            row && frame.row && { row, list: frame.row.key },
-          )
-        : undefined,
+      lookup: values ? sheetRefLookup(layout, values, at) : undefined,
+      // `{…}` formulas can read lists and checks, not just single values.
+      scope: values ? sheetScope(layout, values, at) : undefined,
     });
     if (!rolled.ok) return yield* new BadRequest({ message: rolled.error });
 

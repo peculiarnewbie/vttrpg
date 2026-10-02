@@ -442,3 +442,49 @@ describe("formatNotation", () => {
     }
   });
 });
+
+describe("formulas in notation", () => {
+  it("adds a {formula} as a modifier labelled by its text, and floors it", () => {
+    const result = roll("1d20 + {@hunt * 2} - {@level / 2}", { lookup, rng: () => 0 });
+    expect(result.modifiers).toEqual([
+      { label: "@hunt * 2", value: 6 },
+      { label: "@level / 2", value: -1 },
+    ]);
+    expect(result.total).toBe(1 + 6 - 1);
+    expect(formatNotation(parse("1d20+{ @hunt*2 }"))).toBe("1d20 + {@hunt*2}");
+  });
+
+  it("uses a formula as a dice count", () => {
+    const result = roll("{@hunt + 1}d6", { lookup, rng: () => 0 });
+    expect(result.dice[0].results).toEqual([1, 1, 1, 1]);
+    expect(notationRefs(parse("{@hunt + @level}d6 + {max(@zero, 1)}"))).toEqual([
+      { key: "hunt" },
+      { key: "level" },
+      { key: "zero" },
+    ]);
+  });
+
+  it("reads lists through a scope, and fails on unknown values like a plain ref", () => {
+    const scope = {
+      value: (ref: { key: string }) => (ref.key === "gear" ? 2 : undefined),
+      rows: (key: string) => (key === "gear" ? [() => 3, () => 4] : undefined),
+    };
+    const gear: RefLookup = (ref) => (ref.key === "gear" ? { value: 2, label: "Gear" } : undefined);
+    expect(
+      roll("{sum(@gear, @row.weight)}", { lookup: gear, scope, rng: () => 0 }).modifiers,
+    ).toEqual([{ label: "sum(@gear, @row.weight)", value: 7 }]);
+    expect(rollText("1d6 + {@missing + 1}", { lookup })).toEqual({
+      ok: false,
+      error: "Unknown value @missing",
+    });
+  });
+
+  it("points at a mistake inside the braces, and never rolls dice inside them", () => {
+    expect(parseNotation("1d20 + {@hunt +}")).toEqual({
+      ok: false,
+      error: "Expected an expression at 15",
+    });
+    expect(parseNotation("1d20 + {2d6}").ok).toBe(false);
+    expect(parseNotation("1d20 + {@hunt").ok).toBe(false);
+  });
+});

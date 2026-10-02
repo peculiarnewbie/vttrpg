@@ -1,5 +1,6 @@
 import type { RollGroup, RollModifierPart, RollResult, RolledDie } from "./schemas";
 import type { Rng } from "./dice";
+import { evaluate, exprRefs, parseExpr, toNumber, type Expr, type Scope } from "./derived";
 
 /*
  * Dice notation: what a player types in chat and what a sheet author writes
@@ -11,9 +12,10 @@ import type { Rng } from "./dice";
  *
  *   notation := group ("|" group)*               at most 4 groups
  *   group    := ["+"|"-"] term (("+"|"-") term)* at most 20 terms
- *   term     := dice | integer | ref
+ *   term     := dice | integer | ref | formula
  *   dice     := [count] "d" sides suffix*
- *   count    := integer | "(" ref ")"            omitted = 1; e.g. (@hunt)d6
+ *   count    := integer | "(" ref ")" | formula  omitted = 1; e.g. (@hunt)d6, {@level / 2}d6
+ *   formula  := "{" expr "}"                      a formula (derived.ts), e.g. {@prof * 2}
  *   sides    := integer | "%"                    % = 100
  *   suffix   := "kh" [integer]                   keep highest (default 1)
  *             | "kl" [integer]                   keep lowest (default 1)
@@ -28,7 +30,8 @@ import type { Rng } from "./dice";
  *
  * A dice term takes at most one of kh/kl/adv/dis. `z` combines with kh ("pool").
  * Examples: `2d6`, `1d20+@str_mod`, `1d20adv+@dex_mod`, `4d6kh3`, `d%`,
- * `1d20 - 1d4`, `(@insight)d6khz`, `1d20+@row.bonus | 1d8+@str_mod`.
+ * `1d20 - 1d4`, `(@insight)d6khz`, `1d20+@row.bonus | 1d8+@str_mod`,
+ * `1d20 + {@prof * 2}` (a one-off sum without its own derived value).
  */
 
 export const DICE_LIMITS = {
@@ -46,9 +49,13 @@ export const DICE_LIMITS = {
 /** A reference to a sheet value: `@key`, or `@key.column` for list columns and the current row. */
 export type Ref = { readonly key: string; readonly column?: string };
 
+/** A `{…}` formula in notation: its text (shown in chat) and parsed form. */
+export type NotationFormula = { readonly source: string; readonly expr: Expr };
+
 export type DiceCount =
   | { readonly kind: "fixed"; readonly value: number }
-  | { readonly kind: "ref"; readonly ref: Ref };
+  | { readonly kind: "ref"; readonly ref: Ref }
+  | { readonly kind: "formula"; readonly formula: NotationFormula };
 
 export type Sign = 1 | -1;
 
@@ -68,7 +75,8 @@ export type DiceTerm = {
 export type Term =
   | DiceTerm
   | { readonly kind: "number"; readonly sign: Sign; readonly value: number }
-  | { readonly kind: "ref"; readonly sign: Sign; readonly ref: Ref };
+  | { readonly kind: "ref"; readonly sign: Sign; readonly ref: Ref }
+  | { readonly kind: "formula"; readonly sign: Sign; readonly formula: NotationFormula };
 
 export type NotationGroup = { readonly terms: readonly Term[] };
 export type Notation = { readonly groups: readonly NotationGroup[] };
@@ -88,6 +96,7 @@ type Symbol = "+" | "-" | "|" | "(" | ")" | "d" | "%" | "kh" | "kl" | "adv" | "d
 type Token =
   | { readonly kind: "number"; readonly value: number; readonly position: number }
   | { readonly kind: "ref"; readonly ref: Ref; readonly position: number }
+  | { readonly kind: "formula"; readonly formula: NotationFormula; readonly position: number }
   | { readonly kind: Symbol; readonly position: number };
 
 class NotationError extends Error {}
@@ -125,6 +134,27 @@ const tokenize = (input: string): Token[] => {
       const value = Number(input.slice(start, position));
       if (value > DICE_LIMITS.number) fail(`Numbers must be at most ${DICE_LIMITS.number}`, start);
       tokens.push({ kind: "number", value, position: start });
+    } else if (char === "{") {
+      // A formula runs to its matching "}" (refs inside may use @{…}).
+      let depth = 0;
+      let end = position;
+      for (; end < input.length; end++) {
+        if (input[end] === "{") depth++;
+        else if (input[end] === "}" && --depth === 0) break;
+      }
+      if (end === input.length) fail("Expected “}”", input.length);
+      const source = input.slice(position + 1, end).trim();
+      const parsed = parseExpr(source);
+      if (!parsed.ok) {
+        // Point at the problem inside the braces.
+        const at = / at (\d+)$/.exec(parsed.error);
+        fail(
+          at ? parsed.error.slice(0, at.index) : parsed.error,
+          at ? position + 1 + Number(at[1]) : start,
+        );
+      }
+      tokens.push({ kind: "formula", formula: { source, expr: parsed.value }, position: start });
+      position = end + 1;
     } else if (char === "@") {
       position++;
       whitespace();
@@ -229,7 +259,10 @@ class NotationParser {
     const token = this.peek();
     if (this.take("ref") && token.kind === "ref") return { kind: "ref", sign, ref: token.ref };
     let count: DiceCount = { kind: "fixed", value: 1 };
-    if (this.take("number") && token.kind === "number") {
+    if (this.take("formula") && token.kind === "formula") {
+      if (this.peek().kind !== "d") return { kind: "formula", sign, formula: token.formula };
+      count = { kind: "formula", formula: token.formula };
+    } else if (this.take("number") && token.kind === "number") {
       if (this.peek().kind !== "d") return { kind: "number", sign, value: token.value };
       if (token.value > DICE_LIMITS.dice) fail("At most 100 dice per roll", token.position);
       count = { kind: "fixed", value: token.value };
@@ -305,14 +338,29 @@ export const parseNotation = (input: string): Parsed<Notation> => {
   }
 };
 
-/** Every ref in the notation, including computed counts, in order of appearance. */
+/** Every ref in the notation, including computed counts and formulas, in order of appearance. */
 export const notationRefs = (notation: Notation): Ref[] =>
   notation.groups.flatMap((group) =>
     group.terms.flatMap((term) => {
       if (term.kind === "ref") return [term.ref];
+      if (term.kind === "formula") return exprRefs(term.formula.expr);
       if (term.kind === "dice" && term.count.kind === "ref") return [term.count.ref];
+      if (term.kind === "dice" && term.count.kind === "formula")
+        return exprRefs(term.count.formula.expr);
       return [];
     }),
+  );
+
+/** The formulas in the notation (for checking which lists they read). */
+export const notationFormulas = (notation: Notation): Expr[] =>
+  notation.groups.flatMap((group) =>
+    group.terms.flatMap((term) =>
+      term.kind === "formula"
+        ? [term.formula.expr]
+        : term.kind === "dice" && term.count.kind === "formula"
+          ? [term.count.formula.expr]
+          : [],
+    ),
   );
 
 const formatRef = (ref: Ref): string => {
@@ -324,12 +372,15 @@ const formatRef = (ref: Ref): string => {
 const formatTerm = (term: Term, compact = false): string => {
   if (term.kind === "number") return String(term.value);
   if (term.kind === "ref") return formatRef(term.ref);
+  if (term.kind === "formula") return `{${term.formula.source}}`;
   const count =
     term.count.kind === "ref"
       ? `(${formatRef(term.count.ref)})`
-      : compact && term.count.value === 1
-        ? ""
-        : String(term.count.value);
+      : term.count.kind === "formula"
+        ? `{${term.count.formula.source}}`
+        : compact && term.count.value === 1
+          ? ""
+          : String(term.count.value);
   const keep = term.keep
     ? `${term.keep.mode === "highest" ? "kh" : "kl"}${compact && term.keep.count === 1 ? "" : term.keep.count}`
     : "";
@@ -389,8 +440,25 @@ type DicePlan = {
  */
 export const rollNotation = (
   notation: Notation,
-  options: { readonly lookup?: RefLookup; readonly rng?: Rng } = {},
+  options: {
+    readonly lookup?: RefLookup;
+    /** What `{…}` formulas read (lists and checks too); refs alone read `lookup` when it's absent. */
+    readonly scope?: Scope;
+    readonly rng?: Rng;
+  } = {},
 ): Parsed<RollResult> => {
+  // A formula's refs must all be known, as a plain ref's must; then it's evaluated.
+  const formula = (value: NotationFormula): Parsed<number> => {
+    for (const ref of exprRefs(value.expr)) {
+      const resolved = resolveRef(ref, options.lookup);
+      if (!resolved.ok) return resolved;
+    }
+    const scope: Scope = options.scope ?? { value: (ref) => options.lookup?.(ref)?.value };
+    const result = toNumber(evaluate(value.expr, scope));
+    if (Math.abs(result) > DICE_LIMITS.number)
+      return { ok: false, error: `{${value.source}} must be between -1000000 and 1000000` };
+    return { ok: true, value: Math.floor(result) };
+  };
   const plans: { dice: DicePlan[]; modifiers: RollModifierPart[] }[] = [];
   let diceCount = 0;
   // Resolve and check the whole roll before consuming randomness.
@@ -401,6 +469,12 @@ export const rollNotation = (
     for (const term of group.terms) {
       if (term.kind === "number") {
         staticBonus += term.sign * term.value;
+        continue;
+      }
+      if (term.kind === "formula") {
+        const resolved = formula(term.formula);
+        if (!resolved.ok) return resolved;
+        modifiers.push({ label: term.formula.source, value: term.sign * resolved.value });
         continue;
       }
       if (term.kind === "ref") {
@@ -421,6 +495,10 @@ export const rollNotation = (
       let count: number;
       if (term.count.kind === "fixed") {
         count = term.count.value;
+      } else if (term.count.kind === "formula") {
+        const resolved = formula(term.count.formula);
+        if (!resolved.ok) return resolved;
+        count = Math.max(0, resolved.value);
       } else {
         const resolved = resolveRef(term.count.ref, options.lookup);
         if (!resolved.ok) return resolved;
@@ -496,7 +574,7 @@ export const rollNotation = (
 /** {@link parseNotation} then {@link rollNotation}. */
 export const rollText = (
   input: string,
-  options: { readonly lookup?: RefLookup; readonly rng?: Rng } = {},
+  options: Parameters<typeof rollNotation>[1] = {},
 ): Parsed<RollResult> => {
   const parsed = parseNotation(input);
   return parsed.ok ? rollNotation(parsed.value, options) : parsed;

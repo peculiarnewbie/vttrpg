@@ -217,6 +217,22 @@ describe("notation rolls", () => {
     expect((await characters()).find((item) => item.id === character.id)).toEqual(character);
   });
 
+  it("evaluates {formulas} against the character, lists included", async () => {
+    const character = await create();
+    const peer = await connect(playerCookie);
+    const { result } = await roll(
+      peer,
+      diceFrame("1d1 + {@str_mod * 2} + {sum(@weapons, @row.bonus)}", {
+        characterId: character.id,
+      }),
+    );
+    expect(result.modifiers).toEqual([
+      { label: "@str_mod * 2", value: 4 },
+      { label: "sum(@weapons, @row.bonus)", value: 12 },
+    ]);
+    expect(result.total).toBe(17);
+  });
+
   it("allows the owner and DM, rejects another player even without refs, and attributes the chosen character", async () => {
     const character = await create();
     const db = await mf.unsafeGetDurableObjectStorage("tabletop", "WorldDO", {
