@@ -1,6 +1,7 @@
 import type { Component } from "solid-js";
 import type { BuilderPart } from "../../domain/sheet-layout";
 import { BlocksEditor, BlocksView } from "./blocks";
+import { BudgetEditor, BudgetView } from "./budget";
 import { ChooseEditor, ChooseView } from "./choose";
 import { ReviewEditor, ReviewView } from "./review";
 import { RollsEditor, RollsView } from "./rolls";
@@ -25,6 +26,7 @@ export const partViews: {
   rolls: { View: RollsView, Editor: RollsEditor },
   tables: { View: TablesView, Editor: TablesEditor },
   review: { View: ReviewView, Editor: ReviewEditor },
+  budget: { View: BudgetView, Editor: BudgetEditor },
 };
 
 /** The view and editor for a part, typed for that part. */

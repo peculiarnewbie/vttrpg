@@ -1,5 +1,5 @@
 import { chooseKeys } from "./builder";
-import { allBlocks } from "./layout-edit";
+import { allBlocks, derivedKeys, layoutKeys } from "./layout-edit";
 import type { BuilderPart, SheetLayout } from "./sheet-layout";
 
 /*
@@ -101,6 +101,17 @@ export const builderParts: { readonly [T in BuilderPart["type"]]: PartKind<T> } 
     check: (_part, { layout, name, problem }) => {
       if ((layout.builder?.steps.length ?? 0) <= 1)
         problem(`${name} is a review with only one step to look back on`);
+    },
+  },
+  budget: {
+    label: "Budget tally",
+    blank: () => ({ type: "budget", label: "Budget", spent: "0", total: "0" }),
+    check: (part, { formula, layout, name, problem }) => {
+      formula(`${part.label || "budget"} spent`, part.spent);
+      formula(`${part.label || "budget"} total`, part.total);
+      const known = new Set([...layoutKeys(layout), ...derivedKeys(layout)]);
+      for (const item of part.items ?? [])
+        if (!known.has(item.key)) problem(`${name} counts "${item.key}", which isn't on the sheet`);
     },
   },
 };

@@ -328,6 +328,26 @@ export const BuilderPart = Schema.Union([
     type: Schema.Literal("review"),
     ...partFields,
   }),
+  Schema.Struct({
+    type: Schema.Literal("budget"),
+    label: StepText(60),
+    /** What the character has spent, as a formula over the sheet (never dice). */
+    spent: Condition,
+    /** What they have to spend, as a formula over the sheet. */
+    total: Condition,
+    /** Values listed under the tally, each with an optional cap hint. */
+    items: Schema.optional(
+      Schema.Array(
+        Schema.Struct({
+          key: Schema.String,
+          cap: Schema.optional(
+            Schema.Int.check(Schema.isBetween({ minimum: -1000, maximum: 1000 })),
+          ),
+        }),
+      ).check(Schema.isMaxLength(12)),
+    ),
+    ...partFields,
+  }),
 ]);
 export type BuilderPart = typeof BuilderPart.Type;
 
@@ -338,6 +358,7 @@ const knownPartTypes: Record<BuilderPart["type"], true> = {
   rolls: true,
   tables: true,
   review: true,
+  budget: true,
 };
 export const isKnownPartType = (type: string): type is BuilderPart["type"] =>
   Object.hasOwn(knownPartTypes, type);
