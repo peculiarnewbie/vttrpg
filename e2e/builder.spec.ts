@@ -185,7 +185,7 @@ test("a player builds a Knight step by step; only edits and accepted offers reac
 
   await builder.getByRole("button", { name: "Next →" }).click();
   const moves = builder.getByRole("group", { name: "Moves" });
-  await expect(moves.getByText("Pick 1")).toBeVisible();
+  await expect(moves.getByText("Picked 0 of 1")).toBeVisible();
   const options = moves.getByRole("list", { name: "Options" });
   await expect(options.getByRole("button")).toHaveText(["Charge", "Parry"]);
   await options.getByRole("button", { name: "Charge" }).click();

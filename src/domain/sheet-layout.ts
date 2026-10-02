@@ -275,6 +275,10 @@ const FromEntry = Schema.Struct({ entry: Schema.String, field: Schema.String });
 const StepText = (maximum: number) => Schema.String.check(Schema.isMaxLength(maximum));
 /** A formula (derived.ts); the step or part applies while it's true, e.g. `@level >= 3`. */
 const Condition = StepText(400);
+/** One tag on a compendium entry (see snapshot.ts: tags are short). */
+const ChooseTag = Schema.String.check(Schema.isMaxLength(40));
+/** Tags an option must have (or have none of); edited as comma-separated text. */
+const ChooseTagList = Schema.Array(ChooseTag).check(Schema.isMaxLength(20));
 /** Every part can apply only sometimes. */
 const partFields = { when: Schema.optional(Condition) };
 
@@ -293,6 +297,22 @@ export const BuilderPart = Schema.Union([
     from: Schema.optional(FromEntry),
     /** Shown as "Pick N"; never enforced. */
     pick: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+    /**
+     * Offer an option only while this formula holds. Refs read the option's
+     * index row — its name, its tag count, and its facet values (the entry
+     * type's declared filters) — and anything else reads the character, so
+     * `@level <= 1` and `@level <= @max_level` both work. Full entry fields
+     * aren't loaded to filter; only what's in the index is read.
+     */
+    filter: Schema.optional(Condition),
+    /** Offer only options with (all/any) or without (none) these entry tags. */
+    tags: Schema.optional(
+      Schema.Struct({
+        all: Schema.optional(ChooseTagList),
+        any: Schema.optional(ChooseTagList),
+        none: Schema.optional(ChooseTagList),
+      }),
+    ),
     ...partFields,
   }),
   Schema.Struct({

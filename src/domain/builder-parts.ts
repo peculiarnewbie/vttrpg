@@ -46,8 +46,12 @@ export type PartChecks = {
   readonly problem: (message: string) => void;
   /** Check roll notation (parse and refs), as the sheet's rolls are. */
   readonly roll: (label: string, dice: string) => void;
-  /** Check a formula (parse and refs), as derived values are. */
-  readonly formula: (label: string, expr: string) => void;
+  /**
+   * Check a formula (parse and refs), as derived values are; `others` are
+   * keys it may read besides the sheet's, or "any" when those aren't known
+   * from the layout (an option's own fields).
+   */
+  readonly formula: (label: string, expr: string, others?: ReadonlySet<string> | "any") => void;
 };
 
 export type PartKind<T extends BuilderPart["type"]> = {
@@ -106,13 +110,15 @@ export const builderParts: { readonly [T in BuilderPart["type"]]: PartKind<T> } 
   choose: {
     label: "Choose from the compendium",
     blank: (layout) => ({ type: "choose", key: chooseKeys(layout)[0]?.key ?? "" }),
-    check: (part, { choosable, entryKeys, name, problem }) => {
+    check: (part, { choosable, entryKeys, formula, name, problem }) => {
       if (!choosable.has(part.key))
         problem(
           `${name} chooses into "${part.key}", which isn't an entry block or a list from the compendium`,
         );
       if (part.from && !entryKeys.has(part.from.entry))
         problem(`${name} takes options from "${part.from.entry}", which isn't an entry block`);
+      // The filter reads the option's own fields, which only the entry type knows.
+      if (part.filter) formula(`choice into "${part.key}" filter`, part.filter, "any");
     },
   },
   rolls: {

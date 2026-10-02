@@ -10,12 +10,15 @@ import type { CompendiumEntry, IndexRow } from "../../domain/compendium";
 import { rowFromEntry } from "../../domain/compendium-rows";
 import { searchEntries } from "../../domain/compendium-search";
 import { acceptedFills, fillOffers, type FillOffer } from "../../domain/entry-fill";
+import { formulaRefs, type RefSuggestion } from "../../domain/formula-help";
 import type { ListRow } from "../../domain/sheet-layout";
 import { sx } from "../../theme/sx";
 import { EntryCard } from "../compendium";
-import { e } from "../editor-kit";
+import { e, ListInput } from "../editor-kit";
+import { FormulaInput } from "../formula-input";
 import { styles } from "../styles.stylex";
 import { Button, EmptyState } from "../ui";
+import { addedCount, offeredOptions, withoutEntry } from "./choose-filter";
 import { FromPicker, fromLabel } from "./from-picker";
 import { parts } from "./parts.stylex";
 import type { PartEditorProps, PartViewProps } from "./types";
@@ -45,10 +48,12 @@ export function ChooseView(props: PartViewProps<"choose">) {
     if (props.part.from) return (fromIds() ?? []).flatMap((id) => lookup.row(id) ?? []);
     return lookup.rowsOfType(chooseEntryType(current));
   });
+  // Tags and the filter narrow the index rows; full entries are never loaded to filter.
+  const offered = () => offeredOptions(options(), props.part, props.context.scope());
   const [query, setQuery] = createSignal("");
   const [focused, setFocused] = createSignal<string | null>(null);
   const [offers, setOffers] = createSignal<{ name: string; offers: FillOffer[] } | null>(null);
-  const results = () => searchEntries(options(), query()).slice(0, 100);
+  const results = () => searchEntries(offered(), query()).slice(0, 100);
   const focusedEntry = () => (focused() ? compendium()?.entry(focused()!) : undefined);
   const focusedType = () => {
     const entry = focusedEntry();
@@ -69,6 +74,22 @@ export function ChooseView(props: PartViewProps<"choose">) {
     const id = values()[current.key];
     return typeof id === "string" && id ? (compendium()?.row(id)?.name ?? id) : undefined;
   };
+  // A hint, never a gate: an entry pick counts 1 when chosen, a list its rows.
+  const picked = () => {
+    const current = target();
+    if (!current) return 0;
+    if (current.type === "entry") {
+      const id = values()[current.key];
+      return typeof id === "string" && id ? 1 : 0;
+    }
+    return rows().length;
+  };
+  // Lists can hold the same entry several times; entries show the same ✓ as before.
+  const mark = (id: string): string | undefined => {
+    if (target()?.type === "entry") return chosen(id) ? "✓" : undefined;
+    const n = addedCount(rows(), id);
+    return n > 1 ? `✓ added ×${n}` : n ? "✓ added" : undefined;
+  };
 
   const choose = (entry: CompendiumEntry) => {
     const current = target();
@@ -85,6 +106,12 @@ export function ChooseView(props: PartViewProps<"choose">) {
       props.actions.setValue(key, value);
     setOffers(null);
   };
+  // Explicit removal only: every row copied from this entry, by `_entry`.
+  const remove = (id: string) => {
+    const current = target();
+    if (current?.type !== "list") return;
+    props.actions.setValue(current.key, withoutEntry(rows(), id));
+  };
 
   return (
     <Show when={target() && type()}>
@@ -93,7 +120,9 @@ export function ChooseView(props: PartViewProps<"choose">) {
           <div {...sx(styles.row)}>
             <strong {...sx(parts.label)}>{current().plural ?? current().name}</strong>
             <Show when={props.part.pick}>
-              <span {...sx(styles.muted)}>Pick {props.part.pick}</span>
+              <span {...sx(styles.muted)}>
+                Picked {picked()} of {props.part.pick}
+              </span>
             </Show>
             <div {...sx(styles.spacer)} />
             <Show when={chosenName()}>
@@ -156,8 +185,8 @@ export function ChooseView(props: PartViewProps<"choose">) {
                         onClick={() => setFocused(row.id)}
                       >
                         <span>{row.name}</span>
-                        <Show when={chosen(row.id)}>
-                          <span {...sx(parts.mark)}>✓</span>
+                        <Show when={mark(row.id)}>
+                          {(text) => <span {...sx(parts.mark)}>{text()}</span>}
                         </Show>
                       </button>
                     </li>
@@ -173,9 +202,16 @@ export function ChooseView(props: PartViewProps<"choose">) {
                       <Show
                         when={target()?.type === "entry"}
                         fallback={
-                          <Button small variant="primary" onClick={() => choose(entry())}>
-                            Add {entry().name}
-                          </Button>
+                          <div {...sx(styles.row)}>
+                            <Button small variant="primary" onClick={() => choose(entry())}>
+                              Add {entry().name}
+                            </Button>
+                            <Show when={addedCount(rows(), entry().id) > 0}>
+                              <Button small onClick={() => remove(entry().id)}>
+                                Remove {entry().name}
+                              </Button>
+                            </Show>
+                          </div>
                         }
                       >
                         <Button
@@ -208,6 +244,37 @@ export function ChooseView(props: PartViewProps<"choose">) {
 }
 
 export function ChooseEditor(props: PartEditorProps<"choose">) {
+  /** The option's fields as `@key` first, then everything the sheet offers. */
+  const filterSuggestions = (): readonly RefSuggestion[] => {
+    const target = chooseTarget(props.layout, props.part.key);
+    const type = target
+      ? props.entryTypes.find((item) => item.id === chooseEntryType(target))
+      : undefined;
+    const seen = new Set<string>();
+    const refs: RefSuggestion[] = [];
+    for (const field of type?.fields ?? []) {
+      const text = /^[A-Za-z_][A-Za-z0-9_]*$/.test(field.key) ? `@${field.key}` : `@{${field.key}}`;
+      if (!seen.has(text)) {
+        seen.add(text);
+        refs.push({ text, label: field.label, detail: "option field" });
+      }
+    }
+    for (const ref of formulaRefs(props.layout)) {
+      if (!seen.has(ref.text)) {
+        seen.add(ref.text);
+        refs.push(ref);
+      }
+    }
+    return refs;
+  };
+
+  const setTags = (key: "all" | "any" | "none", list: readonly string[]) => {
+    const tags = { ...props.part.tags };
+    if (list.length) tags[key] = list;
+    else delete tags[key];
+    props.onChange({ ...props.part, tags: (tags.all ?? tags.any ?? tags.none) ? tags : undefined });
+  };
+
   return (
     <>
       <div {...sx(e.bar)}>
@@ -250,6 +317,42 @@ export function ChooseEditor(props: PartEditorProps<"choose">) {
         entryTypes={props.entryTypes}
         onChange={(from) => props.onChange({ ...props.part, from })}
       />
+      <label {...sx(e.field)}>
+        Only offer while
+        <FormulaInput
+          label={`${props.label} only offer while`}
+          value={props.part.filter ?? ""}
+          placeholder="@level <= 2"
+          suggestions={filterSuggestions()}
+          onInput={(value) =>
+            props.onChange({ ...props.part, filter: value.trim() ? value : undefined })
+          }
+        />
+      </label>
+      <span {...sx(e.hint)}>
+        Refs read the option (its name, tag count, and field values) and anything else the sheet.
+        Tags below match the option's entry tags.
+      </span>
+      <div {...sx(e.bar)}>
+        <ListInput
+          label="Tags all"
+          placeholder="comma separated"
+          value={props.part.tags?.all ?? []}
+          onChange={(list) => setTags("all", list)}
+        />
+        <ListInput
+          label="Tags any"
+          placeholder="comma separated"
+          value={props.part.tags?.any ?? []}
+          onChange={(list) => setTags("any", list)}
+        />
+        <ListInput
+          label="Tags none"
+          placeholder="comma separated"
+          value={props.part.tags?.none ?? []}
+          onChange={(list) => setTags("none", list)}
+        />
+      </div>
     </>
   );
 }

@@ -272,13 +272,24 @@ export const layoutProblems = (layout: SheetLayout): string[] => {
   const checksKeys = new Set(
     blocksOf.flatMap((block) => (block.type === "checks" ? [block.key] : [])),
   );
-  const expression = (label: string, expr: string, inList = false, name = `Derived "${label}"`) => {
+  const expression = (
+    label: string,
+    expr: string,
+    inList = false,
+    name = `Derived "${label}"`,
+    others: ReadonlySet<string> | "any" = new Set(),
+  ) => {
     const parsed = parseExpr(expr);
     if (!parsed.ok) {
       problems.push(`${name}: ${parsed.error}`);
       return;
     }
-    checkRefs(name, exprRefs(parsed.value), inList);
+    if (others !== "any")
+      checkRefs(
+        name,
+        exprRefs(parsed.value).filter((ref) => !others.has(ref.key)),
+        inList,
+      );
     // sum(@list, …), count(@checks) and the like read a list's rows or a checks block's ticks.
     for (const { list, columns } of parsed.value ? exprLists(parsed.value) : []) {
       const known = listColumns.get(list);
@@ -329,7 +340,7 @@ export const layoutProblems = (layout: SheetLayout): string[] => {
   builderProblems(layout, {
     problem: (message) => problems.push(message),
     roll: (label, dice) => roll(label, dice),
-    formula: (label, expr) => expression(label, expr, false, `Builder "${label}"`),
+    formula: (label, expr, others) => expression(label, expr, false, `Builder "${label}"`, others),
   });
   return problems;
 };
