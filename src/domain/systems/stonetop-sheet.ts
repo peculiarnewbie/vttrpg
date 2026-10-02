@@ -1,4 +1,4 @@
-import type { SheetLayout } from "../sheet-layout";
+import type { SheetBuilder, SheetLayout } from "../sheet-layout";
 
 /*
  * Stonetop on generic blocks — structure only, no rules text. Each stat rolls
@@ -9,9 +9,56 @@ import type { SheetLayout } from "../sheet-layout";
 
 const stat = (key: string, label: string) => ({ key, label, roll: `2d6 + @${key}` });
 
+/*
+ * The character builder walks the same character step by step: pick the
+ * playbook, describe who you are, write in stats, add its moves, then gear
+ * and people. Rolls go to chat only; hints defer to the book, never restate it.
+ */
+export const stonetopBuilder: SheetBuilder = {
+  steps: [
+    {
+      id: "playbook",
+      title: "Playbook",
+      hint: "Pick the playbook you chose from your book.",
+      parts: [{ type: "choose", key: "playbook" }],
+    },
+    {
+      id: "who",
+      title: "Who you are",
+      hint: "Write in your origin, background and the rest from your playbook.",
+      parts: [{ type: "blocks", blocks: ["about"] }],
+    },
+    {
+      id: "stats",
+      title: "Stats",
+      hint: "Set your stats as your book says. The dice here only post to chat.",
+      parts: [{ type: "blocks", blocks: ["stats", "rolls"] }],
+    },
+    {
+      id: "moves",
+      title: "Moves",
+      hint: "Add the moves you chose from your book.",
+      parts: [{ type: "choose", key: "moves", from: { entry: "playbook", field: "moves" } }],
+    },
+    {
+      id: "gear",
+      title: "Gear",
+      hint: "Write in your outfit and small items from your playbook.",
+      parts: [{ type: "blocks", blocks: ["load", "inventory", "small"] }],
+    },
+    {
+      id: "people",
+      title: "People",
+      hint: "Write in your connections and any followers.",
+      parts: [{ type: "blocks", blocks: ["connections", "followers", "notes"] }],
+    },
+  ],
+};
+
 export const stonetopCharacter: SheetLayout = {
   system: "Stonetop",
   name: "Character",
+  builder: stonetopBuilder,
   pages: [
     {
       id: "character",

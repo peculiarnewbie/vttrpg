@@ -19,6 +19,12 @@ export const stonetopEntryTypes: EntryType[] = [
     fields: [
       { key: "hp", label: "Base HP", kind: "number" },
       { key: "damage", label: "Damage", kind: "dice" },
+      {
+        key: "moves",
+        label: "Moves",
+        kind: "reference",
+        ref: { typeIds: ["move"], multiple: true },
+      },
     ],
   },
   {
