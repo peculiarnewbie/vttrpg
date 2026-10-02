@@ -137,6 +137,13 @@ export const builderParts: { readonly [T in BuilderPart["type"]]: PartKind<T> } 
           problem(`${name} sets "${item.key}", which isn't a tracker or stat on the sheet`);
     },
   },
+  text: {
+    label: "Guidance text",
+    blank: () => ({ type: "text", markdown: "" }),
+    check: (part, { name, problem }) => {
+      if (!part.markdown.trim()) problem(`${name} has a text part with no guidance`);
+    },
+  },
 };
 
 /** The kind of a part, typed for that part. */

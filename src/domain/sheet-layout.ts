@@ -366,6 +366,12 @@ export const BuilderPart = Schema.Union([
     max: Schema.optional(Schema.Boolean),
     ...partFields,
   }),
+  Schema.Struct({
+    type: Schema.Literal("text"),
+    /** The DM's own longer guidance, in markdown; rendered like a note. */
+    markdown: StepText(4000),
+    ...partFields,
+  }),
 ]);
 export type BuilderPart = typeof BuilderPart.Type;
 
@@ -379,6 +385,7 @@ const knownPartTypes: Record<BuilderPart["type"], true> = {
   review: true,
   budget: true,
   scores: true,
+  text: true,
 };
 export const isKnownPartType = (type: string): type is BuilderPart["type"] =>
   Object.hasOwn(knownPartTypes, type);

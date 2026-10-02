@@ -8,6 +8,7 @@ import { RollsEditor, RollsView } from "./rolls";
 import { ShowEditor, ShowView } from "./show";
 import { ScoresEditor, ScoresView } from "./scores";
 import { TablesEditor, TablesView } from "./tables";
+import { TextEditor, TextView } from "./text";
 import type { PartEditorProps, PartViewProps } from "./types";
 
 export type { BuilderActions, BuilderCompendium, BuilderContext } from "./types";
@@ -31,6 +32,7 @@ export const partViews: {
   review: { View: ReviewView, Editor: ReviewEditor },
   budget: { View: BudgetView, Editor: BudgetEditor },
   scores: { View: ScoresView, Editor: ScoresEditor },
+  text: { View: TextView, Editor: TextEditor },
 };
 
 /** The view and editor for a part, typed for that part. */
