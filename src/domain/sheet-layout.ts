@@ -422,7 +422,8 @@ export const resolveSpan = (block: { span?: number; wide?: number }, mode: GridM
       ? (block.wide ?? block.span ?? GRID_COLUMNS)
       : (block.span ?? GRID_COLUMNS);
 
-const filled = (value: SheetValues[string]) =>
+/** Whether a value counts as filled in: blank text, no rows or ticks, false and missing don't. */
+export const valueFilled = (value: SheetValues[string]) =>
   typeof value === "string"
     ? value.trim() !== ""
     : Array.isArray(value)
@@ -442,7 +443,7 @@ export const blockShown = (
   const when = block.when;
   if (!when) return true;
   if ("expr" in when) return holds?.(when.expr) ?? true;
-  return filled(values[when.key]) === (when.is === "filled");
+  return valueFilled(values[when.key]) === (when.is === "filled");
 };
 
 /** Every tracker item in a layout, groups included, in sheet order. */

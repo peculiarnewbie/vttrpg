@@ -185,9 +185,39 @@ export const formulaHolds = (formula: string, scope: Scope): boolean => {
 };
 
 /**
- * Lookup for {@link rollNotation}. Labels come from the layout: a derived
- * value's label, else the label of a stat/field/tracker item with that key,
- * else a list column's label for `@row.column`, else the key itself. Refs that
+ * What a ref is called on the sheet: a derived value's label, an item's
+ * label (stats, fields, trackers), a block's label or a list's title for its
+ * key, a list column's label (`@row.column`, or "List Column"), else the key.
+ */
+export const refLabel = (layout: SheetLayout, ref: Ref): string => {
+  const blocks = allBlocks(layout);
+  if (ref.column === undefined) {
+    const derived = layout.derived?.find((item) => item.key === ref.key);
+    if (derived) return derived.label;
+    for (const block of blocks) {
+      if (block.type === "stats" || block.type === "fields" || block.type === "trackers") {
+        const item = block.items.find((item) => item.key === ref.key);
+        if (item) return item.label;
+      } else if (block.type === "list" && block.key === ref.key) return block.title || block.key;
+      else if (
+        (block.type === "checks" || block.type === "text" || block.type === "entry") &&
+        block.key === ref.key
+      )
+        return block.label || block.key;
+    }
+  } else {
+    for (const block of blocks) {
+      if (block.type !== "list" || (ref.key !== "row" && block.key !== ref.key)) continue;
+      const column = block.columns.find((column) => column.key === ref.column);
+      if (column)
+        return ref.key === "row" ? column.label : `${block.title || block.key} ${column.label}`;
+    }
+  }
+  return ref.key;
+};
+
+/**
+ * Lookup for {@link rollNotation}, labelled by {@link refLabel}. Refs that
  * resolve to `undefined` still resolve (to 0) when the key is known to the
  * layout or present in `values`; otherwise the lookup returns `undefined` so
  * a typo fails the roll instead of silently adding 0.
@@ -199,31 +229,10 @@ export const sheetRefLookup = (
 ): RefLookup => {
   const scope = sheetScope(layout, values, at);
   const known = new Set(layout ? [...layoutKeys(layout), ...derivedKeys(layout)] : []);
-  const blocks = layout ? allBlocks(layout) : [];
-  const label = (ref: Ref): string => {
-    if (ref.column === undefined) {
-      const derived = layout?.derived?.find((item) => item.key === ref.key);
-      if (derived) return derived.label;
-      for (const block of blocks) {
-        if (block.type === "stats" || block.type === "fields" || block.type === "trackers") {
-          const item = block.items.find((item) => item.key === ref.key);
-          if (item) return item.label;
-        }
-      }
-    } else {
-      for (const block of blocks) {
-        if (block.type !== "list" || (ref.key !== "row" && block.key !== ref.key)) continue;
-        const column = block.columns.find((column) => column.key === ref.column);
-        if (column)
-          return ref.key === "row" ? column.label : `${block.title || block.key} ${column.label}`;
-      }
-    }
-    return ref.key;
-  };
   return (ref) => {
     if (!known.has(ref.key) && !Object.hasOwn(values, ref.key) && !(ref.key === "row" && at))
       return undefined;
-    return { value: toNumber(scope.value(ref)), label: label(ref) };
+    return { value: toNumber(scope.value(ref)), label: layout ? refLabel(layout, ref) : ref.key };
   };
 };
 
