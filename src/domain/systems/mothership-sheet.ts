@@ -1,4 +1,4 @@
-import type { SheetLayout } from "../sheet-layout";
+import type { SheetBuilder, SheetLayout } from "../sheet-layout";
 
 /*
  * Mothership on generic blocks — structure only, no rules text. Stats and
@@ -7,9 +7,69 @@ import type { SheetLayout } from "../sheet-layout";
  * does, is the table's call.
  */
 
+/*
+ * A step-by-step way over the same character: pick the class, write in what
+ * the book gives, add skills, then gear. Rolls go to chat only; hints defer
+ * to the book rather than restate it.
+ */
+export const mothershipBuilder: SheetBuilder = {
+  steps: [
+    {
+      id: "class",
+      title: "Class",
+      hint: "Pick your class.",
+      parts: [{ type: "choose", key: "class" }],
+    },
+    {
+      id: "stats",
+      title: "Stats and saves",
+      hint: "Roll the dice your book calls for, then write each result in. The dice only post to chat.",
+      parts: [
+        {
+          type: "rolls",
+          items: [
+            { label: "2d10", dice: "2d10" },
+            { label: "1d10", dice: "1d10" },
+          ],
+        },
+        { type: "blocks", blocks: ["stats", "saves"] },
+      ],
+    },
+    {
+      id: "skills",
+      title: "Skills",
+      hint: "Add the skills your book gives you.",
+      parts: [{ type: "choose", key: "skills" }],
+    },
+    {
+      id: "loadout",
+      title: "Loadout, trinket and patch",
+      hint: "Roll on your book's tables if you like, then write in what you carry.",
+      parts: [
+        {
+          type: "rolls",
+          items: [
+            { label: "Gear", dice: "1d100" },
+            { label: "Trinket", dice: "1d100" },
+            { label: "Patch", dice: "1d100" },
+          ],
+        },
+        { type: "blocks", blocks: ["weapons", "gear", "credits"] },
+      ],
+    },
+    {
+      id: "health",
+      title: "Health and stress",
+      hint: "Write in your starting health, wounds and stress.",
+      parts: [{ type: "blocks", blocks: ["vitals", "checks", "notes"] }],
+    },
+  ],
+};
+
 export const mothership: SheetLayout = {
   system: "Mothership",
   name: "Classic",
+  builder: mothershipBuilder,
   pages: [
     {
       id: "sheet",
