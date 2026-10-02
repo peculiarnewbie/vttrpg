@@ -3,6 +3,8 @@ import { defineConfig } from "@playwright/test";
 type Options = { theme: "rulebook" | "zine" | "fantasy" };
 
 const port = Number(process.env.E2E_PORT ?? 8791);
+// Parallel dev servers (one per worktree) each need their own inspector port.
+const inspector = process.env.E2E_INSPECTOR_PORT;
 
 /*
  * Browser specs against `pnpm dev:all` (both Workers + local storage).
@@ -28,7 +30,7 @@ export default defineConfig<Options>({
     use: { theme },
   })),
   webServer: {
-    command: `pnpm dev:all --port ${port}`,
+    command: `pnpm dev:all --port ${port}${inspector ? ` --inspector-port ${inspector}` : ""}`,
     url: `http://localhost:${port}/api/me`,
     reuseExistingServer: true,
     timeout: 240_000,

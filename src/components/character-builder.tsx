@@ -92,7 +92,18 @@ export function CharacterBuilder(props: Props) {
               <Show when={current().hint}>
                 <p {...sx(styles.muted, b.hint)}>{current().hint}</p>
               </Show>
-              <For each={current().parts}>{(part) => <PartHost {...props} part={part} />}</For>
+              <For each={current().parts}>
+                {(part) => (
+                  <PartHost
+                    {...props}
+                    part={part}
+                    navigate={(id) => {
+                      const at = steps().findIndex((item) => item.id === id);
+                      if (at >= 0) setIndex(at);
+                    }}
+                  />
+                )}
+              </For>
             </Show>
             <div {...sx(styles.row)}>
               <Show when={next(index(), -1) !== undefined}>
@@ -115,7 +126,7 @@ export function CharacterBuilder(props: Props) {
 }
 
 /** One part: its kind's view, or a note when this version doesn't know the kind. */
-function PartHost(props: Props & { part: StoredBuilderPart }) {
+function PartHost(props: Props & { part: StoredBuilderPart; navigate: (stepId: string) => void }) {
   return (
     <Show
       when={isKnownPart(props.part) ? props.part : undefined}
@@ -134,7 +145,7 @@ function PartHost(props: Props & { part: StoredBuilderPart }) {
   );
 }
 
-function KnownPart(props: Props & { part: BuilderPart }) {
+function KnownPart(props: Props & { part: BuilderPart; navigate: (stepId: string) => void }) {
   // A part keeps its kind for as long as it's shown.
   const View = partView(props.part.type).View;
   return (
@@ -143,6 +154,7 @@ function KnownPart(props: Props & { part: BuilderPart }) {
       context={props.context}
       actions={props.actions}
       renderBlocks={props.renderBlocks}
+      navigate={props.navigate}
     />
   );
 }

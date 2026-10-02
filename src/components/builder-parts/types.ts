@@ -45,6 +45,8 @@ export type PartViewProps<T extends BuilderPart["type"]> = {
   readonly actions: BuilderActions;
   /** Sheet blocks, rendered as on the sheet in edit mode (the host's own rendering). */
   readonly renderBlocks: (ids: readonly string[]) => JSX.Element;
+  /** Go to another step of the builder (by step id) — navigation, not a write. */
+  readonly navigate: (stepId: string) => void;
 };
 
 export type PartEditorProps<T extends BuilderPart["type"]> = {
