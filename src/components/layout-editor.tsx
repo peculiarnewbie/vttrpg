@@ -26,18 +26,23 @@ import {
   SheetLayout,
   TrackerDisplay,
   blockVariants,
+  layoutTrackers,
   type BlockType,
   type BuilderPart,
   type BuilderStep,
   type LayoutBlock,
+  type ListRow,
   type SheetValues,
 } from "../domain/sheet-layout";
+import { explain, type Expr, type Scalar, type Term } from "../domain/derived";
+import { formulaRefs, type RefSuggestion } from "../domain/formula-help";
 import { layoutLimitsError } from "../domain/template-io";
-import { layoutProblems } from "../domain/sheet-refs";
+import { layoutProblems, sheetDerived, sheetScope } from "../domain/sheet-refs";
 import { moveIndex } from "../client/sortable";
 import { DropLine, SortHandle, createSortable } from "./sortable";
 import { colors, fonts, radii, skin } from "../theme/tokens.stylex";
 import { sx } from "../theme/sx";
+import { FormulaInput } from "./formula-input";
 import { SheetBlocks } from "./sheet-blocks";
 import { styles } from "./styles.stylex";
 
@@ -317,8 +322,16 @@ const summarize = (block: LayoutBlock): string => {
 type Column = {
   key: string;
   label: string;
-  /** `csv`: a string array edited as comma-separated text. */
-  kind?: "text" | "number" | "select" | "csv";
+  /** `csv`: a string array edited as comma-separated text; `formula`: a {@link FormulaInput}. */
+  kind?: "text" | "number" | "select" | "csv" | "formula";
+  /** For `formula`: what it can read, and its value on the preview sheet (per item). */
+  formula?: {
+    suggestions: (item: Record<string, unknown>) => readonly RefSuggestion[];
+    preview?: (
+      expr: Expr,
+      item: Record<string, unknown>,
+    ) => { value: Scalar; terms: readonly Term[]; problem?: string } | undefined;
+  };
   options?: readonly string[];
   width?: string;
   placeholder?: string;
@@ -394,24 +407,49 @@ function ItemRows<T extends Record<string, unknown>>(props: {
                   <Show
                     when={column.kind === "select"}
                     fallback={
-                      <input
-                        {...sx(styles.input, e.small)}
-                        aria-label={`${props.title} ${index + 1} ${column.label}`}
-                        type={column.kind === "number" ? "number" : "text"}
-                        placeholder={column.placeholder}
-                        value={(() => {
-                          const value = (props.items[index] as Record<string, unknown>)[column.key];
-                          return Array.isArray(value) ? value.join(", ") : String(value ?? "");
-                        })()}
-                        onInput={(event) =>
-                          column.kind !== "csv" &&
-                          set(index, column.key, event.currentTarget.value, column.kind)
+                      <Show
+                        when={column.kind === "formula" && column.formula}
+                        fallback={
+                          <input
+                            {...sx(styles.input, e.small)}
+                            aria-label={`${props.title} ${index + 1} ${column.label}`}
+                            type={column.kind === "number" ? "number" : "text"}
+                            placeholder={column.placeholder}
+                            value={(() => {
+                              const value = (props.items[index] as Record<string, unknown>)[
+                                column.key
+                              ];
+                              return Array.isArray(value) ? value.join(", ") : String(value ?? "");
+                            })()}
+                            onInput={(event) =>
+                              column.kind !== "csv" &&
+                              set(index, column.key, event.currentTarget.value, column.kind)
+                            }
+                            onChange={(event) =>
+                              column.kind === "csv" &&
+                              set(index, column.key, event.currentTarget.value, column.kind)
+                            }
+                          />
                         }
-                        onChange={(event) =>
-                          column.kind === "csv" &&
-                          set(index, column.key, event.currentTarget.value, column.kind)
-                        }
-                      />
+                      >
+                        {(formula) => {
+                          const item = () => props.items[index] as Record<string, unknown>;
+                          return (
+                            <FormulaInput
+                              label={`${props.title} ${index + 1} ${column.label}`}
+                              placeholder={column.placeholder}
+                              value={String(item()[column.key] ?? "")}
+                              suggestions={formula().suggestions(item())}
+                              preview={
+                                formula().preview
+                                  ? (expr) => formula().preview!(expr, item())
+                                  : undefined
+                              }
+                              onInput={(value) => set(index, column.key, value, column.kind)}
+                            />
+                          );
+                        }}
+                      </Show>
                     }
                   >
                     <select
@@ -855,6 +893,8 @@ function Inspector(props: {
   lists: readonly { key: string; title?: string }[];
   /** Every value key in the layout, for "only show when". */
   keys: readonly string[];
+  /** Suggestions and preview for a list's computed-column formulas. */
+  columnFormula?: (list: string) => NonNullable<Column["formula"]>;
 }) {
   const b = () => props.block;
   const patch = (partial: Record<string, unknown>) =>
@@ -1121,8 +1161,10 @@ function Inspector(props: {
                     {
                       key: "expr",
                       label: "Formula (derived)",
+                      kind: "formula",
                       placeholder: "@row.qty * 2",
                       width: "minmax(0, 1.2fr)",
+                      formula: props.columnFormula?.(list().key),
                     },
                     {
                       key: "options",
@@ -1382,6 +1424,13 @@ export function LayoutEditor(props: {
   const [json, setJson] = createSignal<string | null>(null);
   const [jsonError, setJsonError] = createSignal("");
   const [values, setValues] = createSignal<SheetValues>({});
+  // What formula previews read: the preview sheet's values, trackers as the sheet shows them.
+  const previewValues = (): SheetValues => {
+    const merged: SheetValues = { ...values() };
+    for (const item of layoutTrackers(props.layout))
+      if (typeof merged[item.key] !== "number") merged[item.key] = item.start ?? item.max;
+    return merged;
+  };
   const problems = () => [
     ...(layoutLimitsError(props.layout) ? [layoutLimitsError(props.layout)!] : []),
     ...layoutProblems(props.layout),
@@ -1889,6 +1938,18 @@ export function LayoutEditor(props: {
                 onChange={(next) =>
                   props.onChange(updateBlock(props.layout, current().id, () => next))
                 }
+                columnFormula={(list) => ({
+                  suggestions: () => formulaRefs(props.layout, list),
+                  // On the preview sheet's first row of this list, if it has one.
+                  preview: (expr) => {
+                    const rows = previewValues()[list];
+                    const row = Array.isArray(rows) ? (rows[0] as ListRow | undefined) : undefined;
+                    return explain(
+                      expr,
+                      sheetScope(props.layout, previewValues(), { row: row ?? {}, list }),
+                    );
+                  },
+                })}
               />
             )}
           </Show>
@@ -1901,9 +1962,25 @@ export function LayoutEditor(props: {
               {
                 key: "expr",
                 label: "Formula",
+                kind: "formula",
                 placeholder: "floor((@str - 10) / 2)",
                 required: true,
                 width: "minmax(0, 1.8fr)",
+                formula: {
+                  suggestions: () => formulaRefs(props.layout),
+                  preview: (expr, item) => {
+                    const result = sheetDerived(props.layout, previewValues());
+                    const problem = result.errors[String(item.key)];
+                    return {
+                      ...explain(
+                        expr,
+                        sheetScope(props.layout, previewValues(), undefined, result),
+                      ),
+                      // Syntax shows as you type; a loop through other values shows here.
+                      problem: problem === "Refers to itself" ? "Refers to itself" : undefined,
+                    };
+                  },
+                },
               },
             ]}
             onChange={(derived) =>

@@ -1,4 +1,5 @@
 import * as stylex from "@stylexjs/stylex";
+import type { JSX } from "@solidjs/web";
 import {
   For,
   Match,
@@ -41,8 +42,8 @@ import {
   sourceOf,
 } from "../domain/compendium-rows";
 import { searchEntries } from "../domain/compendium-search";
-import type { Scalar } from "../domain/derived";
-import { sheetDerived, sheetScope } from "../domain/sheet-refs";
+import { explain, parseExpr, type Scalar } from "../domain/derived";
+import { sheetDerived, sheetRefLookup, sheetScope } from "../domain/sheet-refs";
 import {
   PROGRESS_BOXES,
   TICKS_PER_BOX,
@@ -424,6 +425,45 @@ const s = stylex.create({
     ...underline,
   },
   statLineValue: { fontFamily: fonts.numeric, fontSize: "14px", fontWeight: 700 },
+  why: { position: "relative", display: "inline-flex" },
+  whyButton: {
+    font: "inherit",
+    color: "inherit",
+    backgroundColor: "transparent",
+    borderWidth: 0,
+    padding: 0,
+    cursor: "help",
+    textDecorationLine: { default: "none", ":hover": "underline" },
+    textDecorationStyle: "dotted",
+    textUnderlineOffset: "3px",
+  },
+  whyError: { color: colors.danger },
+  whyPop: {
+    position: "fixed",
+    zIndex: 30,
+    display: "flex",
+    flexDirection: "column",
+    gap: "2px",
+    boxSizing: "border-box",
+    paddingInline: "8px",
+    paddingBlock: "6px",
+    backgroundColor: colors.surfaceRaised,
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: colors.borderStrong,
+    borderRadius: skin.controlRadius,
+    boxShadow: "0 4px 12px rgb(0 0 0 / 0.18)",
+    fontFamily: fonts.body,
+    fontSize: "12px",
+    fontWeight: 400,
+    color: colors.text,
+    textAlign: "left",
+    whiteSpace: "normal",
+  },
+  whyFormula: { fontFamily: fonts.mono, fontSize: "11px", overflowWrap: "anywhere" },
+  whyProblem: { color: colors.danger },
+  whyTerm: { display: "flex", justifyContent: "space-between", gap: "12px" },
+  whyTermValue: { fontFamily: fonts.numeric, fontWeight: 600 },
   fields1: { display: "grid", gridTemplateColumns: "1fr", columnGap: "10px" },
   fields2: { display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: "10px" },
   fields3: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", columnGap: "10px" },
@@ -1097,7 +1137,90 @@ type Ctx = Omit<
   listBlock: (key: string) => Extract<LeafBlock, { type: "list" }> | undefined;
   /** A derived list column's value for one row. */
   derivedCell: (column: ListColumn, row: ListRow) => Scalar | undefined;
+  /** Where a derived value comes from: its formula, what it read, or why it failed. */
+  why: (key: string) => Why | undefined;
 };
+
+type Why = {
+  readonly formula: string;
+  readonly error?: string;
+  readonly terms: readonly { readonly label: string; readonly value: string }[];
+};
+
+/**
+ * A computed value that shows where it comes from on click: the formula and
+ * the value of each thing it read. A formula that fails shows "?" and why,
+ * instead of a silent 0.
+ */
+function WhyValue(props: { ctx: Ctx; key: string; children: JSX.Element }) {
+  // Placed against the viewport, so a narrow sheet panel doesn't clip it.
+  const [open, setOpen] = createSignal<{ top: number; left: number }>();
+  const why = () => props.ctx.why(props.key);
+  const toggle = (button: HTMLElement) => {
+    if (open()) return setOpen(undefined);
+    const rect = button.getBoundingClientRect();
+    // It stays where it opened, so scrolling closes it.
+    window.addEventListener("scroll", () => setOpen(undefined), { capture: true, once: true });
+    setOpen({
+      top: rect.bottom + 4,
+      left: Math.max(8, Math.min(rect.left, window.innerWidth - POPOVER_WIDTH - 8)),
+    });
+  };
+  return (
+    <Show when={why()} fallback={props.children}>
+      {(info) => (
+        <span
+          {...sx(s.why)}
+          onFocusOut={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+              setOpen(undefined);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setOpen(undefined);
+          }}
+        >
+          <button
+            type="button"
+            {...sx(s.whyButton, info().error !== undefined && s.whyError)}
+            aria-expanded={open() ? "true" : "false"}
+            aria-label={info().error === undefined ? undefined : `Formula problem: ${info().error}`}
+            onClick={(event) => toggle(event.currentTarget)}
+          >
+            {info().error === undefined ? props.children : "?"}
+          </button>
+          <Show when={open()}>
+            {(at) => (
+              <span
+                {...sx(s.whyPop)}
+                role="note"
+                style={{
+                  top: `${at().top}px`,
+                  left: `${at().left}px`,
+                  width: `${POPOVER_WIDTH}px`,
+                }}
+              >
+                <code {...sx(s.whyFormula)}>{info().formula}</code>
+                <Show when={info().error}>
+                  {(error) => <span {...sx(s.whyProblem)}>{error()}</span>}
+                </Show>
+                <For each={info().terms}>
+                  {(term) => (
+                    <span {...sx(s.whyTerm)}>
+                      <span>{term.label}</span>
+                      <span {...sx(s.whyTermValue)}>{term.value}</span>
+                    </span>
+                  )}
+                </For>
+              </span>
+            )}
+          </Show>
+        </span>
+      )}
+    </Show>
+  );
+}
+
+const POPOVER_WIDTH = 240;
 
 const Heading = (props: { text: string }) => (
   <div {...sx(s.head)}>
@@ -1220,6 +1343,11 @@ function Stats(props: { items: readonly StatItem[]; variant: string; ctx: Ctx })
     const v = plain(item);
     return v === "" ? "—" : typeof v === "number" ? formatNumber(v) : v;
   };
+  const wrap = (item: StatItem, text: string) => (
+    <WhyValue ctx={props.ctx} key={item.key}>
+      {text}
+    </WhyValue>
+  );
   const label = (item: StatItem) => (
     <ItemLabel
       text={item.label}
@@ -1236,7 +1364,7 @@ function Stats(props: { items: readonly StatItem[]; variant: string; ctx: Ctx })
             <span {...sx(s.label)}>{item.label}</span>
             <Show
               when={props.ctx.computed?.(item.key) === undefined}
-              fallback={<span {...sx(s.statLineValue)}>{shown(item)}</span>}
+              fallback={<span {...sx(s.statLineValue)}>{wrap(item, shown(item))}</span>}
             >
               <CommitInput
                 label={item.label}
@@ -1261,7 +1389,7 @@ function Stats(props: { items: readonly StatItem[]; variant: string; ctx: Ctx })
                   {label(item)}
                   <Show
                     when={item.max && typeof value(item) === "number"}
-                    fallback={<span {...sx(s.statLineValue)}>{shown(item)}</span>}
+                    fallback={<span {...sx(s.statLineValue)}>{wrap(item, shown(item))}</span>}
                   >
                     <span {...sx(s.numberLine)}>
                       <span {...sx(s.bar)}>
@@ -1272,7 +1400,7 @@ function Stats(props: { items: readonly StatItem[]; variant: string; ctx: Ctx })
                           }}
                         />
                       </span>
-                      <span {...sx(s.barValue)}>{shown(item)}</span>
+                      <span {...sx(s.barValue)}>{wrap(item, shown(item))}</span>
                     </span>
                   </Show>
                 </div>
@@ -1286,7 +1414,7 @@ function Stats(props: { items: readonly StatItem[]; variant: string; ctx: Ctx })
               {(item) => (
                 <div {...sx(s.statBox)}>
                   {label(item)}
-                  <span {...sx(s.statBoxValue)}>{shown(item)}</span>
+                  <span {...sx(s.statBoxValue)}>{wrap(item, shown(item))}</span>
                 </div>
               )}
             </For>
@@ -1298,7 +1426,7 @@ function Stats(props: { items: readonly StatItem[]; variant: string; ctx: Ctx })
               {(item) => (
                 <div {...sx(s.statLine)}>
                   {label(item)}
-                  <span {...sx(s.statLineValue)}>{shown(item)}</span>
+                  <span {...sx(s.statLineValue)}>{wrap(item, shown(item))}</span>
                 </div>
               )}
             </For>
@@ -1310,7 +1438,7 @@ function Stats(props: { items: readonly StatItem[]; variant: string; ctx: Ctx })
               {(item) => (
                 <div {...sx(s.stat)}>
                   {label(item)}
-                  <span {...sx(s.statValue)}>{shown(item)}</span>
+                  <span {...sx(s.statValue)}>{wrap(item, shown(item))}</span>
                 </div>
               )}
             </For>
@@ -2252,7 +2380,9 @@ function Leaf(props: { block: LeafBlock; ctx: Ctx }) {
                         }
                       >
                         <span {...sx(s.fieldValue, variant() === "inline" && s.fieldInlineValue)}>
-                          {formatNumber(props.ctx.computed?.(item.key) ?? 0)}
+                          <WhyValue ctx={props.ctx} key={item.key}>
+                            {formatNumber(props.ctx.computed?.(item.key) ?? 0)}
+                          </WhyValue>
                         </span>
                       </Show>
                     }
@@ -2404,6 +2534,20 @@ export function SheetBlocks(props: Props) {
       column: column.key,
     });
   };
+  const lookup = createMemo(() => sheetRefLookup(props.layout, refSource()));
+  const why = (key: string): Why | undefined => {
+    const item = props.layout.derived?.find((value) => value.key === key);
+    if (!item) return undefined;
+    const error = derived().errors[key];
+    const parsed = parseExpr(item.expr);
+    if (!parsed.ok) return { formula: item.expr, error: error ?? parsed.error, terms: [] };
+    const scope = sheetScope(props.layout, refSource(), undefined, derived());
+    const terms = explain(parsed.value, scope).terms.map((term) => ({
+      label: lookup()(term.ref)?.label ?? term.ref.key,
+      value: term.value === undefined ? (term.ref.column ? "—" : "list") : formatNumber(term.value),
+    }));
+    return { formula: item.expr, error, terms };
+  };
   const ctx = (): Ctx => ({
     values: props.values,
     onChange: props.onChange,
@@ -2419,6 +2563,7 @@ export function SheetBlocks(props: Props) {
     onTrackerMax: props.onTrackerMax,
     computed,
     derivedCell,
+    why,
     readOnly: props.readOnly,
     compendium: props.compendium,
     onOpenEntry: props.onOpenEntry,
