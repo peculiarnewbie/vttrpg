@@ -1,4 +1,4 @@
-import type { SheetLayout } from "../sheet-layout";
+import type { SheetBuilder, SheetLayout } from "../sheet-layout";
 
 /*
  * A Cairn 2e character on generic blocks: attributes as current/maximum
@@ -7,9 +7,62 @@ import type { SheetLayout } from "../sheet-layout";
  * the table's call.
  */
 
+/*
+ * The builder over the same values: pick a background, roll its tables into
+ * chat and write down what to keep, roll attributes and HP into chat and
+ * write them in, then take gear from the compendium. Rolls never write to
+ * the character; only picks and typed values do.
+ */
+export const cairnBuilder: SheetBuilder = {
+  steps: [
+    {
+      id: "background",
+      title: "Background",
+      hint: "Pick the background you want; it stays linked on your sheet.",
+      parts: [{ type: "choose", key: "background" }],
+    },
+    {
+      id: "name",
+      title: "Name & tables",
+      hint: "Roll on your background's tables, then write what you keep below.",
+      parts: [
+        { type: "tables", from: { entry: "background", field: "tables" } },
+        { type: "blocks", blocks: ["bonds", "notes"] },
+      ],
+    },
+    {
+      id: "attributes",
+      title: "Attributes",
+      hint: "Roll 3d6 for each attribute and 1d6 for HP. Set each result as both its current value and its maximum, then add age and gold.",
+      parts: [
+        {
+          type: "rolls",
+          items: [
+            { label: "STR", dice: "3d6" },
+            { label: "DEX", dice: "3d6" },
+            { label: "WIL", dice: "3d6" },
+            { label: "HP", dice: "1d6" },
+          ],
+        },
+        { type: "blocks", blocks: ["attributes", "condition", "numbers"] },
+      ],
+    },
+    {
+      id: "gear",
+      title: "Gear",
+      hint: "Add what you carry from the compendium, then adjust the list.",
+      parts: [
+        { type: "choose", key: "inventory" },
+        { type: "blocks", blocks: ["inventory"] },
+      ],
+    },
+  ],
+};
+
 export const cairnCharacter: SheetLayout = {
   system: "Cairn (2nd edition)",
   name: "Character",
+  builder: cairnBuilder,
   pages: [
     {
       id: "character",
