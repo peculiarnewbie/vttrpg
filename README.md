@@ -148,6 +148,9 @@ one (or **Create and open builder** for a new one) opens the steps, in any
 order, with Edit's Cancel and **Done** (Save). It only writes what the player
 edits or accepts, so opening it on a finished character changes nothing. DMs
 edit steps under **Character builder** in the layout editor, or as JSON.
+Every shipped system comes with one (`builder` on its layouts in
+`src/domain/systems/*-sheet.ts`); for presets the hints point to the book
+rather than restate it.
 
 ### Shared sheets, tracks and slots
 

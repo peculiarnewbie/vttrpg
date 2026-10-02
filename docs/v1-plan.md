@@ -221,8 +221,11 @@ cairn2e,blades}.ts` (layouts, entry types, filters — orchestrator-written);
   Mothership and Stonetop (steading as a shared sheet) — done; `docs/buildability.md` maps each scope demand to
   the feature and the Playwright spec that proves it.
 - Character builder (optional steps over the same character: sheet blocks,
-  compendium choices with copy offers, chat-only rolls) — machinery done;
-  builders for the shipped systems are next (one per system, data only).
+  compendium choices with copy offers, chat-only rolls) — done, with a builder
+  for every shipped system (Starforged's starship and the Blades crew too;
+  preset hints point to the book). Worlds set up before this keep their
+  template copies without builders (setting the system up again skips sheets
+  already there); a DM can add steps in the layout editor.
 - Release checklist: real Google sign-in replaces the dev email stub (which
   stays live until then so the deployed site is easy to test); flags
   removed/defaulted on (`corpus-admin` stays off in production); migrations in production and
