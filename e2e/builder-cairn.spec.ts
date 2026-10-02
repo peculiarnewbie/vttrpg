@@ -1,6 +1,7 @@
 import type { CompendiumEntry, SaveEntryInput } from "../src/domain/compendium";
 import type { Character } from "../src/domain/schemas";
 import { expect, test, type Table } from "./fixtures";
+import { setUpSystemSheets } from "./system-world";
 
 /*
  * The Cairn character builder: pick a background, roll its tables into chat,
@@ -27,20 +28,7 @@ const entry = (typeId: string, name: string, fields: SaveEntryInput["fields"] = 
 
 /** Cairn the way a DM sets it up, plus the few compendium entries the builder needs. */
 const setUp = async (table: Table) => {
-  const page = table.dm.page;
-  await page.goto(`/worlds/${table.worldId}/settings?section=system`);
-  await page
-    .getByRole("article", { name: "Cairn (2nd edition)" })
-    .getByRole("button", { name: "Use this system" })
-    .click();
-  await expect(page.getByRole("status")).toContainText("entries are yours to write", {
-    timeout: 30_000,
-  });
-  const templates = (await (
-    await table.dm.api.get(`/api/worlds/${table.worldId}/templates`)
-  ).json()) as { id: string; name: string; layout?: { builder?: unknown } }[];
-  const template = templates.find((item) => item.layout?.builder);
-  expect(template).toBeDefined();
+  const [template] = await setUpSystemSheets(table, "Cairn (2nd edition)");
 
   const omens = await saveEntry(
     table,
@@ -59,7 +47,7 @@ const setUp = async (table: Table) => {
       tables: [omens.id],
     }),
   );
-  return { template: template!, forager };
+  return { template, forager };
 };
 
 const characterOf = async (table: Table, name: string) => {

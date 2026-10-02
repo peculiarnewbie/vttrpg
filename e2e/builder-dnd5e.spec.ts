@@ -1,6 +1,7 @@
 import type { CompendiumEntry, SaveEntryInput } from "../src/domain/compendium";
 import type { SheetTemplate } from "../src/domain/schemas";
 import { expect, test, type Table } from "./fixtures";
+import { setUpSystemSheets } from "./system-world";
 
 /*
  * The Fifth Edition character builder: class, species, background, ability
@@ -26,18 +27,7 @@ const entry = (typeId: string, name: string, fields: SaveEntryInput["fields"] = 
 });
 
 const setUp = async (table: Table) => {
-  const page = table.dm.page;
-  await page.goto(`/worlds/${table.worldId}/settings?section=system`);
-  await page
-    .getByRole("article", { name: "Fifth Edition (SRD 5.2)" })
-    .getByRole("button", { name: "Use this system" })
-    .click();
-  await expect(page.getByRole("status")).toContainText(
-    "added Fifth Edition (SRD 5.2) — Character",
-    {
-      timeout: 30_000,
-    },
-  );
+  await setUpSystemSheets(table, "Fifth Edition (SRD 5.2)");
 
   const slash = await saveEntry(
     table,

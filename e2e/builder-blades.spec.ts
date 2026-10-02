@@ -1,6 +1,6 @@
 import type { CompendiumEntry, SaveEntryInput } from "../src/domain/compendium";
-import { bladesEntryTypes } from "../src/domain/systems/blades";
 import { expect, test, type Table } from "./fixtures";
+import { setUpSystemSheets } from "./system-world";
 
 /*
  * The Blades in the Dark character builder: a DM sets the system up, writes a
@@ -27,23 +27,7 @@ const entry = (typeId: string, name: string, fields: SaveEntryInput["fields"] = 
 });
 
 const setUp = async (table: Table) => {
-  const page = table.dm.page;
-  await page.goto(`/worlds/${table.worldId}/settings?section=system`);
-  await page
-    .getByRole("article", { name: "Blades in the Dark" })
-    .getByRole("button", { name: "Use this system" })
-    .click();
-  await expect(page.getByRole("status")).toContainText("Blades in the Dark — Scoundrel", {
-    timeout: 30_000,
-  });
-  // The setup already adds these; putting them again keeps the spec hermetic.
-  for (const id of ["ability", "playbook"]) {
-    const type = bladesEntryTypes.find((item) => item.id === id)!;
-    const response = await table.dm.api.put(`/api/worlds/${table.worldId}/compendium/types/${id}`, {
-      data: type,
-    });
-    expect(response.ok(), await response.text()).toBe(true);
-  }
+  await setUpSystemSheets(table, "Blades in the Dark");
   const first = await saveEntry(table, entry("ability", "Test Ability A"));
   const second = await saveEntry(table, entry("ability", "Test Ability B"));
   await saveEntry(table, entry("ability", "Test Ability Z"));
