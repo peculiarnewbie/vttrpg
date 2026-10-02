@@ -4,6 +4,7 @@ import { SourceInput, SystemInput } from "../corpus-rpc";
 import { typeError } from "../compendium-rules";
 import { licenceError } from "../licence";
 import { layoutLimitsError } from "../template-io";
+import { chooseEntryType, chooseTarget } from "../builder";
 import { layoutProblems } from "../sheet-refs";
 import { SheetLayout } from "../sheet-layout";
 import { firstPartySystems, gameSystems, presetSystems } from "./index";
@@ -62,6 +63,36 @@ describe.each(gameSystems.map((item) => [item.system.name, item] as const))(
       for (const block of used) {
         if (block.type === "entry") expect(ids).toContain(block.entryType);
         if (block.type === "list" && block.source) expect(ids).toContain(block.source.entryType);
+      }
+    });
+    it("has builders whose choices come from real reference fields of its own types", () => {
+      const types = new Map(system.entryTypes.map((type) => [type.id, type]));
+      for (const layout of system.layouts ?? []) {
+        // The reference field `from.field` on the entry type chosen at `from.entry`.
+        const reference = (from: { entry: string; field: string }) => {
+          const block = chooseTarget(layout, from.entry);
+          const field =
+            block?.type === "entry"
+              ? types.get(block.entryType)?.fields.find((item) => item.key === from.field)
+              : undefined;
+          expect(field?.kind, `${layout.name}: ${from.entry}.${from.field}`).toBe("reference");
+          return field?.kind === "reference" ? (field.ref?.typeIds ?? []) : [];
+        };
+        for (const part of layout.builder?.steps.flatMap((step) => step.parts) ?? []) {
+          if (part.type === "choose") {
+            const target = chooseTarget(layout, part.key);
+            expect(target, `${layout.name}: choose ${part.key}`).toBeDefined();
+            const typeId = chooseEntryType(target!);
+            expect([...types.keys()]).toContain(typeId);
+            if (part.from) expect(reference(part.from)).toContain(typeId);
+          }
+          if (part.type === "tables" && part.from)
+            for (const typeId of reference(part.from))
+              expect(
+                types.get(typeId)?.fields.some((field) => field.kind === "oracle"),
+                `${layout.name}: ${typeId} has an oracle field`,
+              ).toBe(true);
+        }
       }
     });
   },
