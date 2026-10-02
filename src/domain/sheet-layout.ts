@@ -268,12 +268,17 @@ export type DerivedValue = typeof DerivedValue.Type;
 /** An entry chosen earlier (the value of entry block `entry`) and a reference field on it. */
 const FromEntry = Schema.Struct({ entry: Schema.String, field: Schema.String });
 const StepText = (maximum: number) => Schema.String.check(Schema.isMaxLength(maximum));
+/** A formula (derived.ts); the step or part applies while it's true, e.g. `@level >= 3`. */
+const Condition = StepText(400);
+/** Every part can apply only sometimes. */
+const partFields = { when: Schema.optional(Condition) };
 
 export const BuilderPart = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("blocks"),
     /** Sheet block ids, shown in this order. */
     blocks: Schema.Array(Schema.String).check(Schema.isMaxLength(30)),
+    ...partFields,
   }),
   Schema.Struct({
     type: Schema.Literal("choose"),
@@ -283,12 +288,14 @@ export const BuilderPart = Schema.Union([
     from: Schema.optional(FromEntry),
     /** Shown as "Pick N"; never enforced. */
     pick: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+    ...partFields,
   }),
   Schema.Struct({
     type: Schema.Literal("rolls"),
     items: Schema.Array(Schema.Struct({ label: StepText(60), dice: Schema.String })).check(
       Schema.isMaxLength(12),
     ),
+    ...partFields,
   }),
   Schema.Struct({
     type: Schema.Literal("tables"),
@@ -296,9 +303,44 @@ export const BuilderPart = Schema.Union([
     from: Schema.optional(FromEntry),
     /** …or fixed oracle entries by id (name tables). */
     entries: Schema.optional(Schema.Array(Schema.String).check(Schema.isMaxLength(20))),
+    ...partFields,
   }),
 ]);
 export type BuilderPart = typeof BuilderPart.Type;
+
+/** The part kinds this version knows; the record makes adding one to the union a compile error until listed. */
+const knownPartTypes: Record<BuilderPart["type"], true> = {
+  blocks: true,
+  choose: true,
+  rolls: true,
+  tables: true,
+};
+export const isKnownPartType = (type: string): type is BuilderPart["type"] =>
+  Object.hasOwn(knownPartTypes, type);
+
+/**
+ * A part of a kind this version doesn't know (from a newer version, or an
+ * extension later): kept whole, so saving the layout doesn't lose it, and
+ * shown as "not supported here".
+ */
+export const UnknownBuilderPart = Schema.StructWithRest(
+  Schema.Struct({
+    type: Schema.String.check(
+      Schema.makeFilter((type: string) => !isKnownPartType(type), {
+        message: "Known part kinds must match their schema",
+      }),
+    ),
+  }),
+  [Schema.Record(Schema.String, Schema.Unknown)],
+);
+export type UnknownBuilderPart = typeof UnknownBuilderPart.Type;
+
+export const StoredBuilderPart = Schema.Union([BuilderPart, UnknownBuilderPart]);
+export type StoredBuilderPart = typeof StoredBuilderPart.Type;
+
+/** A part this version can show and edit. */
+export const isKnownPart = (part: StoredBuilderPart): part is BuilderPart =>
+  isKnownPartType(part.type);
 
 export const BuilderStep = Schema.Struct({
   id: Schema.String,
@@ -306,7 +348,11 @@ export const BuilderStep = Schema.Struct({
   title: StepText(60),
   /** Our own short guidance — never rules text copied from a closed book. */
   hint: Schema.optional(StepText(400)),
-  parts: Schema.Array(BuilderPart).check(Schema.isMaxLength(8)),
+  /** The step applies while this formula is true (otherwise it's shown as not needed). */
+  when: Schema.optional(Condition),
+  /** Ticked in the step list while this formula is true — a hint, never a gate. */
+  done: Schema.optional(Condition),
+  parts: Schema.Array(StoredBuilderPart).check(Schema.isMaxLength(8)),
 });
 export type BuilderStep = typeof BuilderStep.Type;
 

@@ -3,6 +3,8 @@ import * as stylex from "@stylexjs/stylex";
 import { api } from "../client/api";
 import { computeStats } from "../domain/dice";
 import { effectiveLayout } from "../domain/layout-from-template";
+import { layoutTrackers } from "../domain/sheet-layout";
+import { refValues, sheetScope } from "../domain/sheet-refs";
 import { trackerDefinitions } from "../domain/trackers-definitions";
 import { CharacterBuilder, type BuilderCompendium } from "./character-builder";
 import { SheetBlocks, type RollRow, type SheetRoll } from "./sheet-blocks";
@@ -852,18 +854,62 @@ export function CharacterSheets(props: Props) {
                         fallback={renderSheet()}
                       >
                         <CharacterBuilder
-                          layout={effectiveLayout(sheet())}
-                          values={character().values}
-                          readOnly={!canEdit(character())}
-                          compendium={props.compendium}
-                          renderBlocks={(ids) => renderSheet(ids)}
-                          onChange={(key, value) => {
-                            if (canEdit(character()) && value !== undefined)
-                              props.onValue(character().id, key, value as CharacterValue);
+                          context={{
+                            get layout() {
+                              return effectiveLayout(sheet());
+                            },
+                            get values() {
+                              return character().values;
+                            },
+                            tracker: (key) => {
+                              const item = layoutTrackers(effectiveLayout(sheet())).find(
+                                (tracker) => tracker.key === key,
+                              );
+                              return item
+                                ? {
+                                    value: character().tickers[key] ?? item.start ?? item.max,
+                                    max:
+                                      draftMax()[key] ?? character().tickerMax?.[key] ?? item.max,
+                                  }
+                                : undefined;
+                            },
+                            scope: () =>
+                              sheetScope(
+                                effectiveLayout(sheet()),
+                                refValues(
+                                  effectiveLayout(sheet()),
+                                  character().values,
+                                  character().tickers,
+                                ),
+                              ),
+                            get compendium() {
+                              return props.compendium;
+                            },
+                            get readOnly() {
+                              return !canEdit(character());
+                            },
                           }}
-                          onRoll={(label, dice) => rollFromSheet(character(), sheet(), label, dice)}
-                          onRollTable={props.onRollTable}
-                          onOpenEntry={props.onOpenEntry}
+                          actions={{
+                            setValue: (key, value) => {
+                              if (canEdit(character()) && value !== undefined)
+                                props.onValue(character().id, key, value as CharacterValue);
+                            },
+                            setTracker: (key, value) => {
+                              if (canEdit(character())) props.onTicker(character().id, key, value);
+                            },
+                            // A draft like Edit's maxima: saved with Done, dropped by Cancel.
+                            setTrackerMax: (key, max) =>
+                              setDraftMax((previous) => {
+                                const next = { ...previous };
+                                if (max === null) delete next[key];
+                                else next[key] = max;
+                                return next;
+                              }),
+                            roll: (label, dice) => rollFromSheet(character(), sheet(), label, dice),
+                            rollTable: props.onRollTable,
+                            openEntry: props.onOpenEntry,
+                          }}
+                          renderBlocks={(ids) => renderSheet(ids)}
                         />
                       </Show>
                     </div>

@@ -49,3 +49,13 @@ export const referencedIds = (
     ? value.filter((item): item is string => typeof item === "string")
     : [];
 };
+
+/** Entry blocks and compendium-fed lists: what a choose part can fill. */
+export const chooseKeys = (layout: SheetLayout) =>
+  allBlocks(layout).flatMap((block) =>
+    block.type === "entry"
+      ? [{ key: block.key, label: block.label ?? block.key, entryType: block.entryType }]
+      : block.type === "list" && block.source
+        ? [{ key: block.key, label: block.title ?? block.key, entryType: block.source.entryType }]
+        : [],
+  );

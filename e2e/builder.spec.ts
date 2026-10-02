@@ -268,3 +268,90 @@ test("a DM adds a builder step in the layout editor", async ({ table }) => {
     })
     .toEqual({ id: "step-4", title: "Gear", parts: [{ type: "blocks", blocks: ["property"] }] });
 });
+
+test("steps and parts apply when their conditions hold, and an unknown part is kept but not shown", async ({
+  table,
+}) => {
+  const template = await table.saveTemplate({
+    name: "Conditional",
+    fields: [],
+    stats: [],
+    tickers: [],
+    rolls: [],
+    layout: {
+      system: "Test",
+      name: "Conditional",
+      pages: [
+        {
+          id: "main",
+          title: "Main",
+          blocks: [
+            { id: "virtues", type: "stats", items: [{ key: "vig", label: "VIG" }] },
+            { id: "notes", type: "text", key: "notes", label: "Notes" },
+          ],
+        },
+      ],
+      builder: {
+        steps: [
+          {
+            id: "basics",
+            title: "Basics",
+            done: "@vig > 0",
+            parts: [{ type: "blocks", blocks: ["virtues"] }],
+          },
+          {
+            id: "magic",
+            title: "Magic",
+            when: "@vig >= 10",
+            parts: [{ type: "blocks", blocks: ["notes"] }],
+          },
+          {
+            id: "future",
+            title: "Future",
+            parts: [
+              { type: "spinner", faces: 6 } as never,
+              { type: "blocks", blocks: ["notes"], when: "@vig > 15" },
+            ],
+          },
+        ],
+      },
+    },
+  });
+  // The unknown part survives the server's save.
+  const saved = (await (
+    await table.dm.api.get(`/api/worlds/${table.worldId}/templates`)
+  ).json()) as { id: string; layout?: SheetLayout }[];
+  expect(saved.find((item) => item.id === template.id)?.layout?.builder?.steps[2].parts[0]).toEqual(
+    { type: "spinner", faces: 6 },
+  );
+  await table.saveCharacter({
+    name: "Weakling",
+    templateId: template.id,
+    memberId: table.player.memberId,
+    values: { vig: 5 },
+  });
+  const page = table.player.page;
+  await table.open(table.player);
+  const tools = page.locator("#world-tools");
+  await expect(tools.getByRole("heading", { name: "Weakling" })).toBeVisible();
+  await tools.getByRole("button", { name: "Builder" }).click();
+  const builder = tools.getByRole("region", { name: "Character builder" });
+  const steps = builder.getByRole("navigation", { name: "Builder steps" });
+  // Done when VIG is filled in: ticked in the step list.
+  await expect(steps.getByRole("button", { name: /Basics/ })).toContainText("✓");
+  // Magic doesn't apply at VIG 5: Next passes over it.
+  await builder.getByRole("button", { name: "Next →" }).click();
+  await expect(builder.getByRole("heading", { name: "Future" })).toBeVisible();
+  await expect(builder.getByText("“spinner” part, which this version can't show")).toBeVisible();
+  await expect(builder.getByLabel("Notes")).toHaveCount(0);
+  await steps.getByRole("button", { name: /Magic/ }).click();
+  await expect(builder.getByText("This step doesn't apply to this character.")).toBeVisible();
+
+  // Raising VIG makes Magic apply.
+  await steps.getByRole("button", { name: /Basics/ }).click();
+  const vig = builder.getByLabel("VIG");
+  await vig.fill("12");
+  await vig.press("Enter");
+  await steps.getByRole("button", { name: /Magic/ }).click();
+  await expect(builder.getByLabel("Notes")).toBeVisible();
+});

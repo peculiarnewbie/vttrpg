@@ -21,6 +21,8 @@ import { styles } from "./styles.stylex";
 
 const MAX_SUGGESTIONS = 8;
 
+const holds = (value: Scalar) => (typeof value === "string" ? value.trim() !== "" : value !== 0);
+
 const shown = (value: Scalar | undefined) =>
   value === undefined
     ? "—"
@@ -38,6 +40,8 @@ export function FormulaInput(props: {
   /** The formula's value for the preview character, what it read, and any problem beyond syntax. */
   preview?: (expr: Expr) => { value: Scalar; terms: readonly Term[]; problem?: string } | undefined;
   onInput: (value: string) => void;
+  /** A yes/no condition: the preview says whether it holds instead of showing 1 or 0. */
+  condition?: boolean;
 }) {
   const id = createUniqueId();
   let input: HTMLInputElement | undefined;
@@ -175,7 +179,11 @@ export function FormulaInput(props: {
               <Show when={result()}>
                 {(value) => (
                   <span {...sx(f.muted)}>
-                    = {shown(value().value)}
+                    {props.condition
+                      ? holds(value().value)
+                        ? "applies on the preview sheet"
+                        : "doesn't apply on the preview sheet"
+                      : `= ${shown(value().value)}`}
                     <Show when={value().terms.some((term) => term.value !== undefined)}>
                       {"  ·  "}
                       {value()

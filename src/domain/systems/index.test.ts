@@ -6,7 +6,7 @@ import { licenceError } from "../licence";
 import { layoutLimitsError } from "../template-io";
 import { chooseEntryType, chooseTarget } from "../builder";
 import { layoutProblems } from "../sheet-refs";
-import { SheetLayout } from "../sheet-layout";
+import { SheetLayout, isKnownPart } from "../sheet-layout";
 import { firstPartySystems, gameSystems, presetSystems } from "./index";
 
 it("names every system and id once, and each layout after its own system", () => {
@@ -78,7 +78,9 @@ describe.each(gameSystems.map((item) => [item.system.name, item] as const))(
           expect(field?.kind, `${layout.name}: ${from.entry}.${from.field}`).toBe("reference");
           return field?.kind === "reference" ? (field.ref?.typeIds ?? []) : [];
         };
-        for (const part of layout.builder?.steps.flatMap((step) => step.parts) ?? []) {
+        for (const part of (layout.builder?.steps.flatMap((step) => step.parts) ?? []).filter(
+          isKnownPart,
+        )) {
           if (part.type === "choose") {
             const target = chooseTarget(layout, part.key);
             expect(target, `${layout.name}: choose ${part.key}`).toBeDefined();

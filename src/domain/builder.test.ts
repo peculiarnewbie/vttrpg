@@ -2,8 +2,9 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 import type { CompendiumEntry } from "./compendium";
 import { chooseEntryType, chooseTarget, listBlockOf, referencedIds } from "./builder";
+import { builderParts } from "./builder-parts";
 import { acceptedFills, fillOffers, type EntryBlock } from "./entry-fill";
-import { SheetLayout } from "./sheet-layout";
+import { SheetLayout, isKnownPart } from "./sheet-layout";
 import { layoutProblems } from "./sheet-refs";
 import { layoutLimitsError } from "./template-io";
 
@@ -212,5 +213,60 @@ describe("entry fills", () => {
       fillOffers(classEntry, progression, lists, values)[0]?.rows.map((row) => row.name);
     expect(names({ level: 2 })).toEqual(["First"]);
     expect(names({ level: 3 })).toEqual(["First", "Third"]);
+  });
+});
+
+describe("conditions and part kinds this version doesn't know", () => {
+  const future = { type: "spinner", options: [1, 2, 3], nested: { keep: true } };
+
+  it("keeps an unknown part whole through decode and encode, and still rejects bad known parts", () => {
+    const withFuture = {
+      ...layout,
+      builder: { steps: [{ id: "a", title: "A", parts: [future] }] },
+    };
+    const decoded = Schema.decodeUnknownSync(SheetLayout)(withFuture);
+    expect(decoded.builder?.steps[0].parts).toEqual([future]);
+    expect(Schema.encodeSync(SheetLayout)(decoded).builder?.steps[0].parts).toEqual([future]);
+    // A known kind with bad fields is an error, not an "unknown" part.
+    expect(
+      Schema.decodeUnknownResult(SheetLayout)({
+        ...layout,
+        builder: { steps: [{ id: "a", title: "A", parts: [{ type: "choose", pick: 0 }] }] },
+      })._tag,
+    ).toBe("Failure");
+    expect(isKnownPart(future as never)).toBe(false);
+    expect(isKnownPart({ type: "blocks", blocks: [] })).toBe(true);
+  });
+
+  it("names unknown parts and broken conditions as problems", () => {
+    expect(
+      layoutProblems({
+        ...layout,
+        builder: {
+          steps: [
+            {
+              id: "a",
+              title: "Spells",
+              when: "@level >=",
+              done: "count(@vig)",
+              parts: [future as never, { type: "blocks", blocks: ["virtues"], when: "@nope > 1" }],
+            },
+          ],
+        },
+      }),
+    ).toEqual([
+      expect.stringMatching(/^Builder "Spells applies when": Expected an expression/),
+      'Builder "Spells is done when" reads @vig as a list, but it isn\'t a list or checks',
+      'Builder step "Spells" has a "spinner" part, which this version can\'t show',
+      'Builder "Spells part applies when" uses @nope, which isn\'t on the sheet',
+    ]);
+  });
+
+  it("gives every kind a label and a blank part of its own kind", () => {
+    for (const [type, kind] of Object.entries(builderParts)) {
+      const blank = kind.blank(layout);
+      expect(blank.type).toBe(type);
+      expect(kind.label).not.toBe("");
+    }
   });
 });
