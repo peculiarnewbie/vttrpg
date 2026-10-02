@@ -1,4 +1,4 @@
-import type { SheetLayout } from "../sheet-layout";
+import type { SheetBuilder, SheetLayout } from "../sheet-layout";
 
 /*
  * A fifth-edition (2024 rules) character on generic blocks. Ability modifiers, proficiency,
@@ -52,9 +52,82 @@ const skills = [
   { key: "survival_bonus", label: "Survival", expr: "@wis_mod + @survival * @prof" },
 ];
 
+/*
+ * Step by step through the same values the sheet edits: pick entries, write
+ * numbers by hand, roll into chat. Rolls never land on the sheet and nothing
+ * is checked — counts are hints. Choices limited to an earlier pick (a class's
+ * features, a background's feat) read that entry's reference field.
+ */
+export const dnd5eCharacterBuilder: SheetBuilder = {
+  steps: [
+    {
+      id: "class",
+      title: "Class",
+      hint: "Pick a class and write your level in; the sheet shows what each level grants.",
+      parts: [
+        { type: "choose", key: "class" },
+        { type: "choose", key: "features", from: { entry: "class", field: "features" } },
+        { type: "blocks", blocks: ["level", "class-progression"] },
+      ],
+    },
+    {
+      id: "species",
+      title: "Species",
+      hint: "Pick a species.",
+      parts: [{ type: "choose", key: "species" }],
+    },
+    {
+      id: "background",
+      title: "Background",
+      hint: "Pick a background, then add the feat it grants below.",
+      parts: [
+        { type: "choose", key: "background" },
+        { type: "choose", key: "feats", from: { entry: "background", field: "feat" }, pick: 1 },
+      ],
+    },
+    {
+      id: "abilities",
+      title: "Ability Scores",
+      hint: "Roll for each score, then write the results in. Some tables use a fixed array instead — ask your DM.",
+      parts: [
+        { type: "rolls", items: [{ label: "Ability score", dice: "4d6kh3" }] },
+        { type: "blocks", blocks: ["abilities"] },
+      ],
+    },
+    {
+      id: "skills",
+      title: "Skills",
+      hint: "Tick the saves and skills your class and background grant; note the rest under proficiencies.",
+      parts: [
+        { type: "blocks", blocks: ["save-proficiency", "skill-proficiency", "proficiencies"] },
+      ],
+    },
+    {
+      id: "equipment",
+      title: "Equipment",
+      hint: "Add weapons, armor and gear from the compendium; write attack bonuses and quantities by hand.",
+      parts: [
+        { type: "choose", key: "weapons" },
+        { type: "choose", key: "armor" },
+        { type: "choose", key: "gear" },
+      ],
+    },
+    {
+      id: "spells",
+      title: "Spells",
+      hint: "Add the spells you know; tick the ones you have prepared.",
+      parts: [
+        { type: "choose", key: "spells" },
+        { type: "blocks", blocks: ["casting"] },
+      ],
+    },
+  ],
+};
+
 export const dnd5eCharacter: SheetLayout = {
   system: "Fifth Edition (SRD 5.2)",
   name: "Character",
+  builder: dnd5eCharacterBuilder,
   derived: [
     { key: "prof", label: "Proficiency", expr: "ceil(@level / 4) + 1" },
     ...mods,
@@ -381,6 +454,18 @@ export const dnd5eCharacter: SheetLayout = {
           columns: [
             { key: "name", label: "Item", kind: "text" },
             { key: "qty", label: "Qty", kind: "number" },
+            { key: "weight", label: "Weight", kind: "text" },
+          ],
+        },
+        {
+          id: "armor",
+          type: "list",
+          key: "armor",
+          title: "Armor",
+          source: { entryType: "armor" },
+          columns: [
+            { key: "name", label: "Armor", kind: "text" },
+            { key: "ac", label: "AC", kind: "text" },
             { key: "weight", label: "Weight", kind: "text" },
           ],
         },
