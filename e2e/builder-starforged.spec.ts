@@ -100,7 +100,7 @@ test("a player builds a Starforged character; only picks and typed values reach 
   };
 
   const paths = builder.getByRole("group", { name: "Assets" });
-  await expect(paths.getByText("Pick 3")).toBeVisible();
+  await expect(paths.getByText("Picked 0 of 3")).toBeVisible();
   await paths.getByRole("button", { name: "Test Path Nova" }).click();
   await paths.getByRole("button", { name: "Add Test Path Nova" }).click();
   await paths.getByRole("button", { name: "Test Path Quill" }).click();

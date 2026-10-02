@@ -80,7 +80,7 @@ test("a player builds a scoundrel; the ability step offers only the playbook's a
     .getByRole("button", { name: /Special ability/ })
     .click();
   const abilities = builder.getByRole("group", { name: "Special Abilities" });
-  await expect(abilities.getByText("Pick 1")).toBeVisible();
+  await expect(abilities.getByText("Picked 0 of 1")).toBeVisible();
   const options = abilities.getByRole("list", { name: "Options" });
   await expect(options.getByRole("button")).toHaveText(["Test Ability A", "Test Ability B"]);
   await options.getByRole("button", { name: "Test Ability A" }).click();

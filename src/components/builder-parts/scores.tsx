@@ -58,19 +58,21 @@ function NumberInput(props: {
   disabled: boolean;
   onCommit: (text: string) => void;
 }) {
-  // Memoized, so an update elsewhere on the character leaves the input alone:
-  // Solid re-applies all of an element's dynamic attributes when one of them
-  // re-runs, and rewriting `value` would clear what's typed here and not yet
-  // committed.
+  // Every attribute is memoized, so an update elsewhere on the character
+  // leaves the input alone: Solid re-applies all of an element's dynamic
+  // attributes when one of them re-runs, and rewriting `value` would clear
+  // what's typed here and not yet committed. (`disabled` reads the character.)
   const value = createMemo(() => props.value);
   const type = createMemo(() => (props.numeric ? "number" : "text"));
+  const label = createMemo(() => props.label);
+  const disabled = createMemo(() => props.disabled);
   return (
     <input
       {...sx(styles.input)}
-      aria-label={props.label}
+      aria-label={label()}
       type={type()}
       value={value()}
-      disabled={props.disabled}
+      disabled={disabled()}
       onChange={(event) => props.onCommit(event.currentTarget.value)}
       onKeyDown={(event) => {
         if (event.key === "Enter") event.currentTarget.blur();

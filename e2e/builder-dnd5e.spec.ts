@@ -133,7 +133,7 @@ test("a player builds a Fifth Edition character; only picks, edits and added row
   await backgrounds.getByRole("button", { name: "Test Urchin" }).click();
   await backgrounds.getByRole("button", { name: "Choose Test Urchin" }).click();
   const feats = builder.getByRole("group", { name: "Feats" });
-  await expect(feats.getByText("Pick 1")).toBeVisible();
+  await expect(feats.getByText("Picked 0 of 1")).toBeVisible();
   await expect(feats.getByRole("list", { name: "Options" }).getByRole("button")).toHaveText([
     "Test Alertness",
   ]);
