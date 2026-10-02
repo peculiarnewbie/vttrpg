@@ -992,6 +992,12 @@ function CommitInput(props: {
   multiline?: boolean;
   onCommit: (value: string | number) => void;
 }) {
+  // Memoized, so an update elsewhere on the character (another player's edit, the ack of an
+  // earlier one) leaves the input alone: Solid re-applies all of an element's dynamic
+  // attributes when one of them re-runs, and rewriting `value` would clear what's typed here
+  // and not yet committed.
+  const value = createMemo(() => props.value);
+  const type = createMemo(() => (props.numeric ? "number" : "text"));
   const commit = (raw: string) => {
     const next =
       props.numeric && raw.trim() !== "" && Number.isFinite(Number(raw)) ? Number(raw) : raw;
@@ -1004,8 +1010,8 @@ function CommitInput(props: {
         <input
           {...sx(s.input)}
           aria-label={props.label}
-          type={props.numeric ? "number" : "text"}
-          value={props.value}
+          type={type()}
+          value={value()}
           onChange={(event) => commit(event.currentTarget.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter") event.currentTarget.blur();
@@ -1016,7 +1022,7 @@ function CommitInput(props: {
       <textarea
         {...sx(s.input, s.textarea)}
         aria-label={props.label}
-        value={String(props.value)}
+        value={String(value())}
         onChange={(event) => commit(event.currentTarget.value)}
       />
     </Show>

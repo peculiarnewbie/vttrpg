@@ -242,3 +242,44 @@ test("a class shows its progression up to the character's level", async ({ table
   await expect(features).toContainText("Reckless Attack");
   await expect(features).not.toContainText("Primal Path");
 });
+
+test("text being typed survives an update to the character from elsewhere", async ({ table }) => {
+  const sheetTemplate = await template(table, "Typing", {
+    system: "Test",
+    name: "Typing",
+    pages: [
+      {
+        id: "main",
+        title: "Main",
+        blocks: [
+          {
+            id: "who",
+            type: "fields",
+            columns: 2,
+            items: [
+              { key: "heritage", label: "Heritage" },
+              { key: "vice", label: "Vice" },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  const input = {
+    name: "Typer",
+    templateId: sheetTemplate.id,
+    memberId: table.player.memberId,
+    values: {},
+  };
+  const { id } = await table.saveCharacter(input);
+  const { page } = table.player;
+  await table.open(table.player);
+  const sheet = await openSheet(page, "Typer");
+  await sheet.getByRole("button", { name: "Edit" }).click();
+  const heritage = sheet.getByLabel("Heritage");
+  await heritage.fill("half typed");
+  // The DM changes another field while the player is still typing.
+  await table.saveCharacter({ ...input, id, values: { vice: "Gambling" } });
+  await expect(sheet.getByLabel("Vice")).toHaveValue("Gambling");
+  await expect(heritage).toHaveValue("half typed");
+});

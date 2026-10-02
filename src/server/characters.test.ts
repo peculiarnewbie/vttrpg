@@ -515,6 +515,26 @@ describe("rich character values", () => {
       gm.socket.close();
     }
   });
+
+  it("keeps every key from a burst of frames sent without waiting", async () => {
+    const owner = await create(playerCookie);
+    const peer = await connect(playerCookie);
+    try {
+      const keys = Array.from({ length: 20 }, (_, index) => `k${index}`);
+      for (const key of keys)
+        peer.send({
+          type: "character.value",
+          characterId: owner.id,
+          key,
+          value: key,
+          requestId: key,
+        });
+      await Promise.all(keys.map((key) => acknowledged(peer, key)));
+      expect((await list())[0].values).toEqual(Object.fromEntries(keys.map((key) => [key, key])));
+    } finally {
+      peer.socket.close();
+    }
+  });
 });
 
 describe("character layout preferences", () => {
