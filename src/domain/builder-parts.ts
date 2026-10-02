@@ -86,6 +86,13 @@ export const builderParts: { readonly [T in BuilderPart["type"]]: PartKind<T> } 
       for (const item of part.items) roll(repeatLabel(item), repeatNotation(item));
     },
   },
+  show: {
+    label: "Readouts",
+    blank: () => ({ type: "show", items: [{ label: "Value", expr: "1" }] }),
+    check: (part, { formula }) => {
+      for (const item of part.items) formula(item.label, item.expr);
+    },
+  },
   tables: {
     label: "Table rolls",
     blank: () => ({ type: "tables", entries: [] }),

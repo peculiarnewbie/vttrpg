@@ -5,6 +5,7 @@ import { BudgetEditor, BudgetView } from "./budget";
 import { ChooseEditor, ChooseView } from "./choose";
 import { ReviewEditor, ReviewView } from "./review";
 import { RollsEditor, RollsView } from "./rolls";
+import { ShowEditor, ShowView } from "./show";
 import { TablesEditor, TablesView } from "./tables";
 import type { PartEditorProps, PartViewProps } from "./types";
 
@@ -24,6 +25,7 @@ export const partViews: {
   blocks: { View: BlocksView, Editor: BlocksEditor },
   choose: { View: ChooseView, Editor: ChooseEditor },
   rolls: { View: RollsView, Editor: RollsEditor },
+  show: { View: ShowView, Editor: ShowEditor },
   tables: { View: TablesView, Editor: TablesEditor },
   review: { View: ReviewView, Editor: ReviewEditor },
   budget: { View: BudgetView, Editor: BudgetEditor },

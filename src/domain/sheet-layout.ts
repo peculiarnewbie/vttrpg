@@ -317,6 +317,14 @@ export const BuilderPart = Schema.Union([
     ...partFields,
   }),
   Schema.Struct({
+    type: Schema.Literal("show"),
+    /** Labelled formula readouts (a value at a level, a total); shown, never written. */
+    items: Schema.Array(Schema.Struct({ label: StepText(60), expr: StepText(400) })).check(
+      Schema.isMaxLength(12),
+    ),
+    ...partFields,
+  }),
+  Schema.Struct({
     type: Schema.Literal("tables"),
     /** Oracle entries listed by a reference field of an entry chosen earlier (a background's tables)… */
     from: Schema.optional(FromEntry),
@@ -356,6 +364,7 @@ const knownPartTypes: Record<BuilderPart["type"], true> = {
   blocks: true,
   choose: true,
   rolls: true,
+  show: true,
   tables: true,
   review: true,
   budget: true,
