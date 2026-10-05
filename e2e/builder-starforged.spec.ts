@@ -111,14 +111,22 @@ test("a player builds a Starforged character; only picks and typed values reach 
     .getByRole("navigation", { name: "Builder steps" })
     .getByRole("button", { name: /Stats/ })
     .click();
+  // Pick a number, then a stat; a used number dims but can still be placed again.
+  const stats = builder.getByRole("group", { name: "Stats" });
   for (const [label, value] of [
     ["Edge", 3],
     ["Heart", 2],
     ["Iron", 1],
     ["Shadow", 2],
     ["Wits", 1],
-  ] as const)
-    await fill(label, value);
+  ] as const) {
+    await stats
+      .getByRole("button", { name: `Place ${value}` })
+      .first()
+      .click();
+    await stats.getByRole("button", { name: `${label}: —` }).click();
+    await expect(stats.getByRole("button", { name: `${label}: ${value}` })).toBeVisible();
+  }
 
   await builder.getByRole("button", { name: "Next →" }).click();
   await fill("Callsign", "Test Nova");

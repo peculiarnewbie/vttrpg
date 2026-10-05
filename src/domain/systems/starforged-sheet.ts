@@ -28,8 +28,15 @@ export const starforgedCharacterBuilder: SheetBuilder = {
     {
       id: "stats",
       title: "Stats",
-      hint: "Give the five stats 3, 2, 2, 1 and 1, highest where it fits best. Type each number in.",
-      parts: [{ type: "blocks", blocks: ["stats"] }],
+      hint: "Give the five stats 3, 2, 2, 1 and 1, highest where it fits best: pick a number, then a stat.",
+      parts: [
+        {
+          type: "assign",
+          label: "Stats",
+          values: [3, 2, 2, 1, 1],
+          targets: ["edge", "heart", "iron", "shadow", "wits"],
+        },
+      ],
     },
     {
       id: "vow",
@@ -44,7 +51,7 @@ export const starforgedCharacterBuilder: SheetBuilder = {
       id: "review",
       title: "Review",
       hint: "Look over the meters, impacts and legacies, and adjust anything. Nothing here is locked in.",
-      parts: [{ type: "blocks", blocks: ["meters", "impacts", "legacies"] }],
+      parts: [{ type: "review" }, { type: "blocks", blocks: ["meters", "impacts", "legacies"] }],
     },
   ],
 };

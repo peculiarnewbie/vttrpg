@@ -165,6 +165,8 @@ describe("dice text in rolls", () => {
     const result = roll("@class.hit_die + @con_mod", 0.65);
     expect(result.ok && result.value.dice).toEqual([{ sides: 10, results: [7] }]);
     expect(result.ok && result.value.total).toBe(9);
+    // Chat shows the dice the ref stood for.
+    expect(result.ok && result.value.notation).toBe("1d10 + @con_mod");
   });
 
   it("rolls dice text a formula gives, with the term's sign", () => {

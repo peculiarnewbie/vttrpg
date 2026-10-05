@@ -11,6 +11,21 @@ import type { SheetBuilder, SheetLayout } from "../sheet-layout";
  * player writes everything.
  */
 
+const ACTIONS = [
+  "hunt",
+  "study",
+  "survey",
+  "tinker",
+  "finesse",
+  "prowl",
+  "skirmish",
+  "wreck",
+  "attune",
+  "command",
+  "consort",
+  "sway",
+];
+
 /** Step-by-step over the scoundrel sheet: playbook, details, actions, one ability, review. */
 const scoundrelBuilder: SheetBuilder = {
   steps: [
@@ -23,14 +38,50 @@ const scoundrelBuilder: SheetBuilder = {
     {
       id: "details",
       title: "Details",
-      hint: "Write in your heritage, vice and look.",
-      parts: [{ type: "blocks", blocks: ["who"] }],
+      hint: "Choose a heritage and a vice, then write in your look.",
+      parts: [
+        {
+          type: "options",
+          key: "heritage",
+          options: [
+            { label: "Akoros" },
+            { label: "The Dagger Isles" },
+            { label: "Iruvia" },
+            { label: "Severos" },
+            { label: "Skovlan" },
+            { label: "Tycheros" },
+          ],
+        },
+        {
+          type: "options",
+          key: "vice",
+          options: [
+            { label: "Faith" },
+            { label: "Gambling" },
+            { label: "Luxury" },
+            { label: "Obligation" },
+            { label: "Pleasure" },
+            { label: "Stupor" },
+            { label: "Weird" },
+          ],
+        },
+        { type: "blocks", blocks: ["who"] },
+      ],
     },
     {
       id: "actions",
       title: "Actions",
-      hint: "Mark your starting action dots.",
-      parts: [{ type: "blocks", blocks: ["insight", "prowess", "resolve"] }],
+      hint: "Mark your playbook's starting dots, then add four more — usually no more than two in any action.",
+      parts: [
+        {
+          type: "budget",
+          label: "Action dots",
+          spent: ACTIONS.map((key) => `@${key}`).join(" + "),
+          total: "7",
+          items: ACTIONS.map((key) => ({ key, cap: 2 })),
+        },
+        { type: "blocks", blocks: ["insight", "prowess", "resolve"] },
+      ],
     },
     {
       id: "ability",
@@ -49,7 +100,7 @@ const scoundrelBuilder: SheetBuilder = {
       id: "review",
       title: "Review",
       hint: "Look the sheet over and fill in anything left blank.",
-      parts: [{ type: "blocks", blocks: ["stress", "trauma", "harm", "load"] }],
+      parts: [{ type: "review" }, { type: "blocks", blocks: ["stress", "trauma", "harm", "load"] }],
     },
   ],
 };
@@ -251,21 +302,6 @@ export const bladesInTheDark: SheetLayout = {
     },
   ],
 };
-
-const ACTIONS = [
-  "hunt",
-  "study",
-  "survey",
-  "tinker",
-  "finesse",
-  "prowl",
-  "skirmish",
-  "wreck",
-  "attune",
-  "command",
-  "consort",
-  "sway",
-];
 
 /** The preset's scoundrel page, with every action rolling its pool. */
 const scoundrel = structuredClone(bladesInTheDark.pages[0]);

@@ -458,7 +458,8 @@ type DicePlan = {
  * - With one group the result is that group. With several, `groups` holds
  *   each group's result and the top-level fields repeat the first group's
  *   (older clients show that one).
- * - `notation` is {@link formatNotation} of the input.
+ * - `notation` is {@link formatNotation} of the input, with dice text that a
+ *   ref or formula stood for shown as its dice (`1d10 + @con_mod`).
  */
 export const rollNotation = (
   notation: Notation,
@@ -491,7 +492,8 @@ export const rollNotation = (
       return { ok: false, error: `{${value.source}} must be between -1000000 and 1000000` };
     return { ok: true, value: Math.floor(result) };
   };
-  const plans: { dice: DicePlan[]; modifiers: RollModifierPart[] }[] = [];
+  // `group` is the group as rolled: dice text a ref stood for shows as those dice.
+  const plans: { group: NotationGroup; dice: DicePlan[]; modifiers: RollModifierPart[] }[] = [];
   let diceCount = 0;
   // Resolve and check the whole roll before consuming randomness.
   for (const group of notation.groups) {
@@ -572,7 +574,7 @@ export const rollNotation = (
       dice.push({ term, count: rolledCount, keep });
     }
     if (staticBonus !== 0) modifiers.unshift({ label: "static", value: staticBonus });
-    plans.push({ dice, modifiers });
+    plans.push({ group: { terms }, dice, modifiers });
   }
   const rng = options.rng ?? Math.random;
   const groups: RollGroup[] = plans.map((plan, groupIndex) => {
@@ -609,7 +611,7 @@ export const rollNotation = (
         0,
       ) + plan.modifiers.reduce((sum, modifier) => sum + modifier.value, 0);
     return {
-      notation: formatNotation({ groups: [notation.groups[groupIndex]] }),
+      notation: formatNotation({ groups: [plans[groupIndex].group] }),
       dice,
       modifiers: plan.modifiers,
       total,
@@ -619,7 +621,7 @@ export const rollNotation = (
     ok: true,
     value: {
       ...groups[0],
-      notation: formatNotation(notation),
+      notation: formatNotation({ groups: plans.map((plan) => plan.group) }),
       ...(groups.length > 1 ? { groups } : {}),
     },
   };

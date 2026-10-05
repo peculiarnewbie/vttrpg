@@ -96,11 +96,19 @@ test("a player builds a Cairn character; only picks and typed values reach the s
   await steps.getByRole("button", { name: /Attributes/ }).click();
   await builder.getByRole("button", { name: "STR 3d6" }).click();
   await expect(chat.getByText("3d6").first()).toBeVisible({ timeout: 15_000 });
-  await builder.getByRole("button", { name: "Decrease STR" }).click();
-  await builder.getByRole("button", { name: "Set HP to 4" }).click();
+  // A typed score is the value and, once Done, the maximum too; the roll itself writes nothing.
+  const scores = builder.getByRole("group", { name: "Scores" });
+  for (const [label, value] of [
+    ["STR", "12"],
+    ["HP", "4"],
+  ] as const) {
+    const input = scores.getByLabel(label, { exact: true });
+    await input.fill(value);
+    await input.press("Enter");
+  }
   await expect
     .poll(async () => (await characterOf(table, "Test Wren"))?.tickers)
-    .toMatchObject({ str: 17, hp: 4 });
+    .toMatchObject({ str: 12, hp: 4 });
   const gold = builder.getByLabel("Gold");
   await gold.fill("12");
   await gold.press("Enter");
@@ -116,7 +124,11 @@ test("a player builds a Cairn character; only picks and typed values reach the s
   await expect
     .poll(async () => {
       const character = await characterOf(table, "Test Wren");
-      return { values: character?.values, tickers: character?.tickers };
+      return {
+        values: character?.values,
+        tickers: character?.tickers,
+        tickerMax: character?.tickerMax,
+      };
     })
     .toEqual({
       values: {
@@ -125,6 +137,7 @@ test("a player builds a Cairn character; only picks and typed values reach the s
         gold: 12,
         inventory: [expect.objectContaining({ name: "Test Rations", uses: "3" })],
       },
-      tickers: { str: 17, dex: 18, wil: 18, hp: 4 },
+      tickers: { str: 12, dex: 18, wil: 18, hp: 4 },
+      tickerMax: { str: 12, hp: 4 },
     });
 });
