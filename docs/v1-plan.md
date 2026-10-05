@@ -222,8 +222,12 @@ cairn2e,blades}.ts` (layouts, entry types, filters — orchestrator-written);
   the feature and the Playwright spec that proves it.
 - Character builder (optional steps over the same character: sheet blocks,
   compendium choices with copy offers, chat-only rolls) — done, with a builder
-  for every shipped system (Starforged's starship and the Blades crew too;
-  preset hints point to the book). Worlds set up before this keep their
+  for every shipped system. Its parts since: options, placed values, scores,
+  budget tallies, readouts, guidance text and a review; formulas read chosen
+  entries' fields (`@class.hit_die`), level tables (`scale()`), and give
+  tracker maximums (`maxFrom`), and each system's character builder uses
+  them. Starforged's starship and the Blades crew have builders too; preset
+  hints point to the book. Worlds set up before this keep their
   template copies without builders (setting the system up again skips sheets
   already there); a DM can add steps in the layout editor.
 - Release checklist: real Google sign-in replaces the dev email stub (which
