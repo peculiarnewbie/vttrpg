@@ -350,7 +350,7 @@ describe("formulas v2", () => {
   it.each([
     ["2d6", "Formulas can't roll dice (“2d6”); put dice in a roll instead at 0"],
     ["@str + d20", "Formulas can't roll dice (“d20”); put dice in a roll instead at 7"],
-    ["sum(@spells.level, 1)", "“sum” needs a list first, like sum(@inventory, @row.weight) at 4"],
+    ["sum(@row.level, 1)", "“sum” needs a list first, like sum(@inventory, @row.weight) at 4"],
     ["sum(@spells)", "“sum” needs 2 arguments, like sum(@inventory, @row.weight) at 0"],
     ["step(@level)", "“step” needs at least one threshold, like step(@level, 1: 2) at 0"],
     ["step(@level, 5: 1, 1: 2)", "Thresholds must go up at 19"],

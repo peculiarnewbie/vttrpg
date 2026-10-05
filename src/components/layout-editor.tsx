@@ -268,6 +268,19 @@ function Inspector(props: {
                 { key: "key", label: "Key" },
                 { key: "min", label: "Min", kind: "number", width: "46px" },
                 { key: "max", label: "Max", kind: "number", width: "46px" },
+                // A formula for the maximum, up to Max (e.g. 6 * @level + @con_mod).
+                {
+                  key: "maxFrom",
+                  label: "Max from",
+                  kind: "formula",
+                  placeholder: "formula",
+                  width: "110px",
+                  formula: props.whenFormula && {
+                    suggestions: () => props.whenFormula!.suggestions(),
+                    preview:
+                      props.whenFormula.preview && ((expr) => props.whenFormula!.preview!(expr)),
+                  },
+                },
                 { key: "start", label: "Start", kind: "number", width: "46px" },
                 {
                   key: "display",
@@ -1195,7 +1208,7 @@ export function LayoutEditor(props: {
                     return {
                       ...explain(
                         expr,
-                        sheetScope(props.layout, previewValues(), undefined, result),
+                        sheetScope(props.layout, previewValues(), undefined, undefined, result),
                       ),
                       // Syntax shows as you type; a loop through other values shows here.
                       problem: problem === "Refers to itself" ? "Refers to itself" : undefined,
