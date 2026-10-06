@@ -204,6 +204,8 @@ export const Character = Schema.Struct({
   scope: Schema.optional(Schema.Literals(["member", "world"])),
   /** Only the DM can edit a locked shared sheet. */
   locked: Schema.optional(Schema.Boolean),
+  /** Who played it in the world it was imported from, until the DM hands it to someone. */
+  formerPlayer: Schema.optional(Schema.String),
   createdAt: Schema.String,
   updatedAt: Schema.String,
 });

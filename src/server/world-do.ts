@@ -11,6 +11,7 @@ import { toReply } from "./reply";
 import { WorldStorage, WorldBucket, Broadcast, WorldId, type Caller } from "./world-rpc";
 import {
   BadRequest,
+  Conflict,
   Forbidden,
   NotFound,
   Unauthorized,
@@ -30,7 +31,17 @@ import {
   type EntryFields,
 } from "../domain/sheet-refs";
 import { WorldCompendium, type PreparedSourceImport } from "./world-compendium";
-import type { CompendiumEntry, EntryType, PackEntry } from "../domain/compendium";
+import type { CompendiumEntry, CompendiumPack, EntryType, PackEntry } from "../domain/compendium";
+import { librarySource } from "../domain/entry-id";
+import {
+  ExportFilePath,
+  WorldExport,
+  avatarPath,
+  type ExportFile,
+  type ImportStatus,
+  type WorldContents,
+} from "../domain/world-export";
+import { uploadRules, type UploadKind } from "../domain/uploads";
 import { WorldSources, CorpusBucket, CorpusAccountId } from "./world-sources";
 import { CorpusClient, corpusClient, corpusEnabled, type CorpusBindings } from "./corpus-env";
 import { computeStats, evaluateRoll, makeResolver, parseRollCommand } from "../domain/dice";
@@ -116,6 +127,7 @@ type CharacterRow = {
   avatar_key: string | null;
   scope: NonNullable<Character["scope"]>;
   locked: number;
+  former_player: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -218,6 +230,21 @@ export const SaveWorldCharacterInput = SaveCharacterInput.check(
 );
 export const SaveWorldTemplateInput = SaveTemplateInput.check(
   Schema.makeFilter((input) => layoutLimitsError(input.layout)),
+);
+/** An uploaded world, held to the same limits as the sheets and characters it holds. */
+export const ImportedWorld = WorldExport.check(
+  Schema.makeFilter((data) => {
+    for (const template of data.templates) {
+      const error = layoutLimitsError(template.layout);
+      if (error) return error;
+    }
+    for (const character of data.characters) {
+      const error = characterValuesError(character.values);
+      if (error) return error;
+      if (character.layoutPrefs && !Schema.is(LayoutPrefs)(character.layoutPrefs))
+        return "Layout preferences are too large";
+    }
+  }),
 );
 const WorldClientFrame = ClientFrame.check(
   Schema.makeFilter((frame) => {
@@ -541,6 +568,7 @@ class WorldOperations {
     this.ensureColumn("characters", "layout_prefs", "layout_prefs TEXT");
     this.ensureColumn("characters", "scope", "scope TEXT NOT NULL DEFAULT 'member'");
     this.ensureColumn("characters", "locked", "locked INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("characters", "former_player", "former_player TEXT");
     this.ensureColumn("messages", "author_avatar_key", "author_avatar_key TEXT");
     this.ensureColumn("messages", "character_id", "character_id TEXT");
     const existing = sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM templates").one();
@@ -588,6 +616,7 @@ class WorldOperations {
       avatarKey: row.avatar_key ?? undefined,
       scope: row.scope ?? "member",
       locked: Boolean(row.locked),
+      ...(row.former_player === null ? {} : { formerPlayer: row.former_player }),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -770,13 +799,16 @@ class WorldOperations {
         Math.min(tickerMax[ticker.id] ?? ticker.max, tickers[ticker.id] ?? ticker.defaultValue),
       );
     }
+    const memberId =
+      existing?.scope === "world"
+        ? existing.memberId
+        : (input.memberId ?? existing?.memberId ?? "");
+    // Handing an imported character to a member ends its link to the old table's player.
+    const formerPlayer = memberId === existing?.memberId ? existing.formerPlayer : undefined;
     const character: Character = {
       id,
       worldId: this.worldId,
-      memberId:
-        existing?.scope === "world"
-          ? existing.memberId
-          : (input.memberId ?? existing?.memberId ?? ""),
+      memberId,
       scope: existing?.scope ?? input.scope ?? "member",
       locked: existing?.locked ?? false,
       name: input.name,
@@ -786,13 +818,15 @@ class WorldOperations {
       tickerMax,
       layoutPrefs: existing?.layoutPrefs,
       avatarKey: existing?.avatarKey,
+      ...(formerPlayer === undefined ? {} : { formerPlayer }),
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
     if (existing) {
       this.storage.sql.exec(
-        "UPDATE characters SET member_id = ?, name = ?, template_id = ?, data = ?, tickers = ?, ticker_max = ?, updated_at = ? WHERE id = ?",
+        "UPDATE characters SET member_id = ?, former_player = ?, name = ?, template_id = ?, data = ?, tickers = ?, ticker_max = ?, updated_at = ? WHERE id = ?",
         character.memberId,
+        formerPlayer ?? null,
         character.name,
         character.templateId,
         JSON.stringify(character.values),
@@ -1232,7 +1266,11 @@ class WorldOperations {
       return {
         board: caller.role === "dm" ? board : stripHiddenLayers(board),
         ...(caller.role === "dm"
-          ? { scenes: this.listScenes(), activeSceneId: this.activeSceneId() }
+          ? {
+              scenes: this.listScenes(),
+              activeSceneId: this.activeSceneId(),
+              importPending: this.importPending(),
+            }
           : {}),
         templates: this.listTemplates(),
         characters: this.listCharacters(),
@@ -1481,6 +1519,305 @@ class WorldOperations {
       else this.broadcastScenes();
       return { scenes: this.listScenes(), activeSceneId: this.activeSceneId() };
     });
+  // -------------------------------------------------------------------------
+  // Export and import (docs/world-export.md)
+  // -------------------------------------------------------------------------
+
+  private setting(key: string): string | undefined {
+    return this.storage.sql
+      .exec<{ value: string }>("SELECT value FROM settings WHERE key = ?", key)
+      .toArray()[0]?.value;
+  }
+
+  private importPending(): ExportFile[] {
+    const pending = this.setting("import_pending");
+    return pending === undefined ? [] : (JSON.parse(pending) as ExportFile[]);
+  }
+
+  /** Everything the exporting DM can see; SQLite is read in one go, R2 after it. */
+  exportWorld = (caller: Caller, input: { chat: boolean; worldName: string }) =>
+    Effect.gen({ self: this }, function* () {
+      yield* requireDm(caller, "Only the DM can export the world");
+      const viewer: SocketAttachment = {
+        memberId: caller.memberId,
+        name: caller.displayName,
+        role: caller.role,
+      };
+      const templates = this.listTemplates();
+      const characters = this.listCharacters();
+      const scenes = this.listScenes().map((scene) => {
+        const { sceneId: _id, sceneName: _name, ...snapshot } = this.getBoard(scene.id);
+        return { id: scene.id, name: scene.name, group: scene.group, sort: scene.sort, snapshot };
+      });
+      const activeSceneId = this.activeSceneId();
+      const visibleNotes = this.listNotes().filter((note) =>
+        canSeeNote(note, { id: caller.memberId, role: caller.role }),
+      );
+      const messages = input.chat
+        ? this.storage.sql
+            .exec<MessageRow>("SELECT * FROM messages ORDER BY created_at, id")
+            .toArray()
+            .map((row) => this.toMessage(row))
+            .filter((message) => this.visibleTo(message, viewer))
+        : undefined;
+      const { libraries, blocked } = this.sources.pins();
+      const compendium = (yield* this.compendium.handle(
+        "GET",
+        "compendium/export",
+        undefined,
+        "dm",
+        input.worldName,
+        null,
+      )) as CompendiumPack;
+
+      const notes: Note[] = [];
+      for (const note of visibleNotes) {
+        // A note deleted while R2 was being read is simply not in the export.
+        const read = yield* this.readNote(note.id).pipe(
+          Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
+        );
+        if (read) notes.push(read);
+      }
+      const prefix = `world/${this.worldId}`;
+      const wanted = new Map<ExportFilePath, { key: string; kind: UploadKind }>();
+      for (const scene of scenes) {
+        const { background, elements } = scene.snapshot.document;
+        const assets = elements.flatMap((element) =>
+          element.type === "image" ? [element.assetId] : [],
+        );
+        for (const id of background === null ? assets : [background, ...assets])
+          wanted.set(`board/${id}`, { key: `${prefix}/board/${id}`, kind: "board" });
+      }
+      for (const character of characters) {
+        const path = character.avatarKey && avatarPath(character.avatarKey);
+        if (path) wanted.set(path, { key: character.avatarKey!, kind: "avatars" });
+      }
+      const files: ExportFile[] = [];
+      for (const [path, { key, kind }] of wanted) {
+        const head = yield* worldIO(() => this.bucket.head(key));
+        if (head)
+          files.push({
+            path,
+            contentType: head.httpMetadata?.contentType ?? uploadRules[kind].types[0],
+            size: head.size,
+          });
+      }
+      const avatar = (key: string | undefined) => (key && avatarPath(key)) || undefined;
+      return {
+        templates,
+        characters: characters.map(({ avatarKey, ...character }) => {
+          const path = avatar(avatarKey);
+          return path ? { ...character, avatarKey: path } : character;
+        }),
+        scenes,
+        activeSceneId,
+        compendium,
+        libraries,
+        blocked,
+        notes,
+        ...(messages
+          ? {
+              messages: messages.map(({ authorAvatarKey, ...message }) => {
+                const path = avatar(authorAvatarKey);
+                return path ? { ...message, authorAvatarKey: path } : message;
+              }),
+            }
+          : {}),
+        files,
+      } satisfies WorldContents;
+    });
+
+  /**
+   * Fills this new world from an export. The import route creates the world for
+   * it, so the guard only stops a retry applying twice. Ids are kept: they are
+   * scoped to this DO, and R2 keys to this world's prefix.
+   */
+  importWorld = (
+    caller: Caller,
+    data: WorldExport,
+    input: { worldName: string; accountId: string },
+  ) =>
+    Effect.gen({ self: this }, function* () {
+      yield* requireDm(caller, "Only the DM can import a world");
+      const sql = this.storage.sql;
+      if (
+        this.setting("imported") !== undefined ||
+        sql.exec("SELECT id FROM characters LIMIT 1").toArray().length
+      )
+        return yield* new Conflict({ message: "This world already has content" });
+      const me = caller.memberId;
+      const own = (memberId: string) => (memberId === data.exportedBy ? me : memberId);
+      const names = new Map(data.members.map((member) => [member.id, member.displayName]));
+      const prefix = `world/${this.worldId}`;
+      const fileKey = (path: string | undefined) =>
+        path !== undefined && Schema.is(ExportFilePath)(path) ? `${prefix}/${path}` : null;
+
+      for (const note of data.notes)
+        yield* worldIO(() =>
+          this.bucket.put(`${prefix}/notes/${note.id}.md`, note.content, {
+            httpMetadata: { contentType: "text/markdown; charset=utf-8" },
+          }),
+        );
+      const now = nowIso();
+      yield* worldSync(() =>
+        this.storage.transactionSync(() => {
+          sql.exec("DELETE FROM templates");
+          for (const template of data.templates) this.insertTemplate(template);
+          for (const character of data.characters) {
+            // Everyone else's characters wait with the DM until they're handed over.
+            const formerPlayer =
+              character.scope === "world" || character.memberId === data.exportedBy
+                ? character.formerPlayer
+                : (names.get(character.memberId) ?? character.formerPlayer ?? "A former player");
+            sql.exec(
+              "INSERT INTO characters (id, member_id, former_player, name, template_id, data, tickers, ticker_max, layout_prefs, avatar_key, scope, locked, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              character.id,
+              me,
+              formerPlayer ?? null,
+              character.name,
+              character.templateId,
+              JSON.stringify(character.values),
+              JSON.stringify(character.tickers),
+              JSON.stringify(character.tickerMax ?? {}),
+              character.layoutPrefs ? JSON.stringify(character.layoutPrefs) : null,
+              fileKey(character.avatarKey),
+              character.scope ?? "member",
+              character.locked ? 1 : 0,
+              character.createdAt,
+              character.updatedAt,
+            );
+          }
+          sql.exec("DELETE FROM scenes");
+          for (const scene of data.scenes)
+            sql.exec(
+              "INSERT INTO scenes (id, name, sort, group_name, snapshot, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+              scene.id,
+              scene.name,
+              scene.sort,
+              scene.group,
+              JSON.stringify({
+                revision: scene.snapshot.revision,
+                document: normalizeBoard(scene.snapshot.document),
+              }),
+              now,
+            );
+          sql.exec(
+            "UPDATE settings SET value = ? WHERE key = 'active_scene_id'",
+            data.activeSceneId,
+          );
+          for (const note of data.notes)
+            sql.exec(
+              "INSERT INTO notes (id, title, owner_member_id, visibility, r2_key, updated_at, editable_by_all) VALUES (?, ?, ?, ?, ?, ?, ?)",
+              note.id,
+              note.title,
+              own(note.ownerMemberId),
+              note.visibility,
+              `${prefix}/notes/${note.id}.md`,
+              note.updatedAt,
+              note.editableByAll ? 1 : 0,
+            );
+          // Other authors keep their old ids, which match nobody here: their messages stay theirs.
+          for (const message of data.messages ?? [])
+            sql.exec(
+              "INSERT INTO messages (id, author_member_id, author_name, kind, content, visibility, recipient_ids, roll, author_avatar_key, character_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              message.id,
+              own(message.authorMemberId),
+              message.authorName,
+              message.kind,
+              message.content,
+              message.visibility,
+              JSON.stringify(message.recipientMemberIds.map(own)),
+              message.roll ? JSON.stringify(message.roll) : null,
+              fileKey(message.authorAvatarKey),
+              message.characterId ?? null,
+              message.createdAt,
+            );
+          if (data.files.length)
+            sql.exec(
+              "INSERT INTO settings (key, value) VALUES ('import_pending', ?)",
+              JSON.stringify(data.files),
+            );
+          sql.exec("INSERT INTO settings (key, value) VALUES ('imported', ?)", data.exportedAt);
+        }),
+      );
+
+      // Libraries are enabled before the pack, whose overrides need them.
+      const enabled = new Set<string>();
+      const skippedLibraries: string[] = [];
+      if (data.libraries.length) yield* this.setCorpusAccount(input.accountId);
+      for (const library of data.libraries) {
+        const ok = this.sources.available
+          ? yield* this.sources
+              .enable(library.sourceId, { version: library.version, mode: library.mode })
+              .pipe(
+                Effect.as(true),
+                Effect.catch((error) =>
+                  Effect.logWarning("Library not enabled on import", error).pipe(Effect.as(false)),
+                ),
+              )
+          : false;
+        if (ok) enabled.add(library.sourceId);
+        else skippedLibraries.push(library.sourceId);
+      }
+      const usable = (id: string) => {
+        const source = librarySource(id);
+        return source === undefined || enabled.has(source);
+      };
+      const entries = data.compendium.entries.filter((entry) => usable(entry.id));
+      const blocked = data.blocked.filter(usable);
+      if (data.compendium.types.length || entries.length)
+        yield* this.compendium.handle(
+          "POST",
+          "compendium/import",
+          { ...data.compendium, entries },
+          "dm",
+          input.worldName,
+          null,
+        );
+      for (const id of blocked)
+        yield* this.sources
+          .handle("PUT", `compendium/blocked/${encodeURIComponent(id)}`, undefined, "dm")
+          .pipe(Effect.mapError(corpusApiError));
+      if (enabled.size) yield* this.scheduleSourceCheck();
+      return {
+        worldId: this.worldId,
+        pending: data.files,
+        skippedLibraries,
+        skippedEntries:
+          data.compendium.entries.length - entries.length + data.blocked.length - blocked.length,
+      } satisfies ImportStatus;
+    });
+
+  /** Stores one file an import is waiting for; anything else is refused. */
+  importFile = (
+    caller: Caller,
+    input: { path: ExportFilePath; contentType: string; bytes: Uint8Array },
+  ) =>
+    Effect.gen({ self: this }, function* () {
+      yield* requireDm(caller, "Only the DM can import files");
+      const file = this.importPending().find((item) => item.path === input.path);
+      if (!file) return yield* new NotFound({ message: "This world isn't waiting for that file" });
+      const rules = uploadRules[input.path.startsWith("board/") ? "board" : "avatars"];
+      if (!(rules.types as readonly string[]).includes(input.contentType))
+        return yield* new BadRequest({ message: rules.typeMessage });
+      if (input.bytes.byteLength > rules.maxBytes)
+        return yield* new BadRequest({ message: rules.sizeMessage });
+      yield* worldIO(() =>
+        this.bucket.put(`world/${this.worldId}/${input.path}`, input.bytes, {
+          httpMetadata: { contentType: input.contentType },
+        }),
+      );
+      // R2 awaits let other uploads run; re-read the list before writing it back.
+      const pending = this.importPending().filter((item) => item.path !== input.path);
+      if (pending.length)
+        this.storage.sql.exec(
+          "UPDATE settings SET value = ? WHERE key = 'import_pending'",
+          JSON.stringify(pending),
+        );
+      else this.storage.sql.exec("DELETE FROM settings WHERE key = 'import_pending'");
+      return { pending };
+    });
+
   setCorpusAccount = (accountId: string) =>
     Effect.sync(() => {
       this.storage.sql.exec(
@@ -1962,6 +2299,33 @@ export class WorldDO extends DurableObject<WorldDoEnv> {
       Effect.gen(function* () {
         const world = yield* WorldLogic;
         return yield* world.setCorpusAccount(accountId);
+      }),
+    );
+  }
+  exportWorld(caller: Caller, input: { chat: boolean; worldName: string }) {
+    return this.reply(
+      Effect.gen(function* () {
+        const world = yield* WorldLogic;
+        return yield* world.exportWorld(caller, input);
+      }),
+    );
+  }
+  importWorld(caller: Caller, data: WorldExport, input: { worldName: string; accountId: string }) {
+    return this.reply(
+      Effect.gen(function* () {
+        const world = yield* WorldLogic;
+        return yield* world.importWorld(caller, data, input);
+      }),
+    );
+  }
+  importFile(
+    caller: Caller,
+    input: { path: ExportFilePath; contentType: string; bytes: Uint8Array },
+  ) {
+    return this.reply(
+      Effect.gen(function* () {
+        const world = yield* WorldLogic;
+        return yield* world.importFile(caller, input);
       }),
     );
   }

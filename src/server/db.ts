@@ -410,3 +410,10 @@ export const updateMember = (
 
 export const deleteMember = (db: Queryable, worldId: string, memberId: string) =>
   run(db, "DELETE FROM world_members WHERE world_id = ? AND id = ?", worldId, memberId);
+
+/** Removes a world from the registry (its DO and R2 files become unreachable). */
+export const deleteWorld = (db: Queryable, worldId: string) =>
+  Effect.gen(function* () {
+    yield* run(db, "DELETE FROM world_members WHERE world_id = ?", worldId);
+    yield* run(db, "DELETE FROM worlds WHERE id = ?", worldId);
+  });

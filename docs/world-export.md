@@ -1,4 +1,4 @@
-# World export and import — design
+# World export and import
 
 A DM downloads a whole world as one file and can start a new world from it.
 Importing always creates a new world; it never overwrites one, so a bad or
@@ -16,31 +16,30 @@ format (a DO alarm writing `world.json` next to the world's existing R2 files).
 
 ## The file
 
-`<world-name>.ttrpg.zip`, stored uncompressed (images are compressed already;
-notes are small):
+`<world-name>.ttrpg.zip`, stored uncompressed (the images in it are compressed
+already):
 
 ```
-world.json            the manifest below
-notes/<noteId>.md
+world.json            WorldExport (src/domain/world-export.ts)
 board/<assetId>
 avatars/<file>
 ```
 
-`world.json`, defined as an Effect Schema in `src/domain/world-export.ts` and
-decoded on import — decoding is the validation:
+`world.json` is an Effect Schema, decoded on import — decoding is the
+validation (`ImportedWorld` in `world-do.ts` adds the template and character
+limits that normal saves use):
 
 ```ts
 {
-  format: "ttrpg-world", version: 1, exportedAt,
+  format: "ttrpg-world", version: 1, exportedAt, exportedBy,  // exportedBy: a member id
   world: { name },
   members: [{ id, displayName, role }],       // names only: no emails, no accounts
-  templates: SheetTemplate[],
-  characters: (Character & { avatar?: path })[],
-  board: { scenes, activeSceneId },           // snapshots as stored
-  compendium: CompendiumPack,                 // the existing v2 pack: world entries + overrides
-  libraries: [{ sourceId, version, mode }],   // pinned versions, by reference
+  templates, characters,                      // avatarKey is a file path, not an R2 key
+  scenes: [{ id, name, group, sort, snapshot }], activeSceneId,
+  compendium: CompendiumPack,                 // the v2 pack: world entries + overrides
+  libraries: [{ sourceId, version, mode }],   // by reference
   blocked: EntryId[],
-  notes: (NoteSummary & { file: path })[],
+  notes: Note[],                              // with their text
   messages?: ChatMessage[],                   // when "include chat" is checked (default on)
   files: [{ path, contentType, size }],
 }
@@ -59,65 +58,47 @@ The export dialog says so.
 
 ## Export
 
-- `GET /api/worlds/:id/export?chat=1` (DM only) returns `world.json`, built in
-  the DO in one read so it's a consistent snapshot.
-- The browser then fetches each listed file through the existing routes (board
-  images, avatars, note bodies) and zips with `fflate`, streaming to a download.
-  The Worker never buffers a whole world: worlds with many 10 MB images
-  would exceed Worker memory and the request body limit.
+- `GET /api/worlds/:id/export?chat=0|1` (DM only) returns `world.json`. The DO
+  reads SQLite in one go, then the note text and file sizes from R2.
+- `GET /api/worlds/:id/export/files/<path>` (DM only) serves each listed file.
+  The browser zips them with `fflate`. The Worker never holds a whole world:
+  one with many 10 MB images would exceed Worker memory and the request limit.
 
 ## Import
 
 Driven by the browser, so no single request carries the whole world:
 
-1. **Read:** unzip in the browser, then check `world.json` decodes against the
-   schema before sending anything.
-2. **Create:** `POST /api/worlds/import` with `world.json`. This creates the D1
-   world (the importer is owner and DM), then imports into the new DO in one
-   transaction. Each row goes through the same save paths as normal edits
-   (template limits, compendium rules, board migration for older snapshots),
-   so every rule stays defined once. The response lists the files still to
-   upload.
+1. **Read:** unzip in the browser and read `world.json`.
+2. **Create:** `POST /api/worlds/import` with `world.json` (at most 30 MB, under
+   the DO RPC limit). This creates the D1 world with the importer as owner and
+   DM, then the DO writes the note text to R2 and the rows in one transaction.
+   After that it enables libraries, imports the compendium pack through the
+   normal pack import, and applies blocks. If any step fails, the world is
+   removed from D1. The response lists the files still to upload.
 3. **Files:** `PUT /api/worlds/:id/import/files/<path>` for each file. This is
    accepted only for paths still pending in the DO (`import_pending`), with the
-   same type and size limits as normal uploads.
-4. **Finish:** the last file clears `import_pending`. Until then the world
-   shows "Import incomplete — N files missing" with a button to resume from the
-   same zip, and images not yet uploaded show as missing.
+   same type and size limits as normal uploads (`src/domain/uploads.ts`).
+4. **Finish:** the last file clears `import_pending`. Until then the DM sees
+   the world's unfinished import in its settings, with a way to resume from the
+   same zip. Images not yet uploaded show as missing.
 
 **Ids are kept.** Entry, character, note and asset ids are scoped to a DO, and
-R2 keys to the world's prefix, so nothing needs remapping. The exception is
-avatar keys, which store the full prefix and are rewritten to the new one.
+R2 keys to the world's prefix, so nothing needs remapping. Avatar paths are
+turned back into keys under the new prefix.
 
 **Members:** the original players don't exist in the new world.
 
-- Every character arrives owned by the importing DM, with `formerPlayer` set
-  to the original member's display name. A new **Played by** control (the DM
-  picks a member, which clears `formerPlayer`) hands it over once players join.
-  This control is useful anyway: today a character's player is fixed at creation.
-- Notes keep their visibility, owned by the importer.
-- Messages keep their author names and original member ids. Those ids match
-  nobody in the new world, so old messages are nobody's to edit, and whispers
-  stay visible to the DM.
+- Every character arrives owned by the importing DM. Characters that weren't
+  the exporter's carry `formerPlayer`, the original player's display name. The
+  DM's **Played by** control hands a character to a member, which clears it.
+- The exporter's notes and messages become the importer's.
+- Other people's messages keep their author names and original member ids.
+  Those ids match nobody in the new world, so the messages are nobody's to
+  edit, and whispers stay visible to the DM.
 
-**Libraries:** each pinned version is enabled if the target corpus has it.
-Otherwise it's skipped and reported ("SRD 5.2 v3 isn't published here"), and
-its overrides and blocks are kept, so they apply once the library is enabled.
+**Libraries:** each version is enabled if the target corpus serves it.
+Otherwise it's skipped and reported, along with the overrides and blocks that
+belonged to it. Its entry types still come in as world types, as if the library
+had been turned off, so enabling it later works.
 
-**Versions:** the importer accepts `version` up to its own. Rows from older
-versions decode through the same storage schemas and migrations that older DOs
-already use.
-
-## Slices
-
-1. `world-export.ts` schema, the DO's export method and `GET …/export`.
-   Miniflare test: export → import → export is equal, except for member mapping.
-2. Import endpoints: create, pending files, the file route, and finishing.
-   Tests: rejected and partial files, a library missing from the target,
-   avatar key rewriting.
-3. Client: an export dialog in world settings (DM only; "include chat",
-   progress), "New world from backup" on the worlds page, and resume.
-4. **Played by** on character sheets for the DM, plus `formerPlayer`.
-5. e2e: build a world with a character, an avatar, a board image, a note and a
-   library override; export, import and check them; then reassign the
-   character.
+**Versions:** the importer accepts `version` up to its own.

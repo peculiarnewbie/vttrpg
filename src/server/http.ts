@@ -1,7 +1,12 @@
 import { fromReply } from "./reply";
 import type { WorldDO } from "./world-do";
 import type { Caller } from "./world-rpc";
-import { SaveWorldCharacterInput, SaveWorldTemplateInput, inputMessage } from "./world-do";
+import {
+  ImportedWorld,
+  SaveWorldCharacterInput,
+  SaveWorldTemplateInput,
+  inputMessage,
+} from "./world-do";
 import { canEditCharacter } from "./world-do";
 import { CorpusRoutes } from "./corpus-http";
 import { EnableSourceInput } from "../domain/corpus-rpc";
@@ -32,11 +37,18 @@ import {
 } from "../domain/schemas";
 import {
   BoardAssetId,
-  MAX_BOARD_IMAGE_BYTES,
   PublishBoardInput,
   CreateSceneInput,
   UpdateSceneInput,
 } from "../domain/board";
+import { AVATAR_EXTENSIONS, uploadRules } from "../domain/uploads";
+import {
+  ExportFilePath,
+  MAX_WORLD_EXPORT_BYTES,
+  WORLD_EXPORT_FORMAT,
+  WORLD_EXPORT_VERSION,
+  type WorldExport,
+} from "../domain/world-export";
 import { hashPassword, randomToken, verifyPassword } from "./crypto";
 import * as repo from "./db";
 import {
@@ -296,7 +308,11 @@ const WorldBootstrap = HttpRouter.route(
         members: members.map(repo.toWorldMember),
         board: state.board,
         ...(member.role === "dm"
-          ? { scenes: state.scenes, activeSceneId: state.activeSceneId }
+          ? {
+              scenes: state.scenes,
+              activeSceneId: state.activeSceneId,
+              importPending: state.importPending,
+            }
           : {}),
         templates: state.templates,
         characters: state.characters,
@@ -436,8 +452,9 @@ const UploadBoardImage = HttpRouter.route(
       const { world } = yield* loadWorld(["dm"]);
       const request = yield* HttpServerRequest.HttpServerRequest;
       const contentType = request.headers["content-type"] ?? "";
-      if (!["image/png", "image/jpeg", "image/webp"].includes(contentType)) {
-        return yield* Effect.fail(new BadRequest({ message: "Use a PNG, JPEG, or WebP image" }));
+      const rules = uploadRules.board;
+      if (!(rules.types as readonly string[]).includes(contentType)) {
+        return yield* Effect.fail(new BadRequest({ message: rules.typeMessage }));
       }
       // Consume incrementally so an oversized upload cannot allocate an unbounded buffer.
       const webRequest = yield* HttpServerRequest.toWeb(request).pipe(
@@ -456,9 +473,9 @@ const UploadBoardImage = HttpRouter.route(
           });
           if (chunk.done) break;
           size += chunk.value.byteLength;
-          if (size > MAX_BOARD_IMAGE_BYTES) {
+          if (size > rules.maxBytes) {
             yield* bindingIO(() => reader.cancel());
-            return yield* new BadRequest({ message: "Image must be 10MB or smaller" });
+            return yield* new BadRequest({ message: rules.sizeMessage });
           }
           chunks.push(chunk.value);
         }
@@ -684,15 +701,6 @@ const DeleteCharacter = HttpRouter.route(
   ),
 );
 
-const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
-
-const ALLOWED_AVATAR_TYPES: Record<string, string> = {
-  "image/png": "png",
-  "image/jpeg": "jpg",
-  "image/webp": "webp",
-  "image/gif": "gif",
-};
-
 const UploadAvatar = HttpRouter.route(
   "POST",
   "/api/worlds/:id/characters/:characterId/avatar",
@@ -708,15 +716,13 @@ const UploadAvatar = HttpRouter.route(
         return yield* Effect.fail(new Forbidden({ message: "You cannot edit this character" }));
       }
       const contentType = (request.headers["content-type"] ?? "").split(";")[0].trim();
-      const extension = ALLOWED_AVATAR_TYPES[contentType];
+      const extension = AVATAR_EXTENSIONS[contentType];
       if (!extension) {
-        return yield* Effect.fail(
-          new BadRequest({ message: "Avatar must be a PNG, JPEG, WebP, or GIF" }),
-        );
+        return yield* Effect.fail(new BadRequest({ message: uploadRules.avatars.typeMessage }));
       }
       const bytes = yield* request.arrayBuffer;
-      if (bytes.byteLength > MAX_AVATAR_BYTES) {
-        return yield* Effect.fail(new BadRequest({ message: "Avatar must be 5MB or smaller" }));
+      if (bytes.byteLength > uploadRules.avatars.maxBytes) {
+        return yield* Effect.fail(new BadRequest({ message: uploadRules.avatars.sizeMessage }));
       }
       const key = `${world.r2_prefix}/avatars/${characterId}-${Date.now()}.${extension}`;
       const bucket = yield* Bucket;
@@ -878,6 +884,126 @@ const DeleteNote = HttpRouter.route(
 );
 
 // ---------------------------------------------------------------------------
+// Export and import (docs/world-export.md)
+// ---------------------------------------------------------------------------
+
+const ExportWorld = HttpRouter.route(
+  "GET",
+  "/api/worlds/:id/export",
+  route(
+    Effect.gen(function* () {
+      const { db, world, member, stub } = yield* loadWorld(["dm"]);
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const chat = new URL(request.url, "http://localhost").searchParams.get("chat") !== "0";
+      const contents = yield* fromReply(() =>
+        stub.exportWorld(caller(member), { chat, worldName: world.name }),
+      );
+      const members = yield* repo.listMembers(db, world.id);
+      const data: WorldExport = {
+        format: WORLD_EXPORT_FORMAT,
+        version: WORLD_EXPORT_VERSION,
+        exportedAt: new Date().toISOString(),
+        exportedBy: member.id,
+        world: { name: world.name },
+        members: members.map((row) => ({
+          id: row.id,
+          displayName: row.display_name,
+          role: row.role,
+        })),
+        ...contents,
+      };
+      return json(data);
+    }),
+  ),
+);
+
+const exportFilePath = Effect.gen(function* () {
+  const params = yield* HttpRouter.params;
+  const decoded = Schema.decodeUnknownResult(ExportFilePath)(`${params.kind}/${params.name}`);
+  if (decoded._tag === "Failure") return yield* new NotFound({ message: "File not found" });
+  return decoded.success;
+});
+
+const ExportWorldFile = HttpRouter.route(
+  "GET",
+  "/api/worlds/:id/export/files/:kind/:name",
+  route(
+    Effect.gen(function* () {
+      const { world } = yield* loadWorld(["dm"]);
+      const path = yield* exportFilePath;
+      const bucket = yield* Bucket;
+      const object = yield* bindingIO(() => bucket.get(`${world.r2_prefix}/${path}`));
+      if (!object) return yield* new NotFound({ message: "File not found" });
+      return HttpServerResponse.raw(object.body, {
+        headers: {
+          "content-type": object.httpMetadata?.contentType ?? "application/octet-stream",
+          "cache-control": "private, no-store",
+          "x-content-type-options": "nosniff",
+        },
+      });
+    }),
+  ),
+);
+
+const ImportWorld = HttpRouter.route(
+  "POST",
+  "/api/worlds/import",
+  route(
+    Effect.gen(function* () {
+      const user = yield* requireUser;
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const text = yield* request.text;
+      if (new TextEncoder().encode(text).byteLength > MAX_WORLD_EXPORT_BYTES)
+        return yield* new BadRequest({ message: "A world file must be at most 30 MB" });
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        return yield* new BadRequest({ message: "This isn't a world file" });
+      }
+      const decoded = Schema.decodeUnknownResult(ImportedWorld)(parsed);
+      if (decoded._tag === "Failure")
+        return yield* new BadRequest({
+          message: inputMessage(decoded.failure, "This isn't a world file this app can read"),
+        });
+      const data = decoded.success;
+      const db = yield* D1;
+      const worldId = yield* repo.createWorld(db, {
+        ownerUserId: user.id,
+        ownerName: user.displayName,
+        name: data.world.name,
+      });
+      const world = (yield* repo.getWorld(db, worldId))!;
+      const member = repo.toWorldMember((yield* repo.getMembership(db, worldId, user.id))!);
+      const namespace = yield* WorldNamespace;
+      const stub = (namespace as DurableObjectNamespace<WorldDO>).getByName(world.do_name);
+      // A world that failed to import is removed rather than left half-filled.
+      const status = yield* fromReply(() =>
+        stub.importWorld(caller(member), data, { worldName: world.name, accountId: user.id }),
+      ).pipe(Effect.tapError(() => repo.deleteWorld(db, worldId).pipe(Effect.ignore)));
+      return json({ world: worldSummary(world, member, user.displayName), status }, 201);
+    }),
+  ),
+);
+
+const ImportWorldFile = HttpRouter.route(
+  "PUT",
+  "/api/worlds/:id/import/files/:kind/:name",
+  route(
+    Effect.gen(function* () {
+      const { member, stub } = yield* loadWorld(["dm"]);
+      const path = yield* exportFilePath;
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const contentType = (request.headers["content-type"] ?? "").split(";")[0].trim();
+      const bytes = new Uint8Array(yield* request.arrayBuffer);
+      return json(
+        yield* fromReply(() => stub.importFile(caller(member), { path, contentType, bytes })),
+      );
+    }),
+  ),
+);
+
+// ---------------------------------------------------------------------------
 // Compendium
 // ---------------------------------------------------------------------------
 
@@ -984,7 +1110,11 @@ export const Api = HttpRouter.addAll([
   Login,
   Logout,
   CreateWorld,
+  ImportWorld,
   WorldBootstrap,
+  ExportWorld,
+  ExportWorldFile,
+  ImportWorldFile,
   ListScenes,
   CreateScene,
   GetScene,

@@ -215,7 +215,7 @@ export function deleteBoardLayer(document: BoardDocument, id: string): BoardDocu
     ),
   };
 }
-const SceneName = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100));
+export const SceneName = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100));
 export const CreateSceneInput = Schema.Struct({
   name: SceneName,
   duplicateFrom: Schema.optionalKey(BoardAssetId),

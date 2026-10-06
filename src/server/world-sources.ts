@@ -58,6 +58,7 @@ import {
 import { nowIso } from "./crypto";
 
 // Kept as an alias for callers migrating to the shared world storage layer.
+import type { ExportLibrary } from "../domain/world-export";
 export { WorldStorage as SourceStorage } from "./world-rpc";
 export class CorpusBucket extends Context.Service<CorpusBucket, R2Bucket | undefined>()(
   "ttrpg/CorpusBucket",
@@ -231,6 +232,17 @@ export class WorldSources {
   }
   private sources(): SourceRow[] {
     return this.sql.exec<SourceRow>("SELECT * FROM world_sources ORDER BY source_id").toArray();
+  }
+  /** The library versions this world uses and the entries it blocks, for an export. */
+  pins(): { libraries: ExportLibrary[]; blocked: readonly string[] } {
+    return {
+      libraries: this.sources().map((row) => ({
+        sourceId: row.source_id,
+        version: row.version,
+        mode: row.mode,
+      })),
+      blocked: this.blockedEntries().ids,
+    };
   }
   private remember(manifest: SnapshotManifest, rows?: readonly IndexRow[]): void {
     const key = `${manifest.sourceId}/${manifest.version}`;
