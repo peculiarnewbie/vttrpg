@@ -173,8 +173,10 @@ describe("sheet scopes and labels", () => {
 
   it("resolves known empty keys to zero and fails unknown keys", () => {
     const lookup = sheetRefLookup(layout, { existing: "text", present: undefined });
-    for (const key of ["notes", "conditions", "class", "existing", "present"])
+    for (const key of ["notes", "conditions", "class", "present"])
       expect(lookup({ key })).toEqual({ value: 0, label: key });
+    // Text comes along too, so dice text can roll.
+    expect(lookup({ key: "existing" })).toEqual({ value: 0, label: "existing", text: "text" });
     // A list is called by its title.
     expect(lookup({ key: "inventory" })).toEqual({ value: 0, label: "Gear" });
     expect(lookup({ key: "wis" })).toBeUndefined();

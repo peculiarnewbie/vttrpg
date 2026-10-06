@@ -71,9 +71,23 @@ test("a player builds a scoundrel; the ability step offers only the playbook's a
     .getByRole("navigation", { name: "Builder steps" })
     .getByRole("button", { name: /Details/ })
     .click();
-  const heritage = builder.getByLabel("Heritage");
-  await heritage.fill("Test Heritage");
-  await heritage.press("Enter");
+  // Heritage and vice are offered as choices; a click writes the one picked.
+  await builder
+    .getByRole("group", { name: "Heritage" })
+    .getByRole("button", { name: "Iruvia" })
+    .click();
+  await builder.getByRole("group", { name: "Vice" }).getByRole("button", { name: "Weird" }).click();
+  await expect(builder.getByRole("textbox", { name: "Heritage" })).toHaveValue("Iruvia");
+  const look = builder.getByRole("textbox", { name: "Look" });
+  await look.fill("Test look");
+  await look.press("Enter");
+
+  // Action dots are tallied against seven, with a hint past two; nothing is checked.
+  await builder
+    .getByRole("navigation", { name: "Builder steps" })
+    .getByRole("button", { name: /Actions/ })
+    .click();
+  await expect(builder.getByRole("group", { name: "Action dots" })).toContainText("Spent 0 of 7");
 
   await builder
     .getByRole("navigation", { name: "Builder steps" })
@@ -92,7 +106,9 @@ test("a player builds a scoundrel; the ability step offers only the playbook's a
     .poll(() => valuesOf(table, "Test Scoundrel"))
     .toEqual({
       playbook_entry: expect.any(String),
-      heritage: "Test Heritage",
+      heritage: "Iruvia",
+      vice: "Weird",
+      look: "Test look",
       abilities: [expect.objectContaining({ name: "Test Ability A" })],
     });
 });

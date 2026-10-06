@@ -70,7 +70,7 @@ export const formulaRefs = (layout: SheetLayout, list?: string): RefSuggestion[]
         suggestions.push({
           text: refText(block.key),
           label: block.label ?? block.key,
-          detail: "entry",
+          detail: "entry (.field reads it)",
         });
         break;
       case "list":
@@ -167,6 +167,16 @@ export const FUNCTION_HELP: readonly FunctionHelp[] = [
     name: "has",
     example: 'has(@skills, "Stealth")',
     does: "whether an option is ticked, or a row has that name",
+  },
+  {
+    name: "scale",
+    example: "scale(@class.levels, @level, @row.proficiency)",
+    does: "a level table: a value from the row for this level",
+  },
+  {
+    name: "@entry.field",
+    example: "@class.hit_die",
+    does: "a field of the entry chosen in an entry block",
   },
   { name: "text", example: 'text("Level ", @level)', does: "join values into text" },
   {

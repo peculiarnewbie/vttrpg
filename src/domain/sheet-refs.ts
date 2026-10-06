@@ -2,6 +2,7 @@ import { notationRefs, parseNotation, type Ref, type RefLookup } from "./dice-no
 import {
   computeDerivedWith,
   evaluate,
+  evaluateNumber,
   exprLists,
   exprRefs,
   parseExpr,
@@ -15,7 +16,13 @@ import {
 } from "./derived";
 import { builderProblems } from "./builder-parts";
 import { allBlocks, derivedKeys, layoutKeys } from "./layout-edit";
-import { layoutTrackers, type ListRow, type SheetLayout, type SheetValues } from "./sheet-layout";
+import {
+  layoutTrackers,
+  type ListRow,
+  type SheetLayout,
+  type SheetValues,
+  type TrackerItem,
+} from "./sheet-layout";
 
 /*
  * How `@refs` in formulas and roll notation read a character's values.
@@ -27,6 +34,10 @@ import { layoutTrackers, type ListRow, type SheetLayout, type SheetValues } from
  *   many are checked; a list = its row count. Empty is `undefined`, i.e. 0.
  * - `@list.column` — the sum of that column over the list's rows (a computed
  *   column sums its computed values).
+ * - `@entry.field` — a field of the compendium entry chosen in entry block
+ *   `entry` (`@class.hit_die`), read like a character value; empty while the
+ *   entry isn't loaded. Its list fields are lists to aggregates:
+ *   `scale(@class.levels, @level, @row.proficiency)`.
  * - `@row.column` — the column in the current row (a list row's roll or a
  *   computed list column); `undefined` without a current row.
  * - `sum(@list, …)`, `count(@checks)` and the other aggregates read the
@@ -56,18 +67,59 @@ const isChecks = (value: SheetValues[string] | undefined): value is readonly str
   Array.isArray(value) && value.every((item) => typeof item === "string");
 
 /**
+ * A chosen compendium entry's fields, by entry id: what `@entry.field` reads.
+ * `undefined` while the entry isn't loaded, or isn't visible to the reader.
+ */
+export type EntryFields = (id: string) => Readonly<Record<string, SheetValues[string]>> | undefined;
+
+/** Keys of the layout's entry blocks: the keys `@key.field` reads an entry's field through. */
+const entryBlockKeys = (layout: SheetLayout | undefined): ReadonlySet<string> =>
+  new Set(
+    (layout ? allBlocks(layout) : []).flatMap((block) =>
+      block.type === "entry" ? [block.key] : [],
+    ),
+  );
+
+/**
+ * A tracker's maximum: the character's own if set, else its `maxFrom`
+ * formula (floored, kept within the item's min and max), else the item's.
+ */
+export const trackerMaxOf = (item: TrackerItem, own: number | undefined, scope: Scope): number => {
+  if (own !== undefined) return own;
+  if (!item.maxFrom?.trim()) return item.max;
+  const parsed = parseExpr(item.maxFrom);
+  if (!parsed.ok) return item.max;
+  return Math.max(item.min, Math.min(item.max, Math.floor(evaluateNumber(parsed.value, scope))));
+};
+
+/**
  * The values refs read. Trackers keep their values apart from the others
  * (`Character.tickers`), so they're merged in the way the sheet shows them:
- * the character's value, else the item's start, else its maximum.
+ * the character's value, else the item's start, else its maximum — never
+ * above the maximum a `maxFrom` formula gives (a new character's tracker
+ * starts at the item's ceiling and reads as full).
  */
 export const refValues = (
   layout: SheetLayout | undefined,
   values: SheetValues,
   tickers: Readonly<Record<string, number>> = {},
+  options: {
+    /** The character's own maxima (`Character.tickerMax`). */
+    readonly tickerMax?: Readonly<Record<string, number>>;
+    readonly entries?: EntryFields;
+  } = {},
 ): SheetValues => {
   const merged: SheetValues = { ...values, ...tickers };
-  for (const item of layout ? layoutTrackers(layout) : [])
-    merged[item.key] = tickers[item.key] ?? item.start ?? item.max;
+  const items = layout ? layoutTrackers(layout) : [];
+  for (const item of items) merged[item.key] = tickers[item.key] ?? item.start ?? item.max;
+  const formulas = items.filter((item) => item.maxFrom?.trim());
+  if (!formulas.length) return merged;
+  // Maxima read the unclamped values (a maximum reading its own tracker is a loop, read as is).
+  const scope = sheetScope(layout, merged, undefined, options.entries);
+  const maxima = formulas.map(
+    (item) => [item, trackerMaxOf(item, options.tickerMax?.[item.key], scope)] as const,
+  );
+  for (const [item, max] of maxima) merged[item.key] = Math.min(max, merged[item.key] as number);
   return merged;
 };
 
@@ -84,7 +136,14 @@ export const valueScope = (
   at?: CurrentRow,
   layout?: SheetLayout,
   self?: () => Scope,
+  entries?: EntryFields,
 ): Scope => {
+  const entryKeys = entryBlockKeys(layout);
+  // The fields of the entry chosen at `key`, when `key` is an entry block with a loaded pick.
+  const entryOf = (key: string) => {
+    const id = entryKeys.has(key) ? ownValue(values, key) : undefined;
+    return typeof id === "string" && id ? entries?.(id) : undefined;
+  };
   const computed = new Map<string, Map<string, Expr | undefined>>();
   for (const block of layout ? allBlocks(layout) : [])
     if (block.type === "list")
@@ -118,6 +177,10 @@ export const valueScope = (
       const column = ref.column;
       if (column === undefined) return scalar(ownValue(values, ref.key));
       if (ref.key === "row") return at ? rowScope(at.list, at.row)(column) : undefined;
+      if (entryKeys.has(ref.key)) {
+        const fields = entryOf(ref.key);
+        return fields ? scalar(ownValue(fields, column)) : undefined;
+      }
       const list = ownValue(values, ref.key);
       if (!isList(list)) return undefined;
       // Sums numbers and numeric text; ticks and tags in the column don't add (count() counts them).
@@ -133,7 +196,12 @@ export const valueScope = (
       }, 0);
       return Number.isFinite(sum) ? sum : 0;
     },
-    rows: (key) => {
+    rows: (key, field) => {
+      if (field !== undefined) {
+        const fields = entryOf(key);
+        const list = fields && ownValue(fields, field);
+        return isList(list) ? list.map((row) => rowScope(undefined, row)) : undefined;
+      }
       const list = ownValue(values, key);
       return isList(list) ? list.map((row) => rowScope(key, row)) : undefined;
     },
@@ -146,9 +214,13 @@ export const valueScope = (
 };
 
 /** {@link computeDerived} for a layout's `derived` list against these values. */
-export const sheetDerived = (layout: SheetLayout | undefined, values: SheetValues): DerivedResult =>
+export const sheetDerived = (
+  layout: SheetLayout | undefined,
+  values: SheetValues,
+  entries?: EntryFields,
+): DerivedResult =>
   computeDerivedWith(layout?.derived ?? [], (self) =>
-    valueScope(values, undefined, layout, () => self),
+    valueScope(values, undefined, layout, () => self, entries),
   );
 
 /** Derived values first, then {@link valueScope}. */
@@ -156,11 +228,12 @@ export const sheetScope = (
   layout: SheetLayout | undefined,
   values: SheetValues,
   at?: CurrentRow,
+  entries?: EntryFields,
   /** {@link sheetDerived} for these values, when the caller already has it. */
-  result: DerivedResult = sheetDerived(layout, values),
+  result: DerivedResult = sheetDerived(layout, values, entries),
 ): Scope => {
   const derived = result.values;
-  const base = valueScope(values, at, layout, () => scope);
+  const base = valueScope(values, at, layout, () => scope, entries);
   const scope: Scope = {
     ...base,
     value: (ref) =>
@@ -210,6 +283,11 @@ export const refLabel = (layout: SheetLayout, ref: Ref): string => {
       )
         return block.label || block.key;
     }
+  } else if (entryBlockKeys(layout).has(ref.key)) {
+    // The entry type's field labels aren't in the layout: "Class hit die".
+    const block = blocks.find((block) => block.type === "entry" && block.key === ref.key);
+    const label = (block?.type === "entry" && block.label) || ref.key;
+    return `${label} ${ref.column.replace(/_/g, " ")}`;
   } else {
     for (const block of blocks) {
       if (block.type !== "list" || (ref.key !== "row" && block.key !== ref.key)) continue;
@@ -225,20 +303,56 @@ export const refLabel = (layout: SheetLayout, ref: Ref): string => {
  * Lookup for {@link rollNotation}, labelled by {@link refLabel}. Refs that
  * resolve to `undefined` still resolve (to 0) when the key is known to the
  * layout or present in `values`; otherwise the lookup returns `undefined` so
- * a typo fails the roll instead of silently adding 0.
+ * a typo fails the roll instead of silently adding 0. Text values come along
+ * as `text`, so dice text (a hit die, "1d10") rolls as dice.
  */
 export const sheetRefLookup = (
   layout: SheetLayout | undefined,
   values: SheetValues,
   at?: CurrentRow,
+  entries?: EntryFields,
 ): RefLookup => {
-  const scope = sheetScope(layout, values, at);
+  const scope = sheetScope(layout, values, at, entries);
   const known = new Set(layout ? [...layoutKeys(layout), ...derivedKeys(layout)] : []);
   return (ref) => {
     if (!known.has(ref.key) && !Object.hasOwn(values, ref.key) && !(ref.key === "row" && at))
       return undefined;
-    return { value: toNumber(scope.value(ref)), label: layout ? refLabel(layout, ref) : ref.key };
+    const value = scope.value(ref);
+    return {
+      value: toNumber(value),
+      label: layout ? refLabel(layout, ref) : ref.key,
+      ...(typeof value === "string" ? { text: value } : {}),
+    };
   };
+};
+
+/**
+ * Entry blocks whose chosen entry's fields these refs read (`@class.hit_die`,
+ * `sum(@class.levels, …)`), directly or through the layout's formulas — the
+ * entries a roll must load first. Every formula in the layout counts, since a
+ * derived value can read another.
+ */
+export const entriesRead = (layout: SheetLayout | undefined, refs: readonly Ref[]): string[] => {
+  const keys = entryBlockKeys(layout);
+  if (!keys.size || !layout) return [];
+  const formulas = [
+    ...(layout.derived ?? []).map((item) => item.expr),
+    ...allBlocks(layout).flatMap((block) =>
+      block.type === "list"
+        ? block.columns.flatMap((column) => (column.kind === "derived" ? [column.expr ?? ""] : []))
+        : block.type === "trackers"
+          ? block.items.flatMap((item) => (item.maxFrom ? [item.maxFrom] : []))
+          : [],
+    ),
+  ];
+  const all = [
+    ...refs,
+    ...formulas.flatMap((formula) => {
+      const parsed = parseExpr(formula);
+      return parsed.ok ? exprRefs(parsed.value) : [];
+    }),
+  ];
+  return [...keys].filter((key) => all.some((ref) => ref.key === key && ref.column !== undefined));
 };
 
 const refText = (ref: Ref): string => {
@@ -291,7 +405,13 @@ export const layoutProblems = (layout: SheetLayout): string[] => {
         inList,
       );
     // sum(@list, …), count(@checks) and the like read a list's rows or a checks block's ticks.
-    for (const { list, columns } of parsed.value ? exprLists(parsed.value) : []) {
+    for (const { list, field, columns } of parsed.value ? exprLists(parsed.value) : []) {
+      if (field !== undefined) {
+        // An entry's list field: its columns belong to the entry type, which the layout doesn't know.
+        if (!blocksOf.some((block) => block.type === "entry" && block.key === list))
+          problems.push(`${name} reads @${list}.${field} as a list, but @${list} isn't an entry`);
+        continue;
+      }
       const known = listColumns.get(list);
       if (!known && !checksKeys.has(list)) {
         if (layoutKeys(layout).includes(list))
@@ -326,8 +446,14 @@ export const layoutProblems = (layout: SheetLayout): string[] => {
         for (const item of block.items) roll(item.label, item.dice);
         break;
       case "stats":
-      case "trackers":
         for (const item of block.items) if (item.roll !== undefined) roll(item.label, item.roll);
+        break;
+      case "trackers":
+        for (const item of block.items) {
+          if (item.roll !== undefined) roll(item.label, item.roll);
+          if (item.maxFrom?.trim())
+            expression(item.label, item.maxFrom, false, `Tracker "${item.label}" maximum`);
+        }
         break;
       case "list":
         if (block.roll !== undefined) roll(block.title || block.key, block.roll, true);

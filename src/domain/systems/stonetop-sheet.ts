@@ -31,8 +31,24 @@ export const stonetopBuilder: SheetBuilder = {
     {
       id: "stats",
       title: "Stats",
-      hint: "Set your stats as your book says. The dice here only post to chat.",
-      parts: [{ type: "blocks", blocks: ["stats", "rolls"] }],
+      hint: "Type in your stats and HP as your book says. The dice here only post to chat.",
+      parts: [
+        {
+          type: "scores",
+          items: [
+            { key: "str" },
+            { key: "dex" },
+            { key: "int" },
+            { key: "wis" },
+            { key: "con" },
+            { key: "cha" },
+            { key: "hp" },
+          ],
+          // Only trackers (HP) take the number as their maximum too.
+          max: true,
+        },
+        { type: "blocks", blocks: ["rolls"] },
+      ],
     },
     {
       id: "moves",
@@ -51,6 +67,12 @@ export const stonetopBuilder: SheetBuilder = {
       title: "People",
       hint: "Write in your connections and any followers.",
       parts: [{ type: "blocks", blocks: ["connections", "followers", "notes"] }],
+    },
+    {
+      id: "review",
+      title: "Review",
+      hint: "Anything still blank is listed here.",
+      parts: [{ type: "review" }],
     },
   ],
 };

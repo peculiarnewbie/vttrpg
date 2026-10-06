@@ -35,7 +35,10 @@ export function ReviewView(props: PartViewProps<"review">) {
                     </Show>
                     {row.title}
                   </span>
-                  <Show when={row.blank.length} fallback={<span {...sx(styles.muted)}>Done</span>}>
+                  <Show
+                    when={row.blank.length}
+                    fallback={<span {...sx(styles.muted)}>Nothing blank</span>}
+                  >
                     <span {...sx(styles.muted)}>{row.blank.join(", ")}</span>
                   </Show>
                 </button>

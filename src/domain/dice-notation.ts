@@ -28,6 +28,10 @@ import { evaluate, exprRefs, parseExpr, toNumber, type Expr, type Scope } from "
  * Groups split by `|` are rolled independently and never summed together
  * ("1d20+5 | 2d6+3": attack and damage in one click).
  *
+ * A ref or `{formula}` whose value is dice text — a class's hit die "1d10",
+ * a weapon's damage "2d6+1" — rolls those dice in its place: plain dice and
+ * numbers only, no refs, one group.
+ *
  * A dice term takes at most one of kh/kl/adv/dis. `z` combines with kh ("pool").
  * Examples: `2d6`, `1d20+@str_mod`, `1d20adv+@dex_mod`, `4d6kh3`, `d%`,
  * `1d20 - 1d4`, `(@insight)d6khz`, `1d20+@row.bonus | 1d8+@str_mod`,
@@ -87,9 +91,10 @@ export type Parsed<T> =
 
 /**
  * A value a ref resolves to. `label` is what chat shows for the modifier
- * ("STR mod", "Bonus"); refs that aren't found make the roll fail.
+ * ("STR mod", "Bonus"); refs that aren't found make the roll fail. `text` is
+ * the value when it's text: dice text rolls as dice.
  */
-export type RefValue = { readonly value: number; readonly label: string };
+export type RefValue = { readonly value: number; readonly label: string; readonly text?: string };
 export type RefLookup = (ref: Ref) => RefValue | undefined;
 
 type Symbol = "+" | "-" | "|" | "(" | ")" | "d" | "%" | "kh" | "kl" | "adv" | "dis" | "z" | "end";
@@ -409,6 +414,22 @@ export const formatNotation = (notation: Notation): string => {
   return spaced.length <= DICE_LIMITS.length ? spaced : render(true);
 };
 
+/**
+ * Dice text a value stands for ("1d10", "2d6 + 1"): one group of fixed dice
+ * and numbers. Anything else (other text, refs, formulas) isn't dice.
+ */
+const diceText = (text: string | undefined): readonly Term[] | undefined => {
+  if (!text || !/d/i.test(text)) return undefined;
+  const parsed = parseNotation(text);
+  if (!parsed.ok || parsed.value.groups.length !== 1) return undefined;
+  const [group] = parsed.value.groups;
+  return group.terms.every(
+    (term) => term.kind === "number" || (term.kind === "dice" && term.count.kind === "fixed"),
+  )
+    ? group.terms
+    : undefined;
+};
+
 const resolveRef = (ref: Ref, lookup?: RefLookup): Parsed<RefValue> => {
   const resolved = lookup?.(ref);
   if (!resolved) return { ok: false, error: `Unknown value ${formatRef(ref)}` };
@@ -437,7 +458,8 @@ type DicePlan = {
  * - With one group the result is that group. With several, `groups` holds
  *   each group's result and the top-level fields repeat the first group's
  *   (older clients show that one).
- * - `notation` is {@link formatNotation} of the input.
+ * - `notation` is {@link formatNotation} of the input, with dice text that a
+ *   ref or formula stood for shown as its dice (`1d10 + @con_mod`).
  */
 export const rollNotation = (
   notation: Notation,
@@ -449,25 +471,58 @@ export const rollNotation = (
   } = {},
 ): Parsed<RollResult> => {
   // A formula's refs must all be known, as a plain ref's must; then it's evaluated.
-  const formula = (value: NotationFormula): Parsed<number> => {
+  const formulaValue = (value: NotationFormula): Parsed<number | string> => {
     for (const ref of exprRefs(value.expr)) {
       const resolved = resolveRef(ref, options.lookup);
       if (!resolved.ok) return resolved;
     }
-    const scope: Scope = options.scope ?? { value: (ref) => options.lookup?.(ref)?.value };
-    const result = toNumber(evaluate(value.expr, scope));
+    const scope: Scope = options.scope ?? {
+      value: (ref) => {
+        const resolved = options.lookup?.(ref);
+        return resolved?.text ?? resolved?.value;
+      },
+    };
+    return { ok: true, value: evaluate(value.expr, scope) };
+  };
+  const formula = (value: NotationFormula): Parsed<number> => {
+    const evaluated = formulaValue(value);
+    if (!evaluated.ok) return evaluated;
+    const result = toNumber(evaluated.value);
     if (Math.abs(result) > DICE_LIMITS.number)
       return { ok: false, error: `{${value.source}} must be between -1000000 and 1000000` };
     return { ok: true, value: Math.floor(result) };
   };
-  const plans: { dice: DicePlan[]; modifiers: RollModifierPart[] }[] = [];
+  // `group` is the group as rolled: dice text a ref stood for shows as those dice.
+  const plans: { group: NotationGroup; dice: DicePlan[]; modifiers: RollModifierPart[] }[] = [];
   let diceCount = 0;
   // Resolve and check the whole roll before consuming randomness.
   for (const group of notation.groups) {
     const dice: DicePlan[] = [];
     const modifiers: RollModifierPart[] = [];
     let staticBonus = 0;
+    // Dice text from a ref or formula takes its place, with the term's sign.
+    const terms: Term[] = [];
     for (const term of group.terms) {
+      const text =
+        term.kind === "ref"
+          ? options.lookup?.(term.ref)?.text
+          : term.kind === "formula"
+            ? (() => {
+                const evaluated = formulaValue(term.formula);
+                return evaluated.ok && typeof evaluated.value === "string"
+                  ? evaluated.value
+                  : undefined;
+              })()
+            : undefined;
+      const dice = diceText(text);
+      if (!dice) terms.push(term);
+      else
+        for (const inner of dice)
+          terms.push({ ...inner, sign: (inner.sign * term.sign) as Sign } as Term);
+    }
+    if (terms.length > DICE_LIMITS.termsPerGroup)
+      return { ok: false, error: `At most ${DICE_LIMITS.termsPerGroup} terms per group` };
+    for (const term of terms) {
       if (term.kind === "number") {
         staticBonus += term.sign * term.value;
         continue;
@@ -519,7 +574,7 @@ export const rollNotation = (
       dice.push({ term, count: rolledCount, keep });
     }
     if (staticBonus !== 0) modifiers.unshift({ label: "static", value: staticBonus });
-    plans.push({ dice, modifiers });
+    plans.push({ group: { terms }, dice, modifiers });
   }
   const rng = options.rng ?? Math.random;
   const groups: RollGroup[] = plans.map((plan, groupIndex) => {
@@ -556,7 +611,7 @@ export const rollNotation = (
         0,
       ) + plan.modifiers.reduce((sum, modifier) => sum + modifier.value, 0);
     return {
-      notation: formatNotation({ groups: [notation.groups[groupIndex]] }),
+      notation: formatNotation({ groups: [plans[groupIndex].group] }),
       dice,
       modifiers: plan.modifiers,
       total,
@@ -566,7 +621,7 @@ export const rollNotation = (
     ok: true,
     value: {
       ...groups[0],
-      notation: formatNotation(notation),
+      notation: formatNotation({ groups: plans.map((plan) => plan.group) }),
       ...(groups.length > 1 ? { groups } : {}),
     },
   };

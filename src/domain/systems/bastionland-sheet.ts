@@ -59,7 +59,7 @@ export const bastionlandBuilder: SheetBuilder = {
     {
       id: "virtues",
       title: "Virtues & Guard",
-      hint: "Follow your book's steps for each value, then write it in.",
+      hint: "Follow your book's steps for each value, then type it in; it becomes the maximum too.",
       parts: [
         {
           type: "rolls",
@@ -68,7 +68,11 @@ export const bastionlandBuilder: SheetBuilder = {
             { label: "d20", dice: "1d20" },
           ],
         },
-        { type: "blocks", blocks: ["virtues", "guard"] },
+        {
+          type: "scores",
+          items: [{ key: "vig" }, { key: "cla" }, { key: "spi" }, { key: "gd" }],
+          max: true,
+        },
       ],
     },
     {
@@ -81,7 +85,7 @@ export const bastionlandBuilder: SheetBuilder = {
       id: "review",
       title: "Review",
       hint: "Look over the sheet and fill in anything left.",
-      parts: [{ type: "blocks", blocks: ["property", "fatigue"] }],
+      parts: [{ type: "review" }, { type: "blocks", blocks: ["property", "fatigue"] }],
     },
   ],
 };

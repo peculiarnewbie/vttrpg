@@ -23,7 +23,7 @@ export const mothershipBuilder: SheetBuilder = {
     {
       id: "stats",
       title: "Stats and saves",
-      hint: "Roll the dice your book calls for, then write each result in. The dice only post to chat.",
+      hint: "Roll the dice your book calls for, then type each result in. The dice only post to chat.",
       parts: [
         {
           type: "rolls",
@@ -32,7 +32,18 @@ export const mothershipBuilder: SheetBuilder = {
             { label: "1d10", dice: "1d10" },
           ],
         },
-        { type: "blocks", blocks: ["stats", "saves"] },
+        {
+          type: "scores",
+          items: [
+            { key: "str" },
+            { key: "spd" },
+            { key: "int" },
+            { key: "com" },
+            { key: "san" },
+            { key: "fear" },
+            { key: "body" },
+          ],
+        },
       ],
     },
     {
@@ -60,8 +71,17 @@ export const mothershipBuilder: SheetBuilder = {
     {
       id: "health",
       title: "Health and stress",
-      hint: "Write in your starting health, wounds and stress.",
-      parts: [{ type: "blocks", blocks: ["vitals", "checks", "notes"] }],
+      hint: "Type in your starting health as your book gives it; it becomes the maximum too. Then the rest.",
+      parts: [
+        { type: "scores", items: [{ key: "hp" }], max: true },
+        { type: "blocks", blocks: ["vitals", "checks", "notes"] },
+      ],
+    },
+    {
+      id: "review",
+      title: "Review",
+      hint: "Anything still blank is listed here.",
+      parts: [{ type: "review" }],
     },
   ],
 };

@@ -131,17 +131,36 @@ each value as you leave it. Layouts are prototyped at `/lab/systems`.
 
 A layout can carry an optional **builder**: steps that fill in the same
 character the sheet edits, for making a character without facing the whole
-sheet. Each step has a title, a short hint and parts:
+sheet. Each step has a title, a short hint and parts. A step or part can apply
+only while a formula holds (`@level >= 3`), and a step can count as done when
+one does.
 
 - **Sheet blocks** — some of the sheet's own blocks, edited as on the sheet.
 - **Choose from the compendium** — a searchable list with a readable preview,
   into an entry block (a Knight, a class) or a compendium-fed list (moves,
   gear). Options can come from a reference field of an entry chosen in an
-  earlier step (a playbook's moves). Choosing makes the same "Add its Property
-  to the sheet?" offer the sheet does; "Pick 2" is a hint, never enforced.
+  earlier step (a playbook's moves), and can be narrowed by tags or a formula
+  over the option's own index fields (`@level <= 1`). Added options are marked
+  and can be removed. Choosing makes the same "Add its Property to the
+  sheet?" offer the sheet does; "Pick 2" is a hint, never enforced.
+- **Pick from options** — the DM's own short list of choices for a field, a
+  text block or a checks block (a heritage, a vice); a checks block can also
+  offer options it always gives, ticked with one button.
+- **Place values** — fixed numbers to place onto stats, fields or trackers (a
+  standard array, Starforged's 3, 2, 2, 1, 1); used ones dim, nothing is
+  refused.
+- **Scores** — number inputs for stats and trackers; a tracker can take the
+  number as its maximum too.
+- **Budget tally** — "Spent 9 of 27" from two formulas, with cap hints on the
+  listed values (a point buy, Blades' action dots). It never blocks anything.
+- **Readouts** — labelled formulas (a hit die, an HP maximum, a spell DC).
 - **Roll buttons** and **table rolls** (oracles referenced by a chosen entry,
-  or fixed ones) — plain chat rolls. Nothing a roll lands on is written to the
+  or fixed ones) — plain chat rolls; a button can repeat into one chat roll
+  (`4d6kh3` ×6) and carry a note. Nothing a roll lands on is written to the
   character; players type in what they keep.
+- **Guidance text** — the DM's own longer notes, in markdown.
+- **Review what's left** — every other step with what's still blank in it;
+  clicking one goes there.
 
 It's another frontend over Edit: **Builder** on any character whose layout has
 one (or **Create and open builder** for a new one) opens the steps, in any
@@ -149,8 +168,12 @@ order, with Edit's Cancel and **Done** (Save). It only writes what the player
 edits or accepts, so opening it on a finished character changes nothing. DMs
 edit steps under **Character builder** in the layout editor, or as JSON.
 Every shipped system comes with one (`builder` on its layouts in
-`src/domain/systems/*-sheet.ts`); for presets the hints point to the book
-rather than restate it.
+`src/domain/systems/*-sheet.ts`): Starforged places its stat values; Fifth
+Edition offers the standard array, a point-buy tally and rolled scores, and
+reads out the chosen class's hit die, hit points and DCs; Cairn types
+attributes in as scores; Blades offers heritages and vices and tallies action
+dots. For presets the hints point to the book rather than restate it, and
+their scores are left for the player to fill from it.
 
 ### Shared sheets, tracks and slots
 
@@ -177,16 +200,34 @@ a list's per-row roll, a dice cell — take notation:
 | `1d20 + @str_mod`             | A sheet value (or a derived value) as a modifier                 |
 | `(@hunt)d6khz`                | A pool sized by a value; `z`: at 0, roll two and keep the lowest |
 | `1d20 + @row.bonus`           | A column of the list row being rolled                            |
+| `1d20 + {@prof * 2}`          | A formula, worked out at roll time; `{@level / 2}d6` sizes dice  |
+| `@class.hit_die + @con_mod`   | A field of the chosen class entry; dice text rolls as dice       |
 | `1d20 + 5 \| 1d8 + 3`         | Separate groups, rolled together and never added                 |
 
 The server reads the values at roll time (only the character's owner or the DM
 can roll with them) and chat shows each modifier by its label. A layout's
-**derived values** (`floor((@str - 10) / 2)`, `ceil(@level / 4) + 1`,
-`@inventory.weight` for a list column's sum, `min`, `max`, `if`) are computed
-from other values, shown wherever a stat or field uses their key, and usable in
-rolls; `derived` list columns compute per row. They are never stored. The
-layout editor lists problems it finds (a formula that refers to itself, a roll
-using a value that isn't on the sheet) without blocking a save.
+**derived values** are formulas over other values, shown wherever a stat or
+field uses their key and usable in rolls; `derived` list columns compute per
+row. They are never stored, and a formula never rolls dice. Formulas take
+numbers and text, arithmetic, comparisons with `and`/`or`/`not`, and:
+
+| Formula                                          | Means                                                |
+| ------------------------------------------------ | ---------------------------------------------------- |
+| `floor((@str - 10) / 2)`, `min`, `max`, `clamp`  | Rounding and bounds                                  |
+| `if(@level >= 5, "Veteran", "")`, `pick(@n, …)`  | One of several values                                |
+| `step(@level, 1: 2, 5: 3, 9: 4)`                 | A table: the value at the highest threshold reached  |
+| `sum(@gear, @row.weight)`, `count(@spells, …)`   | Over a list's rows (`highest`, `lowest` too)         |
+| `has(@skills, "Stealth")`                        | A ticked option, or a row with that name             |
+| `@class.hit_die`                                 | A field of the entry chosen in an entry block        |
+| `scale(@class.levels, @level, @row.proficiency)` | A level table: the value from the row for this level |
+| `text("Level ", @level)`                         | Text joined from values                              |
+
+Blocks can show only while a formula holds, and a tracker can take its
+maximum from one (`maxFrom`, within the item's own max; a character's own
+maximum still wins) — Fifth Edition's hit points follow the class's hit die
+and level. The sheet shows where each number comes from. The layout editor
+lists problems it finds (a formula that refers to itself, a roll using a value
+that isn't on the sheet) without blocking a save.
 
 ## Compendium
 

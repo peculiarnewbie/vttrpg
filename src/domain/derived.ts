@@ -32,6 +32,11 @@ import type { DerivedValue } from "./sheet-layout";
  *   sum(@list, expr)  highest(@list, expr)  lowest(@list, expr)   over rows; @row is each row
  *   count(@list)  count(@list, cond)  count(@checks)              rows, matching rows, or ticks
  *   has(@checks, "Athletics")       a ticked option, or a list row named so
+ *   scale(@list, x, expr)           expr on the row whose level is the highest ≤ x (0 below all);
+ *                                   a row's level is its `level` column, else its position from 1
+ *
+ * A list can be a chosen entry's list field too: sum(@class.levels, …),
+ * scale(@class.levels, @level, @row.proficiency).
  *
  * Text compares case-insensitively ("wizard" == "Wizard"); arithmetic reads
  * numeric text as a number and other text as 0; true is 1 and false is 0;
@@ -39,7 +44,8 @@ import type { DerivedValue } from "./sheet-layout";
  *
  * Examples: floor((@str - 10) / 2), @level >= 5 and @class_name == "Wizard",
  * step(@level, 1: 2, 5: 3, 9: 4, 13: 5, 17: 6), sum(@inventory, @row.slots * @row.qty),
- * count(@spells, @row.prepared), if(@load > @str, "Encumbered", "").
+ * count(@spells, @row.prepared), if(@load > @str, "Encumbered", ""),
+ * scale(@class.levels, @level, @row.proficiency).
  */
 
 export const DERIVED_LIMITS = {
@@ -80,7 +86,7 @@ export type Fn =
   | "clamp"
   | "pick"
   | "text";
-export type AggregateFn = "sum" | "count" | "highest" | "lowest" | "has";
+export type AggregateFn = "sum" | "count" | "highest" | "lowest" | "has" | "scale";
 
 export type Expr =
   | { readonly kind: "number"; readonly value: number }
@@ -100,8 +106,12 @@ export type Expr =
       readonly fn: AggregateFn;
       /** The list (or checks) key the function reads. */
       readonly list: string;
-      /** Per-row expression (sum, highest, lowest, count) or the option looked for (has). */
+      /** A list field of the entry chosen at `list` (`@class.levels`), instead of a sheet list. */
+      readonly field?: string;
+      /** Per-row expression (sum, highest, lowest, count, scale) or the option looked for (has). */
       readonly arg?: Expr;
+      /** The level `scale` looks up. */
+      readonly at?: Expr;
     };
 
 /** One list row: a column's value. */
@@ -110,12 +120,13 @@ export type RowScope = (column: string) => Scalar | undefined;
 /**
  * What formulas read. `value` resolves a ref; `undefined` counts as empty (0
  * in arithmetic), so half-filled sheets still show something. `rows` gives a
- * list's rows (inside an aggregate, `@row.column` reads the row and every
- * other ref reads `value`); `checked` gives a checks block's ticked options.
+ * list's rows, or with `field` the rows of that list field on the entry chosen
+ * at `key` (inside an aggregate, `@row.column` reads the row and every other
+ * ref reads `value`); `checked` gives a checks block's ticked options.
  */
 export type Scope = {
   readonly value: (ref: Ref) => Scalar | undefined;
-  readonly rows?: (key: string) => readonly RowScope[] | undefined;
+  readonly rows?: (key: string, field?: string) => readonly RowScope[] | undefined;
   readonly checked?: (key: string) => readonly string[] | undefined;
 };
 
@@ -236,6 +247,7 @@ const AGGREGATES: Record<AggregateFn, { min: number; max: number; example: strin
   lowest: { min: 2, max: 2, example: "lowest(@weapons, @row.damage)" },
   count: { min: 1, max: 2, example: "count(@spells, @row.prepared)" },
   has: { min: 2, max: 2, example: 'has(@skills, "Athletics")' },
+  scale: { min: 3, max: 3, example: "scale(@class.levels, @level, @row.proficiency)" },
 };
 const isFn = (name: string): name is Fn => Object.hasOwn(FNS, name);
 const isAggregate = (name: string): name is AggregateFn => Object.hasOwn(AGGREGATES, name);
@@ -308,14 +320,23 @@ export const parseExpr = (input: string): Parsed<Expr> => {
       if (isAggregate(name.text)) {
         const spec = AGGREGATES[name.text];
         const list = peek();
-        if (list.kind !== "ref" || list.ref.column !== undefined)
+        // `@class.levels`: a list field on a chosen entry; `@row.x` is never a list.
+        if (list.kind !== "ref" || list.ref.key === "row")
           fail(`“${name.text}” needs a list first, like ${spec.example}`, list.position);
         index++;
-        const rest = accept(",") ? [or(inner)] : [];
+        const rest: Expr[] = [];
+        while (rest.length + 1 < spec.max && accept(",")) rest.push(or(inner));
         expect(")");
         if (rest.length + 1 < spec.min)
           fail(`“${name.text}” needs ${plural(spec.min)}, like ${spec.example}`, name.position);
-        return { kind: "aggregate", fn: name.text, list: list.ref.key, arg: rest[0] };
+        const [first, second] = rest;
+        return {
+          kind: "aggregate",
+          fn: name.text,
+          list: list.ref.key,
+          ...(list.ref.column === undefined ? {} : { field: list.ref.column }),
+          ...(name.text === "scale" ? { at: first, arg: second } : { arg: first }),
+        };
       }
       if (!isFn(name.text)) fail(`Unknown function “${name.text}”`, name.position);
       const list = args(inner);
@@ -451,14 +472,18 @@ export const exprRefs = (expr: Expr): Ref[] => {
       return [...exprRefs(expr.input), ...expr.steps.flatMap((step) => exprRefs(step.value))];
     case "aggregate":
       return [
-        { key: expr.list },
+        expr.field === undefined ? { key: expr.list } : { key: expr.list, column: expr.field },
+        ...(expr.at ? exprRefs(expr.at) : []),
         ...(expr.arg ? exprRefs(expr.arg).filter((ref) => ref.key !== "row") : []),
       ];
   }
 };
 
-/** The lists aggregates read, with the row columns each reads (for checking they exist). */
-export const exprLists = (expr: Expr): { list: string; columns: string[] }[] => {
+/**
+ * The lists aggregates read, with the row columns each reads (for checking
+ * they exist); `field` is set for an entry's list field (`@class.levels`).
+ */
+export const exprLists = (expr: Expr): { list: string; field?: string; columns: string[] }[] => {
   switch (expr.kind) {
     case "number":
     case "text":
@@ -479,7 +504,11 @@ export const exprLists = (expr: Expr): { list: string; columns: string[] }[] => 
             ref.key === "row" && ref.column !== undefined ? [ref.column] : [],
           )
         : [];
-      return [{ list: expr.list, columns }, ...(expr.arg ? exprLists(expr.arg) : [])];
+      return [
+        { list: expr.list, ...(expr.field === undefined ? {} : { field: expr.field }), columns },
+        ...(expr.at ? exprLists(expr.at) : []),
+        ...(expr.arg ? exprLists(expr.arg) : []),
+      ];
     }
   }
 };
@@ -622,8 +651,25 @@ const run = (expr: Expr, input: ExprScope, terms?: Term[]): Scalar => {
         return reached ? visit(reached.value, scope, top) : 0;
       }
       case "aggregate": {
-        if (top) terms?.push({ ref: { key: expr.list }, value: undefined });
-        const rows = scope.rows?.(expr.list);
+        const list: Ref =
+          expr.field === undefined ? { key: expr.list } : { key: expr.list, column: expr.field };
+        if (top) terms?.push({ ref: list, value: undefined });
+        const rows = scope.rows?.(expr.list, expr.field);
+        if (expr.fn === "scale") {
+          const at = toNumber(visit(expr.at!, scope, top));
+          // The row at the highest level reached; a later row wins a tie.
+          let reached: RowScope | undefined;
+          let best = -Infinity;
+          (rows ?? []).forEach((row, index) => {
+            const own = row("level");
+            const level = isNumeric(own) ? toNumber(own) : index + 1;
+            if (level <= at && level >= best) {
+              best = level;
+              reached = row;
+            }
+          });
+          return reached ? visit(expr.arg!, withRow(scope, reached), false) : 0;
+        }
         if (expr.fn === "has") {
           const wanted = comparable(visit(expr.arg!, scope, top));
           const ticked = scope.checked?.(expr.list);
@@ -759,7 +805,7 @@ export const computeDerivedWith = (
   const withDerived: Scope = {
     value: (ref) =>
       ref.column === undefined && expressions.has(ref.key) ? resolve(ref.key) : scope.value(ref),
-    rows: (key) => scope.rows?.(key),
+    rows: (key, field) => scope.rows?.(key, field),
     checked: (key) => scope.checked?.(key),
   };
   const scope = makeBase(withDerived);

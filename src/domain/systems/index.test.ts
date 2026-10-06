@@ -5,6 +5,9 @@ import { typeError } from "../compendium-rules";
 import { licenceError } from "../licence";
 import { layoutLimitsError } from "../template-io";
 import { chooseEntryType, chooseTarget } from "../builder";
+import { exprRefs, parseExpr } from "../derived";
+import { notationRefs, parseNotation } from "../dice-notation";
+import { allBlocks } from "../layout-edit";
 import { layoutProblems } from "../sheet-refs";
 import { SheetLayout, isKnownPart } from "../sheet-layout";
 import { firstPartySystems, gameSystems, presetSystems } from "./index";
@@ -94,6 +97,63 @@ describe.each(gameSystems.map((item) => [item.system.name, item] as const))(
                 types.get(typeId)?.fields.some((field) => field.kind === "oracle"),
                 `${layout.name}: ${typeId} has an oracle field`,
               ).toBe(true);
+        }
+      }
+    });
+    it("reads only real fields of the entries its layouts choose", () => {
+      const types = new Map(system.entryTypes.map((type) => [type.id, type]));
+      for (const layout of system.layouts ?? []) {
+        const entryTypes = new Map(
+          allBlocks(layout).flatMap((block) =>
+            block.type === "entry" ? [[block.key, block.entryType] as const] : [],
+          ),
+        );
+        const builderFormulas = (layout.builder?.steps ?? []).flatMap((step) => [
+          step.when ?? "",
+          step.done ?? "",
+          ...step.parts
+            .filter(isKnownPart)
+            .flatMap((part) => [
+              part.when ?? "",
+              ...(part.type === "show" ? part.items.map((item) => item.expr) : []),
+              ...(part.type === "budget" ? [part.spent, part.total] : []),
+            ]),
+        ]);
+        const formulas = [
+          ...(layout.derived ?? []).map((item) => item.expr),
+          ...allBlocks(layout).flatMap((block) =>
+            block.type === "trackers"
+              ? block.items.flatMap((item) => [item.maxFrom ?? ""])
+              : block.type === "list"
+                ? block.columns.map((column) => column.expr ?? "")
+                : [],
+          ),
+          ...builderFormulas,
+        ];
+        const rolls = allBlocks(layout).flatMap((block) =>
+          block.type === "trackers" || block.type === "stats"
+            ? block.items.flatMap((item) => (item.roll ? [item.roll] : []))
+            : block.type === "rolls"
+              ? block.items.map((item) => item.dice)
+              : [],
+        );
+        const refs = [
+          ...formulas.flatMap((formula) => {
+            const parsed = formula.trim() ? parseExpr(formula) : undefined;
+            return parsed?.ok ? exprRefs(parsed.value) : [];
+          }),
+          ...rolls.flatMap((dice) => {
+            const parsed = parseNotation(dice);
+            return parsed.ok ? notationRefs(parsed.value) : [];
+          }),
+        ];
+        for (const ref of refs) {
+          const typeId = entryTypes.get(ref.key);
+          if (!typeId || ref.column === undefined) continue;
+          expect(
+            types.get(typeId)?.fields.map((field) => field.key),
+            `${layout.name}: @${ref.key}.${ref.column}`,
+          ).toContain(ref.column);
         }
       }
     });

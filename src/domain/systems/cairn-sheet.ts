@@ -10,7 +10,8 @@ import type { SheetBuilder, SheetLayout } from "../sheet-layout";
 /*
  * The builder over the same values: pick a background, roll its tables into
  * chat and write down what to keep, roll attributes and HP into chat and
- * write them in, then take gear from the compendium. Rolls never write to
+ * type them in as scores (current and maximum), then take gear from the
+ * compendium. Rolls never write to
  * the character; only picks and typed values do.
  */
 export const cairnBuilder: SheetBuilder = {
@@ -33,7 +34,7 @@ export const cairnBuilder: SheetBuilder = {
     {
       id: "attributes",
       title: "Attributes",
-      hint: "Roll 3d6 for each attribute and 1d6 for HP. Set each result as both its current value and its maximum, then add age and gold.",
+      hint: "Roll 3d6 for each attribute and 1d6 for HP, in order, and type each result in: it becomes both the current value and the maximum. Then add age and gold.",
       parts: [
         {
           type: "rolls",
@@ -44,7 +45,12 @@ export const cairnBuilder: SheetBuilder = {
             { label: "HP", dice: "1d6" },
           ],
         },
-        { type: "blocks", blocks: ["attributes", "condition", "numbers"] },
+        {
+          type: "scores",
+          items: [{ key: "str" }, { key: "dex" }, { key: "wil" }, { key: "hp" }],
+          max: true,
+        },
+        { type: "blocks", blocks: ["numbers"] },
       ],
     },
     {
@@ -55,6 +61,12 @@ export const cairnBuilder: SheetBuilder = {
         { type: "choose", key: "inventory" },
         { type: "blocks", blocks: ["inventory"] },
       ],
+    },
+    {
+      id: "review",
+      title: "Review",
+      hint: "Anything still blank is listed here; fill in what you like.",
+      parts: [{ type: "review" }],
     },
   ],
 };

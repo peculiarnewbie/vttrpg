@@ -42,7 +42,14 @@ import {
 } from "../domain/compendium-rows";
 import { searchEntries } from "../domain/compendium-search";
 import type { Scalar } from "../domain/derived";
-import { formulaHolds, sheetDerived, sheetScope } from "../domain/sheet-refs";
+import {
+  formulaHolds,
+  refValues,
+  sheetDerived,
+  sheetScope,
+  trackerMaxOf,
+  type EntryFields,
+} from "../domain/sheet-refs";
 import { formatNumber, WhyValue, whyOf, type Why } from "./why-value";
 import {
   PROGRESS_BOXES,
@@ -687,8 +694,11 @@ type Props = {
   editing?: boolean;
   /** Tracker values when they live outside `values` (Character.tickers). */
   trackerValue?: (item: TrackerItem) => number;
-  /** Effective maximum (a per-character override, or the item's). */
-  trackerMax?: (item: TrackerItem) => number;
+  /**
+   * The character's own maximum, if it has one (an override, or a draft while
+   * editing). The sheet works out the rest: the item's `maxFrom`, or its max.
+   */
+  trackerMax?: (item: TrackerItem) => number | undefined;
   onTracker?: (key: string, value: number) => void;
   /** Per-character maximum while editing; `null` restores the layout's. */
   onTrackerMax?: (key: string, max: number | null) => void;
@@ -1095,6 +1105,8 @@ type Ctx = Omit<
   why: (key: string) => Why | undefined;
   /** Whether a condition formula holds on this character (a block's `when`). */
   holds: (formula: string) => boolean;
+  /** A tracker's maximum without the character's own: its `maxFrom` formula's, or its max. */
+  defaultMax: (item: TrackerItem) => number;
 };
 
 const Heading = (props: { text: string }) => (
@@ -2185,7 +2197,7 @@ function Leaf(props: { block: LeafBlock; ctx: Ctx }) {
                 const effective = () => ({
                   ...item,
                   display: resolveTrackerDisplay(item),
-                  max: props.ctx.trackerMax?.(item) ?? item.max,
+                  max: props.ctx.trackerMax?.(item) ?? props.ctx.defaultMax(item),
                 });
                 const value = () =>
                   props.ctx.trackerValue?.(item) ?? num(values()[item.key], item.start ?? item.max);
@@ -2203,7 +2215,7 @@ function Leaf(props: { block: LeafBlock; ctx: Ctx }) {
                     maxEdit={
                       props.ctx.editing && props.ctx.onTrackerMax
                         ? {
-                            layoutMax: item.max,
+                            layoutMax: props.ctx.defaultMax(item),
                             set: (max) => props.ctx.onTrackerMax!(item.key, max),
                           }
                         : undefined
@@ -2385,15 +2397,24 @@ export function SheetBlocks(props: Props) {
     props.layout.pages.find((item) => item.id === (props.page ?? page())) ?? props.layout.pages[0];
   const band = () => (props.header ?? themeSkin().header) === "band";
   // Derived values are computed here, from the layout and the values, and never stored.
-  // Trackers can live outside `values`; refs read them as the sheet shows them.
+  // Trackers can live outside `values`; refs read them as the sheet shows them, no
+  // higher than a maximum formula allows. `@class.hit_die` reads the chosen entry.
+  const entries: EntryFields = (id) => props.compendium?.entry(id)?.fields;
   const refSource = createMemo(() => {
-    const merged: SheetValues = { ...props.values };
-    for (const item of layoutTrackers(props.layout))
-      merged[item.key] =
+    const tickers: Record<string, number> = {};
+    const tickerMax: Record<string, number> = {};
+    for (const item of layoutTrackers(props.layout)) {
+      tickers[item.key] =
         props.trackerValue?.(item) ?? num(props.values[item.key], item.start ?? item.max);
-    return merged;
+      const own = props.trackerMax?.(item);
+      if (own !== undefined) tickerMax[item.key] = own;
+    }
+    return refValues(props.layout, props.values, tickers, { tickerMax, entries });
   });
-  const derived = createMemo(() => sheetDerived(props.layout, refSource()));
+  const derived = createMemo(() => sheetDerived(props.layout, refSource(), entries));
+  const scope = createMemo(() =>
+    sheetScope(props.layout, refSource(), undefined, entries, derived()),
+  );
   const computed = (key: string) =>
     key in derived().values ? derived().values[key] : props.computed?.(key);
   // A computed column reads its row, the sheet's derived values and other computed columns.
@@ -2402,21 +2423,16 @@ export function SheetBlocks(props: Props) {
       (block) => block.type === "list" && block.columns.includes(column),
     );
     if (!column.expr || list?.type !== "list") return undefined;
-    return sheetScope(props.layout, refSource(), { row, list: list.key }, derived()).value({
-      key: "row",
-      column: column.key,
-    });
+    return sheetScope(props.layout, refSource(), { row, list: list.key }, entries, derived()).value(
+      {
+        key: "row",
+        column: column.key,
+      },
+    );
   };
   const why = (key: string): Why | undefined => {
     const item = props.layout.derived?.find((value) => value.key === key);
-    return item
-      ? whyOf(
-          props.layout,
-          item.expr,
-          sheetScope(props.layout, refSource(), undefined, derived()),
-          derived().errors[key],
-        )
-      : undefined;
+    return item ? whyOf(props.layout, item.expr, scope(), derived().errors[key]) : undefined;
   };
   const ctx = (): Ctx => ({
     values: props.values,
@@ -2427,15 +2443,15 @@ export function SheetBlocks(props: Props) {
     onVariant: props.onVariant,
     onSpan: props.onSpan,
     editing: props.editing,
-    trackerValue: props.trackerValue,
-    trackerMax: props.trackerMax,
+    trackerValue: (item) => num(refSource()[item.key], item.start ?? item.max),
+    trackerMax: (item) => trackerMaxOf(item, props.trackerMax?.(item), scope()),
+    defaultMax: (item) => trackerMaxOf(item, undefined, scope()),
     onTracker: props.onTracker,
     onTrackerMax: props.onTrackerMax,
     computed,
     derivedCell,
     why,
-    holds: (formula) =>
-      formulaHolds(formula, sheetScope(props.layout, refSource(), undefined, derived())),
+    holds: (formula) => formulaHolds(formula, scope()),
     readOnly: props.readOnly,
     compendium: props.compendium,
     onOpenEntry: props.onOpenEntry,

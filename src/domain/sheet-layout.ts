@@ -89,7 +89,13 @@ export const TrackerItem = Schema.Struct({
   label: Schema.String,
   short: Schema.optional(Schema.String),
   min: Schema.Int,
+  /** The ceiling; with `maxFrom`, the most that formula can give. */
   max: Schema.Int,
+  /**
+   * A formula for the maximum (`@level * 6 + @con_mod`), floored and kept
+   * within min and max. A character's own maximum still wins over it.
+   */
+  maxFrom: Schema.optional(Schema.String.check(Schema.isMaxLength(400))),
   /** Value for new characters; defaults to `max`. */
   start: Schema.optional(Schema.Int),
   display: Schema.optional(TrackerDisplay),

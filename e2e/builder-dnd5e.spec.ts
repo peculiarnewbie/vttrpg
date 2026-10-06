@@ -104,8 +104,10 @@ test("a player builds a Fifth Edition character; only picks, edits and added row
     /Background/,
     /Ability Scores/,
     /Skills/,
+    /Hit Points & Defenses/,
     /Equipment/,
     /Spells/,
+    /Review/,
   ]);
 
   // Class, features from the class, and level by hand.
@@ -140,14 +142,24 @@ test("a player builds a Fifth Edition character; only picks, edits and added row
   await feats.getByRole("button", { name: "Test Alertness" }).click();
   await feats.getByRole("button", { name: "Add Test Alertness" }).click();
 
-  // Ability scores: the roll goes to chat; the score is written by hand.
+  // Ability scores: the rolls go to chat; a number from the standard array is placed by
+  // hand, and the point-buy tally reads what was placed (15 costs 9).
   await steps.getByRole("button", { name: /Ability Scores/ }).click();
-  await builder.getByRole("button", { name: /^Ability score/ }).click();
+  await builder.getByRole("button", { name: /^Ability scores/ }).click();
   const chat = page.locator("#world-chat");
   await expect(chat.getByText("4d6kh3").first()).toBeVisible({ timeout: 15_000 });
-  const str = builder.getByLabel("STR");
-  await str.fill("15");
-  await str.press("Enter");
+  const array = builder.getByRole("group", { name: "Standard array" });
+  await array.getByRole("button", { name: "Place 15" }).click();
+  await array.getByRole("button", { name: "STR: —" }).click();
+  await expect(array.getByRole("button", { name: "STR: 15" })).toBeVisible();
+  await expect(builder.getByRole("group", { name: "Point buy" })).toContainText("Spent 9 of 27");
+
+  // The class's hit die is read from the chosen entry.
+  await steps.getByRole("button", { name: /Hit Points & Defenses/ }).click();
+  await expect(builder.getByRole("group", { name: "Readouts" })).toContainText("1d10");
+  // The Hit Dice roll reads the same die on the server and rolls it in chat.
+  await builder.getByRole("button", { name: "Hit Dice", exact: true }).click();
+  await expect(chat.getByText("1d10 + @con_mod").first()).toBeVisible({ timeout: 15_000 });
 
   // Equipment and spells straight from the compendium.
   await steps.getByRole("button", { name: /Equipment/ }).click();

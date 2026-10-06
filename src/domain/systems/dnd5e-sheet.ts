@@ -52,11 +52,16 @@ const skills = [
   { key: "survival_bonus", label: "Survival", expr: "@wis_mod + @survival * @prof" },
 ];
 
+const ABILITIES = ["str", "dex", "con", "int", "wis", "cha"];
+/** Point-buy cost of a score: 8 is free, each point to 13 costs 1, 14 and 15 cost 2 more each. */
+const pointCost = (key: string) => `max(0, @${key} - 8) + max(0, @${key} - 13)`;
+
 /*
- * Step by step through the same values the sheet edits: pick entries, write
- * numbers by hand, roll into chat. Rolls never land on the sheet and nothing
- * is checked — counts are hints. Choices limited to an earlier pick (a class's
- * features, a background's feat) read that entry's reference field.
+ * Step by step through the same values the sheet edits: pick entries, place
+ * or type numbers, roll into chat. Rolls never land on the sheet and nothing
+ * is checked — counts and the point-buy tally are hints. Choices limited to
+ * an earlier pick (a class's features, a background's feat) read that entry's
+ * reference field; readouts read its other fields (`@class.hit_die`).
  */
 export const dnd5eCharacterBuilder: SheetBuilder = {
   steps: [
@@ -88,10 +93,38 @@ export const dnd5eCharacterBuilder: SheetBuilder = {
     {
       id: "abilities",
       title: "Ability Scores",
-      hint: "Roll for each score, then write the results in. Some tables use a fixed array instead — ask your DM.",
+      hint: "Use the way your table agrees on: place the standard array, buy scores with 27 points (8 to 15 each), or roll 4d6 six times and type the results in.",
       parts: [
-        { type: "rolls", items: [{ label: "Ability score", dice: "4d6kh3" }] },
-        { type: "blocks", blocks: ["abilities"] },
+        {
+          type: "show",
+          items: [{ label: "Background suggests", expr: "@background.abilities" }],
+          when: "@background.abilities",
+        },
+        {
+          type: "assign",
+          label: "Standard array",
+          values: [15, 14, 13, 12, 10, 8],
+          targets: ABILITIES,
+        },
+        {
+          type: "budget",
+          label: "Point buy",
+          spent: ABILITIES.map(pointCost).join(" + "),
+          total: "27",
+          items: ABILITIES.map((key) => ({ key, cap: 15 })),
+        },
+        {
+          type: "rolls",
+          items: [
+            {
+              label: "Ability scores",
+              dice: "4d6kh3",
+              times: 6,
+              note: "One roll per score; place them as you like.",
+            },
+          ],
+        },
+        { type: "blocks", blocks: ["abilities", "modifiers"] },
       ],
     },
     {
@@ -99,7 +132,35 @@ export const dnd5eCharacterBuilder: SheetBuilder = {
       title: "Skills",
       hint: "Tick the saves and skills your class and background grant; note the rest under proficiencies.",
       parts: [
+        {
+          type: "show",
+          items: [
+            { label: "Class saves", expr: "@class.saves" },
+            { label: "Class skills", expr: "@class.skills" },
+            { label: "Background skills", expr: "@background.skills" },
+            { label: "Background tool", expr: "@background.tool" },
+          ],
+          when: "@class or @background",
+        },
         { type: "blocks", blocks: ["save-proficiency", "skill-proficiency", "proficiencies"] },
+      ],
+    },
+    {
+      id: "defenses",
+      title: "Hit Points & Defenses",
+      hint: "Hit points come from your class's hit die and Constitution; write your AC from your armor.",
+      parts: [
+        {
+          type: "show",
+          items: [
+            { label: "Hit die", expr: "@class.hit_die" },
+            { label: "Hit point maximum", expr: "@hp_max" },
+            { label: "AC without armor", expr: "10 + @dex_mod" },
+            { label: "Initiative", expr: "@initiative" },
+            { label: "Passive Perception", expr: "@passive_perception" },
+          ],
+        },
+        { type: "blocks", blocks: ["health", "combat"] },
       ],
     },
     {
@@ -115,11 +176,24 @@ export const dnd5eCharacterBuilder: SheetBuilder = {
     {
       id: "spells",
       title: "Spells",
-      hint: "Add the spells you know; tick the ones you have prepared.",
+      hint: "Write your spellcasting ability modifier in, then add the spells you know and tick the ones you have prepared.",
       parts: [
-        { type: "choose", key: "spells" },
         { type: "blocks", blocks: ["casting"] },
+        {
+          type: "show",
+          items: [
+            { label: "Spell attack", expr: "@spell_attack" },
+            { label: "Spell save DC", expr: "@spell_dc" },
+          ],
+        },
+        { type: "choose", key: "spells" },
       ],
+    },
+    {
+      id: "review",
+      title: "Review",
+      hint: "Anything still blank is listed here. Nothing is checked; fill in what your table uses.",
+      parts: [{ type: "review" }],
     },
   ],
 };
@@ -137,6 +211,18 @@ export const dnd5eCharacter: SheetLayout = {
     { key: "passive_perception", label: "Passive Perception", expr: "10 + @perception_bonus" },
     { key: "spell_attack", label: "Spell attack", expr: "@prof + @spell_mod" },
     { key: "spell_dc", label: "Spell save DC", expr: "8 + @prof + @spell_mod" },
+    // The largest face of the chosen class's hit die ("1d10" → 10); 0 before a class is chosen.
+    {
+      key: "hit_die_size",
+      label: "Hit die size",
+      expr: 'if(@class.hit_die == "1d12", 12, if(@class.hit_die == "1d10", 10, if(@class.hit_die == "1d8", 8, if(@class.hit_die == "1d6", 6, 0))))',
+    },
+    // The full die at level 1, then its fixed average per level, plus CON each level.
+    {
+      key: "hp_max",
+      label: "Hit point maximum",
+      expr: "if(@hit_die_size, @hit_die_size + @con_mod + (max(@level, 1) - 1) * (@hit_die_size / 2 + 1 + @con_mod), 0)",
+    },
   ],
   pages: [
     {
@@ -209,9 +295,23 @@ export const dnd5eCharacter: SheetLayout = {
           type: "trackers",
           span: 3,
           items: [
-            { key: "hp", label: "Hit Points", min: 0, max: 10 },
+            // From the class's hit die once one is chosen; 10 until then. Edit sets your own.
+            {
+              key: "hp",
+              label: "Hit Points",
+              min: 0,
+              max: 999,
+              maxFrom: "if(@hp_max > 0, @hp_max, 10)",
+            },
             { key: "temp_hp", label: "Temp HP", min: 0, max: 30, start: 0 },
-            { key: "hit_dice", label: "Hit Dice", min: 0, max: 1 },
+            {
+              key: "hit_dice",
+              label: "Hit Dice",
+              min: 0,
+              max: 20,
+              maxFrom: "max(@level, 1)",
+              roll: "@class.hit_die + @con_mod",
+            },
           ],
         },
         {

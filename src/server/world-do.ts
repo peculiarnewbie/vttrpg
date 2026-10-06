@@ -22,7 +22,13 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import { SheetLayout, type ListRow } from "../domain/sheet-layout";
 import { notationRefs, parseNotation, rollNotation } from "../domain/dice-notation";
-import { refValues, sheetRefLookup, sheetScope } from "../domain/sheet-refs";
+import {
+  entriesRead,
+  refValues,
+  sheetRefLookup,
+  sheetScope,
+  type EntryFields,
+} from "../domain/sheet-refs";
 import { WorldCompendium, type PreparedSourceImport } from "./world-compendium";
 import type { CompendiumEntry, EntryType, PackEntry } from "../domain/compendium";
 import { WorldSources, CorpusBucket, CorpusAccountId } from "./world-sources";
@@ -1014,12 +1020,26 @@ class WorldOperations {
       row = selected;
     }
     const layout = character ? this.getTemplate(character.templateId)?.layout : undefined;
-    const values = character && refValues(layout, character.values, character.tickers);
+    // `@class.hit_die` reads the chosen entry, as the roller can see it; a hidden one reads empty.
+    const fields = new Map<string, CompendiumEntry["fields"]>();
+    for (const key of character ? entriesRead(layout, notationRefs(parsed.value)) : []) {
+      const id = character?.values[key];
+      if (typeof id !== "string" || !id || fields.has(id)) continue;
+      const found = yield* this.compendium.lookup(id, attachment.role);
+      if (found) fields.set(id, found.entry.fields);
+    }
+    const entries: EntryFields = (id) => fields.get(id);
+    const values =
+      character &&
+      refValues(layout, character.values, character.tickers, {
+        tickerMax: character.tickerMax,
+        entries,
+      });
     const at = row && frame.row && { row, list: frame.row.key };
     const rolled = rollNotation(parsed.value, {
-      lookup: values ? sheetRefLookup(layout, values, at) : undefined,
+      lookup: values ? sheetRefLookup(layout, values, at, entries) : undefined,
       // `{…}` formulas can read lists and checks, not just single values.
-      scope: values ? sheetScope(layout, values, at) : undefined,
+      scope: values ? sheetScope(layout, values, at, entries) : undefined,
     });
     if (!rolled.ok) return yield* new BadRequest({ message: rolled.error });
 

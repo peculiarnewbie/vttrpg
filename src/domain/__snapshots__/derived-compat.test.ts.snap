@@ -195,6 +195,8 @@ exports[`evaluates every shipped layout's formulas as before 1`] = `
       "dex_mod": -3,
       "dex_save": 3,
       "history_bonus": 36,
+      "hit_die_size": 0,
+      "hp_max": 0,
       "initiative": -3,
       "insight_bonus": 6,
       "int_mod": 4,
@@ -237,6 +239,10 @@ exports[`evaluates every shipped layout's formulas as before 1`] = `
       ],
       [
         1,
+      ],
+      [
+        0,
+        0,
       ],
       [
         -3,

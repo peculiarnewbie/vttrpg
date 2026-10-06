@@ -1,10 +1,11 @@
-import { For, Show, createEffect, createSignal, onSettled } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onSettled } from "solid-js";
 import * as stylex from "@stylexjs/stylex";
 import { api } from "../client/api";
 import { computeStats } from "../domain/dice";
 import { effectiveLayout } from "../domain/layout-from-template";
 import { layoutTrackers } from "../domain/sheet-layout";
-import { refValues, sheetScope } from "../domain/sheet-refs";
+import { toNumber } from "../domain/derived";
+import { refValues, sheetScope, trackerMaxOf, type EntryFields } from "../domain/sheet-refs";
 import { trackerDefinitions } from "../domain/trackers-definitions";
 import { CharacterBuilder, type BuilderCompendium } from "./character-builder";
 import { SheetBlocks, type RollRow, type SheetRoll } from "./sheet-blocks";
@@ -664,6 +665,21 @@ export function CharacterSheets(props: Props) {
             return (
               <Show when={template()}>
                 {(sheet) => {
+                  // What the builder's formulas read: as the sheet does, chosen entries included.
+                  const entries: EntryFields = (id) => props.compendium?.entry(id)?.fields;
+                  const builderScope = createMemo(() => {
+                    const layout = effectiveLayout(sheet());
+                    const tickerMax = { ...character().tickerMax, ...draftMax() };
+                    return sheetScope(
+                      layout,
+                      refValues(layout, character().values, character().tickers, {
+                        tickerMax,
+                        entries,
+                      }),
+                      undefined,
+                      entries,
+                    );
+                  });
                   /** The sheet, or just some of its blocks (a builder step). */
                   const renderSheet = (blocks?: readonly string[]) => (
                     <SheetBlocks
@@ -679,8 +695,7 @@ export function CharacterSheets(props: Props) {
                       }
                       trackerMax={(item) =>
                         (editing() ? draftMax()[item.key] : undefined) ??
-                        character().tickerMax?.[item.key] ??
-                        item.max
+                        character().tickerMax?.[item.key]
                       }
                       computed={(key) =>
                         sheet().stats.some((stat) => stat.id === key)
@@ -865,23 +880,18 @@ export function CharacterSheets(props: Props) {
                               const item = layoutTrackers(effectiveLayout(sheet())).find(
                                 (tracker) => tracker.key === key,
                               );
-                              return item
-                                ? {
-                                    value: character().tickers[key] ?? item.start ?? item.max,
-                                    max:
-                                      draftMax()[key] ?? character().tickerMax?.[key] ?? item.max,
-                                  }
-                                : undefined;
-                            },
-                            scope: () =>
-                              sheetScope(
-                                effectiveLayout(sheet()),
-                                refValues(
-                                  effectiveLayout(sheet()),
-                                  character().values,
-                                  character().tickers,
+                              if (!item) return undefined;
+                              const scope = builderScope();
+                              return {
+                                value: toNumber(scope.value({ key })),
+                                max: trackerMaxOf(
+                                  item,
+                                  draftMax()[key] ?? character().tickerMax?.[key],
+                                  scope,
                                 ),
-                              ),
+                              };
+                            },
+                            scope: () => builderScope(),
                             get compendium() {
                               return props.compendium;
                             },

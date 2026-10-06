@@ -82,6 +82,8 @@ manage them; the app only holds whatever values they set.
   to copy it onto a sheet; it never validates or applies choices. The same
   goes for the character builder: it shows steps, offers copies and rolls
   dice into chat, and never checks a build or writes a roll into a stat.
+  Its tallies ("Spent 9 of 27"), cap hints and "Pick 2" are hints a player
+  can go past; values are placed or typed by the player.
 - **Combat automation**: initiative that advances itself, turn enforcement,
   effect durations.
 
