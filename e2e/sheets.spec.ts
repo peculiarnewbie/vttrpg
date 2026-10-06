@@ -94,6 +94,51 @@ test("a shared crew sheet is everyone's until the DM locks it", async ({ table }
   expect(character.tickers.heat).toBe(2);
 });
 
+test("a clock fills to the segment clicked, and clicking the last filled one empties it", async ({
+  table,
+}) => {
+  const scoundrel = await template(table, "Scoundrel", {
+    system: "Blades",
+    name: "Scoundrel",
+    pages: [
+      {
+        id: "sheet",
+        title: "Scoundrel",
+        blocks: [
+          {
+            id: "clocks",
+            type: "trackers",
+            items: [
+              { key: "healing", label: "Healing", min: 0, max: 4, start: 0, display: "clock" },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  await table.saveCharacter({
+    name: "Canter",
+    templateId: scoundrel.id,
+    memberId: table.player.memberId,
+    values: {},
+  });
+  const healing = async () => {
+    const response = await table.dm.api.get(`/api/worlds/${table.worldId}/characters`);
+    const [character] = (await response.json()) as { tickers: Record<string, number> }[];
+    return character?.tickers.healing;
+  };
+
+  const { page } = table.player;
+  await table.open(table.player);
+  const sheet = await openSheet(page, "Canter");
+  await sheet.getByRole("button", { name: "Set Healing to 3" }).click();
+  await expect(sheet.getByRole("group", { name: "Healing clock, 3 of 4" })).toBeVisible();
+  await expect.poll(healing).toBe(3);
+  await sheet.getByRole("button", { name: "Set Healing to 3" }).click();
+  await expect(sheet.getByRole("group", { name: "Healing clock, 2 of 4" })).toBeVisible();
+  await expect.poll(healing).toBe(2);
+});
+
 test("an oracle roll shows the row the dice landed on", async ({ table }) => {
   await putType(table, {
     id: "oracle",
@@ -222,6 +267,14 @@ test("a class shows its progression up to the character's level", async ({ table
             entryType: "class",
             variant: "progression",
             progression: { field: "levels", level: "level" },
+            fill: [{ from: "levels", to: "gained" }],
+          },
+          {
+            id: "gained",
+            type: "list",
+            key: "gained",
+            title: "Class features",
+            columns: [{ key: "features", label: "Feature", kind: "text" }],
           },
         ],
       },
@@ -241,6 +294,16 @@ test("a class shows its progression up to the character's level", async ({ table
   await expect(features).toContainText("Rage");
   await expect(features).toContainText("Reckless Attack");
   await expect(features).not.toContainText("Primal Path");
+
+  // The level's rows are offered as a copy; nothing is added until asked.
+  const gained = async () => {
+    const response = await table.dm.api.get(`/api/worlds/${table.worldId}/characters`);
+    const [character] = (await response.json()) as { values: Record<string, unknown> }[];
+    return character?.values.gained;
+  };
+  expect(await gained()).toBeUndefined();
+  await sheet.getByRole("button", { name: "Add level 2 to Class features" }).click();
+  await expect.poll(gained).toEqual([expect.objectContaining({ features: "Reckless Attack" })]);
 });
 
 test("text being typed survives an update to the character from elsewhere", async ({ table }) => {

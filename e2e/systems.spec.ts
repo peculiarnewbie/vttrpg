@@ -292,3 +292,52 @@ test("Stonetop: a stat rolls 2d6 plus itself, and the steading is a shared sheet
     timeout: 15_000,
   });
 });
+
+test("Mothership: stats roll the d100, [-] keeps the worse die, Panic rolls, gear comes from the compendium", async ({
+  table,
+}) => {
+  const templates = await setUpPreset(table, "Mothership");
+  const saved = await table.dm.api.post(`/api/worlds/${table.worldId}/compendium/entries`, {
+    data: {
+      typeId: "weapon",
+      name: "Test Rigging Gun",
+      tags: [],
+      body: "",
+      fields: { dmg: "1d10", shots: 3 },
+      visibility: "public",
+    },
+  });
+  expect(saved.ok(), await saved.text()).toBe(true);
+  await table.saveCharacter({
+    name: "Ripley",
+    templateId: templates.find((template) => template.name === "Mothership — Classic")!.id,
+    memberId: table.player.memberId,
+    values: { str: 35, spd: 40, int: 30, com: 25 },
+  });
+  const page = table.player.page;
+  await table.open(table.player);
+  const sheet = page.locator("#world-tools");
+  const chat = page.locator("#world-chat");
+  await expect(sheet.getByRole("heading", { name: "Ripley" })).toBeVisible();
+  await sheet.getByRole("button", { name: "Strength", exact: true }).click();
+  await expect(chat.getByText("1d100").first()).toBeVisible({ timeout: 15_000 });
+  await sheet.getByRole("button", { name: "Disadvantage [-]" }).click();
+  await expect(chat.getByText("2d100kh1").first()).toBeVisible({ timeout: 15_000 });
+  await sheet.getByRole("button", { name: "Panic" }).click();
+  await expect(chat.getByText("1d20").first()).toBeVisible({ timeout: 15_000 });
+
+  await sheet.getByRole("tab", { name: "Loadout" }).click();
+  await sheet.getByRole("button", { name: "+ From compendium" }).first().click();
+  await sheet.getByRole("option", { name: /Test Rigging Gun/ }).click();
+  await expect(sheet.getByText("Test Rigging Gun")).toBeVisible();
+  await expect
+    .poll(async () => {
+      const response = await table.dm.api.get(`/api/worlds/${table.worldId}/characters`);
+      const characters = (await response.json()) as {
+        name: string;
+        values: Record<string, unknown>;
+      }[];
+      return characters.find((character) => character.name === "Ripley")?.values.weapons;
+    })
+    .toEqual([expect.objectContaining({ name: "Test Rigging Gun", dmg: "1d10", shots: 3 })]);
+});
