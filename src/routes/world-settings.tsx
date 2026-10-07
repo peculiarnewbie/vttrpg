@@ -8,12 +8,14 @@ import { CompendiumSettings } from "../components/compendium-settings";
 import { MembersPanel } from "../components/members";
 import { Libraries } from "../components/libraries";
 import { SystemSetup } from "../components/system-setup";
+import { WorldBackup } from "../components/world-backup";
 import { styles } from "../components/styles.stylex";
 import { Button, ErrorBanner, Spinner, TopBar } from "../components/ui";
 import type { SheetTemplate, WorldMember } from "../domain/schemas";
+import type { ExportFile } from "../domain/world-export";
 import { sx } from "../theme/sx";
 
-type Section = "system" | "members" | "templates" | "compendium" | "libraries";
+type Section = "system" | "members" | "templates" | "compendium" | "libraries" | "backup";
 
 const sections: { id: Section; label: string }[] = [
   { id: "system", label: "Game system" },
@@ -21,6 +23,7 @@ const sections: { id: Section; label: string }[] = [
   { id: "templates", label: "Sheet templates" },
   { id: "compendium", label: "Compendium" },
   { id: "libraries", label: "Libraries" },
+  { id: "backup", label: "Backup" },
 ];
 
 /** DM-only setup that doesn't belong in the in-session tools panel. */
@@ -31,6 +34,7 @@ export default function WorldSettings() {
   const [boot, setBoot] = createSignal<WorldBootstrap | null>(null);
   const [members, setMembers] = createSignal<WorldMember[]>([]);
   const [templates, setTemplates] = createSignal<SheetTemplate[]>([]);
+  const [importPending, setImportPending] = createSignal<readonly ExportFile[]>([]);
   const [search] = useSearchParams();
   const requested = sections.find((item) => item.id === search.section)?.id;
   const [section, setSection] = createSignal<Section>(requested ?? "members");
@@ -58,6 +62,9 @@ export default function WorldSettings() {
         if (requested === "libraries" && !bootstrap.features?.corpus) setSection("members");
         setMembers(bootstrap.members);
         setTemplates(bootstrap.templates);
+        setImportPending(bootstrap.importPending ?? []);
+        // An unfinished import is the first thing a DM needs to see.
+        if (bootstrap.importPending?.length && !requested) setSection("backup");
         void compendium.refresh();
       } catch (err) {
         setError(err instanceof ApiError ? err.message : "Could not load world");
@@ -134,6 +141,14 @@ export default function WorldSettings() {
                 worldName={world().world.name}
                 templates={templates()}
                 compendium={compendium}
+              />
+            </Show>
+            <Show when={section() === "backup"}>
+              <WorldBackup
+                worldId={params.id}
+                worldName={world().world.name}
+                pending={importPending()}
+                onPending={setImportPending}
               />
             </Show>
             <Show when={section() === "libraries" && world().features?.corpus}>

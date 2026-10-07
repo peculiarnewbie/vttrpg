@@ -4,8 +4,8 @@ import { startTabletop, type Tabletop, type CallOptions } from "../test/miniflar
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import { Character, type SaveNoteInput } from "../domain/schemas";
 import type { CompendiumEntry, EntryType, SaveEntryInput } from "../domain/compendium";
-import { CorpusError } from "../domain/corpus-errors";
-import { CORPUS_API_VERSION, type CorpusReply } from "../domain/corpus-rpc";
+import { CorpusError, type CorpusReply } from "../domain/corpus-errors";
+import { CORPUS_API_VERSION } from "../domain/corpus-rpc";
 import { ImportStatus, WorldExport } from "../domain/world-export";
 
 let tabletop: Tabletop;

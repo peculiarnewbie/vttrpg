@@ -59,6 +59,7 @@ entries and that the DM can write the first one from the empty type).
 | Derived values on the sheet and in roll notation          | `dice › derived values show on the sheet and rolls resolve them`; `formulas › the formula editor suggests values, shows the result and names mistakes`            |
 | A typo in a roll is reported, not rolled                  | `dice › a typo in a roll is reported instead of rolled`                                                                                                           |
 | Concurrent edits don't wipe what's being typed            | `sheets › text being typed survives an update to the character from elsewhere`                                                                                    |
+| A world can be backed up and restored as a new world      | `backup › a backup becomes a new world, and the DM hands its characters back out`; `world-export.test.ts` (privacy, libraries, files)                             |
 
 ## Out of scope stays out
 

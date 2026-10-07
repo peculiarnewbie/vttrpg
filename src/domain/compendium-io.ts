@@ -12,16 +12,18 @@ export const exportPack = (compendium: Compendium, name: string): string => {
   return JSON.stringify(pack, null, 2);
 };
 
-export const packFileName = (name: string): string => {
-  const slug = name
+/** A name as a file name: ASCII letters and digits joined by dashes. */
+export const fileSlug = (name: string): string =>
+  name
     .normalize("NFD")
     .replace(/\p{M}/gu, "")
     .toLowerCase()
     .trim()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  return `${slug || "compendium"}.ttrpg-pack.json`;
-};
+
+export const packFileName = (name: string): string =>
+  `${fileSlug(name) || "compendium"}.ttrpg-pack.json`;
 
 export const parsePack = (
   text: string,

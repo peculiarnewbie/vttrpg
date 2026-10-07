@@ -143,6 +143,15 @@ const sheetStyles = stylex.create({
     overflow: "hidden",
     textOverflow: "ellipsis",
   },
+  playedBy: {
+    font: "inherit",
+    color: "inherit",
+    backgroundColor: "transparent",
+    borderWidth: 0,
+    padding: 0,
+    cursor: "pointer",
+    textDecoration: { default: "underline dotted", ":hover": "underline" },
+  },
   head: {
     display: "flex",
     alignItems: "center",
@@ -593,13 +602,13 @@ export function CharacterSheets(props: Props) {
     if (build) startBuild(character);
   };
 
-  const memberName = (character: Character) =>
-    shared(character)
-      ? character.locked
-        ? "Shared · locked"
-        : "Shared"
-      : (props.members.find((member) => member.id === character.memberId)?.displayName ??
-        "Unassigned");
+  const members = createMemo(() => new Set(props.members.map((member) => member.id)));
+  const memberName = (character: Character) => {
+    if (shared(character)) return character.locked ? "Shared · locked" : "Shared";
+    const name =
+      props.members.find((member) => member.id === character.memberId)?.displayName ?? "Unassigned";
+    return character.formerPlayer ? `${name} (was ${character.formerPlayer})` : name;
+  };
 
   return (
     <div {...sx(styles.col)}>
@@ -855,9 +864,45 @@ export function CharacterSheets(props: Props) {
                               onInput={(event) => setDraftName(event.currentTarget.value)}
                             />
                           </Show>
-                          <span {...sx(sheetStyles.meta, bandHeader() && sheetStyles.bandText)}>
-                            {memberName(character())} · {sheet().name}
-                          </span>
+                          <Show
+                            when={props.isDm && !shared(character())}
+                            fallback={
+                              <span {...sx(sheetStyles.meta, bandHeader() && sheetStyles.bandText)}>
+                                {memberName(character())} · {sheet().name}
+                              </span>
+                            }
+                          >
+                            <span {...sx(sheetStyles.meta, bandHeader() && sheetStyles.bandText)}>
+                              <select
+                                {...sx(sheetStyles.playedBy)}
+                                aria-label="Played by"
+                                title="Played by"
+                                value={character().memberId}
+                                onChange={(event) =>
+                                  void props.onSave({
+                                    id: character().id,
+                                    name: character().name,
+                                    templateId: character().templateId,
+                                    memberId: event.currentTarget.value,
+                                    values: character().values,
+                                  })
+                                }
+                              >
+                                <Show when={!members().has(character().memberId)}>
+                                  <option value={character().memberId}>Unassigned</option>
+                                </Show>
+                                <For each={props.members}>
+                                  {(member) => (
+                                    <option value={member.id}>{member.displayName}</option>
+                                  )}
+                                </For>
+                              </select>
+                              <Show when={character().formerPlayer}>
+                                {(former) => <> (was {former()})</>}
+                              </Show>{" "}
+                              · {sheet().name}
+                            </span>
+                          </Show>
                         </div>
                       </div>
                       <Show when={avatarError()}>

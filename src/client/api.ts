@@ -44,6 +44,8 @@ import type {
   WorldSummary,
 } from "../domain/schemas";
 
+import type { ExportFile } from "../domain/world-export";
+
 export class ApiError extends Error {}
 
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
@@ -68,6 +70,8 @@ export type WorldBootstrap = {
   board: BoardSnapshot;
   scenes?: SceneMetadata[];
   activeSceneId?: string;
+  /** DM only: files an import into this world is still waiting for. */
+  importPending?: ExportFile[];
   world: WorldSummary;
   member: WorldMember;
   members: WorldMember[];
